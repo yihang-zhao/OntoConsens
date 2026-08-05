@@ -1,4 +1,5 @@
 import { useParams, Link } from "wouter";
+import { useEffect, useRef, useState } from "react";
 import { 
   useGetProject, 
   useSetReady, 
@@ -58,6 +59,24 @@ export default function ProjectWorkspace() {
     onProjectChanged: () => queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) }),
     onPropertiesChanged: () => queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) }),
   });
+
+  // "Live" is only meaningful as a brief confirmation right after connecting —
+  // showing it permanently would just be persistent chrome sitting on the
+  // workspace. Reconnecting/disconnected states stay visible the whole time
+  // since those need the user's attention.
+  const [showLive, setShowLive] = useState(false);
+  const prevSyncStatus = useRef(syncStatus);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (syncStatus === "connected" && prevSyncStatus.current !== "connected") {
+      setShowLive(true);
+      timer = setTimeout(() => setShowLive(false), 2500);
+    }
+    prevSyncStatus.current = syncStatus;
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [syncStatus]);
 
   const handleCopyInvite = () => {
     if (project?.inviteCode) {
@@ -240,17 +259,19 @@ export default function ProjectWorkspace() {
           )}
 
           {/* Sync status - plain text floating on the workspace, no bar/box */}
-          <span
-            className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-semibold tracking-wide ${
-              syncStatus === "connected"
-                ? "text-green-600 dark:text-green-400"
-                : syncStatus === "reconnecting"
-                  ? "text-amber-600 dark:text-amber-400"
-                  : "text-destructive"
-            }`}
-          >
-            {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
-          </span>
+          {(syncStatus !== "connected" || showLive) && (
+            <span
+              className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-semibold tracking-wide transition-opacity duration-500 ${
+                syncStatus === "connected"
+                  ? "text-green-600 dark:text-green-400"
+                  : syncStatus === "reconnecting"
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-destructive"
+              }`}
+            >
+              {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
+            </span>
+          )}
         </main>
       </div>
 
