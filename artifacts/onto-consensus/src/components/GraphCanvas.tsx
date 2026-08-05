@@ -30,10 +30,21 @@ interface LaidOutClass extends OntologyClass {
   y: number;
 }
 
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 64;
-const ROW_HEIGHT = 220;
-const COL_GAP = 40;
+// Each class renders as a circular badge (class label) surrounded by a ring
+// of tilted, petal-like tabs — one per property — radiating outward, similar
+// to flower petals / gear teeth. The pivot of every petal sits at the
+// badge's center (hidden behind the circle); only its outer portion is
+// visible beyond the circle's edge.
+const CIRCLE_SIZE = 128;
+const CIRCLE_RADIUS = CIRCLE_SIZE / 2;
+const PETAL_WIDTH = 56;
+const PETAL_VISIBLE_LENGTH = 86;
+const PETAL_HEIGHT = CIRCLE_RADIUS + PETAL_VISIBLE_LENGTH;
+// Square footprint per class node, sized to fit the full ring of petals
+// plus their counter-rotated name labels without clipping into neighbors.
+const NODE_SIZE = Math.round((PETAL_HEIGHT + 60) * 2);
+const ROW_HEIGHT = NODE_SIZE + 60;
+const COL_GAP = 70;
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.5;
@@ -91,7 +102,7 @@ function layoutClasses(
       laidOut.push({
         ...cls,
         depth,
-        x: index * (NODE_WIDTH + COL_GAP),
+        x: index * (NODE_SIZE + COL_GAP),
         y: depth * ROW_HEIGHT,
       });
     });
@@ -314,7 +325,7 @@ export function GraphCanvas({
 
   const width = Math.max(
     800,
-    (Math.max(1, ...laidOut.map((c) => c.x + NODE_WIDTH)) || NODE_WIDTH) + 80,
+    (Math.max(1, ...laidOut.map((c) => c.x + NODE_SIZE)) || NODE_SIZE) + 80,
   );
   const height = Math.max(400, (laidOut.at(-1)?.y ?? 0) + ROW_HEIGHT + 40);
 
@@ -369,10 +380,13 @@ export function GraphCanvas({
             const child = positionById.get(rel.childId);
             const parent = positionById.get(rel.parentId);
             if (!child || !parent) return null;
-            const x1 = parent.x + 40 + NODE_WIDTH / 2;
-            const y1 = parent.y + 40 + NODE_HEIGHT;
-            const x2 = child.x + 40 + NODE_WIDTH / 2;
-            const y2 = child.y + 40;
+            // Connect at the circle's edge, not the full petal footprint, so
+            // arrows plug straight into the badges regardless of how many
+            // petals surround them.
+            const x1 = parent.x + 40 + NODE_SIZE / 2;
+            const y1 = parent.y + 40 + NODE_SIZE / 2 + CIRCLE_RADIUS;
+            const x2 = child.x + 40 + NODE_SIZE / 2;
+            const y2 = child.y + 40 + NODE_SIZE / 2 - CIRCLE_RADIUS;
             const midY = (y1 + y2) / 2;
             return (
               <path
@@ -389,41 +403,59 @@ export function GraphCanvas({
 
         {laidOut.map((cls) => {
           const classProperties = propertiesByClass.get(cls.id) ?? [];
+          const isAdding = addingToClass === cls.id;
+          // The "add property" control is one more slot in the same radial
+          // ring, always last, so the petals reflow evenly as properties are
+          // added or removed instead of sitting in a separate row.
+          const slotCount = classProperties.length + 1;
+          const angleStep = 360 / slotCount;
+          // A fixed offset keeps petals from landing on the cardinal
+          // directions (which, for even slot counts, would make them look
+          // like plain horizontal/vertical bars instead of tilted petals).
+          const angleOffset = 25;
+
           return (
             <div
               key={cls.id}
-              className="absolute flex flex-col items-center gap-2"
-              style={{ left: cls.x + 40, top: cls.y + 40, width: NODE_WIDTH }}
+              className="absolute"
+              style={{ left: cls.x + 40, top: cls.y + 40, width: NODE_SIZE, height: NODE_SIZE }}
             >
-              <div className="flex h-16 w-full items-center justify-center rounded-xl border border-border bg-card px-4 text-center shadow-sm">
-                <span className="truncate text-sm font-semibold text-card-foreground">
-                  {cls.label}
-                </span>
-              </div>
+              {classProperties.map((property, i) => {
+                const angle = angleStep * i - 90 + angleOffset;
+                const isMine = property.proposedByUserId === currentUserId;
+                const myAgreement = property.agreements.some((a) => a.userId === currentUserId);
+                const proposerColor = colorForSlot(property.proposedByColorSlot);
+                const canDelete = myAgreement;
+                const isEditing = editingProperty === property.id;
+                const petalBg = property.agreedByAll ? "hsl(var(--primary) / 0.85)" : proposerColor.soft;
+                const petalBorder = property.agreedByAll ? "hsl(var(--primary))" : proposerColor.ring;
+                const textColor = property.agreedByAll ? "hsl(var(--primary-foreground))" : proposerColor.softText;
 
-              <div className="flex w-full flex-wrap justify-center gap-1.5">
-                {classProperties.map((property) => {
-                  const isMine = property.proposedByUserId === currentUserId;
-                  const myAgreement = property.agreements.some(
-                    (a) => a.userId === currentUserId,
-                  );
-                  const proposerColor = colorForSlot(property.proposedByColorSlot);
-                  const canDelete = myAgreement;
-                  const isEditing = editingProperty === property.id;
-
-                  return (
-                    <div key={property.id} className="group/pill relative">
-                      {isEditing ? (
+                return (
+                  <div
+                    key={property.id}
+                    className="group/petal absolute"
+                    style={{
+                      top: "50%",
+                      left: "50%",
+                      width: PETAL_WIDTH,
+                      height: PETAL_HEIGHT,
+                      transformOrigin: "50% 100%",
+                      transform: `rotate(${angle}deg) translate(-50%, -100%)`,
+                      zIndex: 5 + i,
+                    }}
+                  >
+                    {isEditing ? (
+                      <div
+                        className="absolute left-1/2 top-3 w-24 -translate-x-1/2"
+                        style={{ transform: `translateX(-50%) rotate(${-angle}deg)` }}
+                      >
                         <form
                           onSubmit={(e) => {
                             e.preventDefault();
                             if (editDraft.trim()) {
                               updateProperty.mutate(
-                                {
-                                  id: projectId,
-                                  propertyId: property.id,
-                                  data: { name: editDraft.trim() },
-                                },
+                                { id: projectId, propertyId: property.id, data: { name: editDraft.trim() } },
                                 { onSuccess: invalidateProperties },
                               );
                             }
@@ -436,125 +468,172 @@ export function GraphCanvas({
                             onChange={(e) => setEditDraft(e.target.value)}
                             onBlur={(e) => {
                               // Losing focus (click elsewhere, tab away, etc.)
-                              // must not silently discard the edit — commit it
-                              // just like pressing Enter would, and only
+                              // must not silently discard the edit — commit
+                              // it just like pressing Enter would, and only
                               // cancel outright if the field was left empty.
                               e.currentTarget.form?.requestSubmit();
                             }}
-                            className="h-7 w-28 rounded-full border border-primary bg-background px-3 text-xs outline-none"
+                            className="h-7 w-full rounded-full border border-primary bg-background px-2.5 text-center text-[11px] outline-none shadow-md"
                           />
                         </form>
-                      ) : (
-                        <button
-                          type="button"
-                          title={
-                            property.agreedByAll
-                              ? "Fully agreed"
-                              : `Proposed by ${property.proposedByUsername}`
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        title={property.agreedByAll ? "Fully agreed" : `Proposed by ${property.proposedByUsername}`}
+                        onClick={() => {
+                          if (isMine) {
+                            setEditingProperty(property.id);
+                            setEditDraft(property.name);
+                            return;
                           }
-                          onClick={() => {
-                            if (isMine) {
-                              setEditingProperty(property.id);
-                              setEditDraft(property.name);
-                              return;
-                            }
-                            if (!myAgreement) {
-                              agreeProperty.mutate(
-                                { id: projectId, propertyId: property.id },
-                                { onSuccess: invalidateProperties },
-                              );
-                            }
-                          }}
-                          className="flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-sm transition-transform hover:scale-105"
-                          style={{
-                            borderColor: property.agreedByAll
-                              ? "hsl(var(--primary))"
-                              : proposerColor.ring,
-                            background: property.agreedByAll
-                              ? "hsl(var(--primary) / 0.12)"
-                              : proposerColor.soft,
-                            color: property.agreedByAll
-                              ? "hsl(var(--primary))"
-                              : proposerColor.softText,
-                          }}
+                          if (!myAgreement) {
+                            agreeProperty.mutate(
+                              { id: projectId, propertyId: property.id },
+                              { onSuccess: invalidateProperties },
+                            );
+                          }
+                        }}
+                        className="relative h-full w-full border shadow-sm transition-transform hover:z-30 hover:scale-105"
+                        style={{
+                          background: petalBg,
+                          borderColor: petalBorder,
+                          borderRadius: "16px 16px 4px 4px",
+                          borderWidth: 1.5,
+                        }}
+                      >
+                        <div
+                          className="absolute left-1/2 top-3 flex w-24 flex-col items-center gap-1"
+                          style={{ transform: `translateX(-50%) rotate(${-angle}deg)`, color: textColor }}
                         >
                           <span className="flex -space-x-1">
                             {property.agreements.map((a) => (
                               <span
                                 key={a.userId}
-                                className="h-2.5 w-2.5 rounded-full border border-background"
+                                className="h-2 w-2 rounded-full border border-background"
                                 style={{ background: colorForSlot(a.colorSlot).solid }}
                               />
                             ))}
                           </span>
-                          {property.name}
-                        </button>
-                      )}
+                          <span className="line-clamp-2 text-center text-[11px] font-medium leading-tight">
+                            {property.name}
+                          </span>
+                        </div>
+                      </button>
+                    )}
 
-                      {canDelete && !isEditing && (
-                        <button
-                          type="button"
-                          aria-label="Remove your contribution"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            retractProperty.mutate(
-                              { id: projectId, propertyId: property.id },
-                              { onSuccess: invalidateProperties },
-                            );
+                    {canDelete && !isEditing && (
+                      <button
+                        type="button"
+                        aria-label="Remove your contribution"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          retractProperty.mutate(
+                            { id: projectId, propertyId: property.id },
+                            { onSuccess: invalidateProperties },
+                          );
+                        }}
+                        className="absolute left-1/2 top-1 z-40 hidden h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] leading-none text-destructive-foreground group-hover/petal:flex"
+                        style={{ transform: `translateX(-50%) rotate(${-angle}deg)` }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Add-property slot: one more petal in the same ring, dashed
+                  and neutral until clicked. */}
+              {(() => {
+                const angle = angleStep * classProperties.length - 90 + angleOffset;
+                return (
+                  <div
+                    className="absolute"
+                    style={{
+                      top: "50%",
+                      left: "50%",
+                      width: PETAL_WIDTH,
+                      height: PETAL_HEIGHT,
+                      transformOrigin: "50% 100%",
+                      transform: `rotate(${angle}deg) translate(-50%, -100%)`,
+                      zIndex: 5 + classProperties.length,
+                    }}
+                  >
+                    {isAdding ? (
+                      <div
+                        className="absolute left-1/2 top-3 w-24 -translate-x-1/2"
+                        style={{ transform: `translateX(-50%) rotate(${-angle}deg)` }}
+                      >
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            if (draftName.trim()) {
+                              createProperty.mutate(
+                                { id: projectId, data: { classId: cls.id, name: draftName.trim() } },
+                                { onSuccess: invalidateProperties },
+                              );
+                            }
+                            setAddingToClass(null);
+                            setDraftName("");
                           }}
-                          className="absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] leading-none text-destructive-foreground group-hover/pill:flex"
                         >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+                          <input
+                            autoFocus
+                            value={draftName}
+                            placeholder="Property name"
+                            onChange={(e) => setDraftName(e.target.value)}
+                            onBlur={(e) => {
+                              // Same rationale as the edit form: clicking
+                              // away must commit a non-empty draft rather
+                              // than silently drop it. The submit handler
+                              // itself no-ops on empty input and still
+                              // closes the form.
+                              e.currentTarget.form?.requestSubmit();
+                            }}
+                            className="h-7 w-full rounded-full border border-primary bg-background px-2.5 text-center text-[11px] outline-none shadow-md"
+                          />
+                        </form>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddingToClass(cls.id);
+                          setDraftName("");
+                        }}
+                        className="flex h-full w-full items-center justify-center border border-dashed border-emerald-500/50 text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                        style={{ borderRadius: "16px 16px 4px 4px" }}
+                      >
+                        <span
+                          className="text-base font-semibold leading-none"
+                          style={{ transform: `rotate(${-angle}deg)`, display: "inline-block" }}
+                        >
+                          +
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
 
-                {addingToClass === cls.id ? (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (draftName.trim()) {
-                        createProperty.mutate(
-                          {
-                            id: projectId,
-                            data: { classId: cls.id, name: draftName.trim() },
-                          },
-                          { onSuccess: invalidateProperties },
-                        );
-                      }
-                      setAddingToClass(null);
-                      setDraftName("");
-                    }}
-                  >
-                    <input
-                      autoFocus
-                      value={draftName}
-                      placeholder="Property name"
-                      onChange={(e) => setDraftName(e.target.value)}
-                      onBlur={(e) => {
-                        // Same rationale as the edit form: clicking away must
-                        // commit a non-empty draft rather than silently drop
-                        // it. The submit handler itself no-ops on empty input
-                        // and still closes the form.
-                        e.currentTarget.form?.requestSubmit();
-                      }}
-                      className="h-7 w-28 rounded-full border border-primary bg-background px-3 text-xs outline-none"
-                    />
-                  </form>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAddingToClass(cls.id);
-                      setDraftName("");
-                    }}
-                    className="flex h-7 items-center gap-1 rounded-full border border-dashed border-emerald-500/50 px-3 text-xs font-medium text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
-                  >
-                    + property
-                  </button>
-                )}
+              {/* The class badge sits on top, hiding the inner (pivot) end
+                  of every petal so they read as radiating from its edge. */}
+              <div
+                className="absolute flex items-center justify-center rounded-full border-4 bg-card text-center shadow-md"
+                style={{
+                  width: CIRCLE_SIZE,
+                  height: CIRCLE_SIZE,
+                  left: "50%",
+                  top: "50%",
+                  transform: "translate(-50%, -50%)",
+                  borderColor: "hsl(var(--muted-foreground) / 0.5)",
+                  zIndex: 20,
+                }}
+              >
+                <span className="line-clamp-3 px-3 text-sm font-semibold text-card-foreground">
+                  {cls.label}
+                </span>
               </div>
             </div>
           );
