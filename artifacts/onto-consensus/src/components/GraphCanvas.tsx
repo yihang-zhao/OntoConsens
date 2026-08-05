@@ -12,11 +12,16 @@ import {
 } from "@workspace/api-client-react";
 import type { OntologyClass, OntologyRelation, Property } from "@workspace/api-client-react";
 import { colorForSlot } from "@/lib/memberColors";
-import { useProjectSocket } from "@/hooks/useProjectSocket";
+import type { RemoteCursor } from "@/hooks/useProjectSocket";
 
 interface GraphCanvasProps {
   projectId: number;
   currentUserId: number;
+  cursors: Map<number, RemoteCursor>;
+  sendCursor: (x: number, y: number) => void;
+  /** True once every project member has marked ready — the merged consensus
+   * space (shared properties + live cursors) only appears then. */
+  sharedModeEnabled: boolean;
 }
 
 interface LaidOutClass extends OntologyClass {
@@ -74,7 +79,13 @@ function layoutClasses(
   return laidOut;
 }
 
-export function GraphCanvas({ projectId, currentUserId }: GraphCanvasProps) {
+export function GraphCanvas({
+  projectId,
+  currentUserId,
+  cursors,
+  sendCursor,
+  sharedModeEnabled,
+}: GraphCanvasProps) {
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const [addingToClass, setAddingToClass] = useState<number | null>(null);
@@ -94,22 +105,9 @@ export function GraphCanvas({ projectId, currentUserId }: GraphCanvasProps) {
   const retractProperty = useRetractProperty();
   const agreeProperty = useAgreeProperty();
 
-  const invalidateProject = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
-  }, [queryClient, projectId]);
   const invalidateProperties = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) });
   }, [queryClient, projectId]);
-
-  const currentMember = project?.members.find((m) => m.userId === currentUserId);
-  const socketEnabled = Boolean(currentMember?.ready);
-
-  const { cursors, sendCursor } = useProjectSocket({
-    projectId,
-    enabled: socketEnabled,
-    onProjectChanged: invalidateProject,
-    onPropertiesChanged: invalidateProperties,
-  });
 
   const membersById = useMemo(() => {
     const map = new Map<number, { username: string; colorSlot: number }>();
@@ -136,11 +134,11 @@ export function GraphCanvas({ projectId, currentUserId }: GraphCanvasProps) {
 
   const handleMouseMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!socketEnabled) return;
+      if (!sharedModeEnabled) return;
       const rect = event.currentTarget.getBoundingClientRect();
       sendCursor(event.clientX - rect.left, event.clientY - rect.top);
     },
-    [sendCursor, socketEnabled],
+    [sendCursor, sharedModeEnabled],
   );
 
   useEffect(() => {
@@ -375,7 +373,7 @@ export function GraphCanvas({ projectId, currentUserId }: GraphCanvasProps) {
           );
         })}
 
-        {socketEnabled &&
+        {sharedModeEnabled &&
           Array.from(cursors.values())
             .filter((c) => Date.now() - c.updatedAt < 8000 && c.userId !== currentUserId)
             .map((cursor) => {

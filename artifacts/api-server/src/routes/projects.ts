@@ -241,6 +241,11 @@ router.patch("/projects/:id/ready", async (req, res) => {
     return;
   }
 
+  if (membership.ready && !parsed.data.ready) {
+    res.status(400).json({ error: "You cannot unmark yourself as ready once you have marked ready" });
+    return;
+  }
+
   const [updated] = await db
     .update(projectMembersTable)
     .set({ ready: parsed.data.ready })

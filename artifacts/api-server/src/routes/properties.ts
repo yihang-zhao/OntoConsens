@@ -25,6 +25,29 @@ async function getMembership(projectId: number, userId: number) {
   });
 }
 
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+// If another property with the same name already exists in the same class,
+// proposing that name again counts as agreeing with it rather than creating
+// a duplicate — this is how independently-proposed properties merge into a
+// single agreed item once the board comes together.
+async function findMatchingProperty(
+  projectId: number,
+  classId: number,
+  name: string,
+  excludePropertyId?: number,
+) {
+  const normalized = normalizeName(name);
+  const candidates = await db.query.propertiesTable.findMany({
+    where: and(eq(propertiesTable.projectId, projectId), eq(propertiesTable.classId, classId)),
+  });
+  return candidates.find(
+    (p) => p.id !== excludePropertyId && normalizeName(p.name) === normalized,
+  );
+}
+
 async function serializeProperty(
   property: typeof propertiesTable.$inferSelect,
   totalMembers: number,
@@ -72,13 +95,22 @@ router.get("/projects/:id/properties", async (req, res) => {
   const members = await db.query.projectMembersTable.findMany({
     where: eq(projectMembersTable.projectId, projectId),
   });
-  const readyUserIds = new Set(members.filter((m) => m.ready).map((m) => m.userId));
+  // The shared consensus space only appears once every member has marked
+  // themselves ready — until then everyone only sees their own proposals.
+  const allReady = members.length > 0 && members.every((m) => m.ready);
 
   const allProperties = await db.query.propertiesTable.findMany({
     where: eq(propertiesTable.projectId, projectId),
   });
+  // A property proposed by someone else can still be "yours" if your own
+  // proposal merged into it (same name, same class) — you should keep seeing
+  // it even before everyone is ready, since it reflects your own action.
+  const myAgreements = await db.query.propertyAgreementsTable.findMany({
+    where: eq(propertyAgreementsTable.userId, userId),
+  });
+  const myAgreedPropertyIds = new Set(myAgreements.map((a) => a.propertyId));
   const visible = allProperties.filter(
-    (p) => p.proposedByUserId === userId || readyUserIds.has(p.proposedByUserId),
+    (p) => p.proposedByUserId === userId || myAgreedPropertyIds.has(p.id) || allReady,
   );
 
   const serialized = await Promise.all(
@@ -114,12 +146,37 @@ router.post("/projects/:id/properties", async (req, res) => {
     return;
   }
 
+  const trimmedName = parsed.data.name.trim();
+  const members = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+
+  const existingMatch = await findMatchingProperty(projectId, parsed.data.classId, trimmedName);
+  if (existingMatch) {
+    // Someone else already proposed this exact property name for this class:
+    // merge by recording the new proposer's agreement instead of duplicating.
+    const alreadyAgreed = await db.query.propertyAgreementsTable.findFirst({
+      where: and(
+        eq(propertyAgreementsTable.propertyId, existingMatch.id),
+        eq(propertyAgreementsTable.userId, userId),
+      ),
+    });
+    if (!alreadyAgreed) {
+      await db.insert(propertyAgreementsTable).values({ propertyId: existingMatch.id, userId });
+    }
+
+    const result = await serializeProperty(existingMatch, members.length);
+    broadcastToProject(projectId, { type: "agreement_changed" });
+    res.status(200).json(result);
+    return;
+  }
+
   const [property] = await db
     .insert(propertiesTable)
     .values({
       projectId,
       classId: parsed.data.classId,
-      name: parsed.data.name.trim(),
+      name: trimmedName,
       proposedByUserId: userId,
     })
     .returning();
@@ -132,9 +189,6 @@ router.post("/projects/:id/properties", async (req, res) => {
     .insert(propertyAgreementsTable)
     .values({ propertyId: property.id, userId });
 
-  const members = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
   const result = await serializeProperty(property, members.length);
 
   broadcastToProject(projectId, { type: "property_created" });
@@ -171,15 +225,54 @@ router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
     return;
   }
 
-  const [updated] = await db
-    .update(propertiesTable)
-    .set({ name: parsed.data.name.trim() })
-    .where(eq(propertiesTable.id, propertyId))
-    .returning();
-
+  const trimmedName = parsed.data.name.trim();
   const members = await db.query.projectMembersTable.findMany({
     where: eq(projectMembersTable.projectId, projectId),
   });
+
+  const existingMatch = await findMatchingProperty(
+    projectId,
+    property.classId,
+    trimmedName,
+    property.id,
+  );
+  if (existingMatch) {
+    // Renaming into an already-proposed name merges the two: fold this
+    // property's agreements into the matching one and drop the duplicate.
+    const existingAgreements = await db.query.propertyAgreementsTable.findMany({
+      where: eq(propertyAgreementsTable.propertyId, propertyId),
+    });
+    for (const agreement of existingAgreements) {
+      const already = await db.query.propertyAgreementsTable.findFirst({
+        where: and(
+          eq(propertyAgreementsTable.propertyId, existingMatch.id),
+          eq(propertyAgreementsTable.userId, agreement.userId),
+        ),
+      });
+      if (!already) {
+        await db
+          .insert(propertyAgreementsTable)
+          .values({ propertyId: existingMatch.id, userId: agreement.userId });
+      }
+    }
+    await db
+      .delete(propertyAgreementsTable)
+      .where(eq(propertyAgreementsTable.propertyId, propertyId));
+    await db.delete(propertiesTable).where(eq(propertiesTable.id, propertyId));
+
+    const result = await serializeProperty(existingMatch, members.length);
+    broadcastToProject(projectId, { type: "property_deleted" });
+    broadcastToProject(projectId, { type: "agreement_changed" });
+    res.json(result);
+    return;
+  }
+
+  const [updated] = await db
+    .update(propertiesTable)
+    .set({ name: trimmedName })
+    .where(eq(propertiesTable.id, propertyId))
+    .returning();
+
   const result = await serializeProperty(updated ?? property, members.length);
 
   broadcastToProject(projectId, { type: "property_updated" });

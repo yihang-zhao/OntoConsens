@@ -104,6 +104,14 @@ function Router() {
   );
 }
 
+function ScopedToaster() {
+  // The project workspace intentionally has no popup "message window" — status
+  // (ready, errors) is shown inline in its own UI instead of transient toasts.
+  const [location] = useLocation();
+  if (location.startsWith('/projects/')) return null;
+  return <Toaster />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -111,7 +119,7 @@ function App() {
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Router />
         </WouterRouter>
-        <Toaster />
+        <ScopedToaster />
       </TooltipProvider>
     </QueryClientProvider>
   );
