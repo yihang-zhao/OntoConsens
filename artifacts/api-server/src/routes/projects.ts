@@ -43,7 +43,7 @@ async function getMembership(projectId: number, userId: number) {
 }
 
 router.get("/projects", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const memberships = await db.query.projectMembersTable.findMany({
     where: eq(projectMembersTable.userId, userId),
   });
@@ -66,7 +66,7 @@ router.get("/projects", async (req, res) => {
 });
 
 router.post("/projects", upload.single("file"), async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
   const file = req.file;
 
@@ -132,7 +132,7 @@ router.post("/projects", upload.single("file"), async (req, res) => {
 });
 
 router.post("/projects/join", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const parsed = JoinProjectBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid input" });
@@ -175,7 +175,7 @@ router.post("/projects/join", async (req, res) => {
 });
 
 router.get("/projects/:id", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
 
   const project = await db.query.projectsTable.findFirst({
@@ -227,7 +227,7 @@ router.get("/projects/:id", async (req, res) => {
 });
 
 router.patch("/projects/:id/ready", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
   const parsed = SetReadyBody.safeParse(req.body);
   if (!parsed.success) {
@@ -267,7 +267,7 @@ router.patch("/projects/:id/ready", async (req, res) => {
 });
 
 router.post("/projects/:id/ws-ticket", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
 
   const membership = await getMembership(projectId, userId);
@@ -281,7 +281,7 @@ router.post("/projects/:id/ws-ticket", async (req, res) => {
 });
 
 router.get("/projects/:id/export", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
 
   const project = await db.query.projectsTable.findFirst({

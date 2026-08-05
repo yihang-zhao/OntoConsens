@@ -21,6 +21,7 @@ import type {
 
 import type {
   AuthCredentials,
+  AuthResponse,
   ErrorResponse,
   ExportPayload,
   HealthStatus,
@@ -153,9 +154,9 @@ export const getRegisterUrl = () => {
 /**
  * @summary Register a new account
  */
-export const register = async (authCredentials: AuthCredentials, options?: Parameters<typeof customFetch>[1]): Promise<User> => {
+export const register = async (authCredentials: AuthCredentials, options?: Parameters<typeof customFetch>[1]): Promise<AuthResponse> => {
 
-  return customFetch<User>(getRegisterUrl(),
+  return customFetch<AuthResponse>(getRegisterUrl(),
   {
     ...options,
     method: 'POST',
@@ -224,9 +225,9 @@ export const getLoginUrl = () => {
 /**
  * @summary Log in
  */
-export const login = async (authCredentials: AuthCredentials, options?: Parameters<typeof customFetch>[1]): Promise<User> => {
+export const login = async (authCredentials: AuthCredentials, options?: Parameters<typeof customFetch>[1]): Promise<AuthResponse> => {
 
-  return customFetch<User>(getLoginUrl(),
+  return customFetch<AuthResponse>(getLoginUrl(),
   {
     ...options,
     method: 'POST',

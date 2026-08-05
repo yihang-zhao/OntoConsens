@@ -31,6 +31,13 @@ export interface User {
   username: string;
 }
 
+export interface AuthResponse {
+  id: number;
+  username: string;
+  /** Bearer token to send as `Authorization: Bearer <token>` on subsequent requests. Stored client-side per browser tab (not a shared cookie), so multiple accounts can be signed in simultaneously in different tabs of the same browser. */
+  token: string;
+}
+
 export interface ProjectInput {
   /** @minLength 1 */
   name: string;

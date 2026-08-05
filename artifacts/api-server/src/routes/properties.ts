@@ -60,7 +60,7 @@ async function serializeProperty(
 }
 
 router.get("/projects/:id/properties", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
 
   const membership = await getMembership(projectId, userId);
@@ -88,7 +88,7 @@ router.get("/projects/:id/properties", async (req, res) => {
 });
 
 router.post("/projects/:id/properties", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
 
   const membership = await getMembership(projectId, userId);
@@ -143,7 +143,7 @@ router.post("/projects/:id/properties", async (req, res) => {
 });
 
 router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
   const propertyId = Number(req.params.propertyId);
 
@@ -188,7 +188,7 @@ router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
 });
 
 router.delete("/projects/:id/properties/:propertyId", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
   const propertyId = Number(req.params.propertyId);
 
@@ -228,7 +228,7 @@ router.delete("/projects/:id/properties/:propertyId", async (req, res) => {
 });
 
 router.post("/projects/:id/properties/:propertyId/agree", async (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.userId!;
   const projectId = Number(req.params.id);
   const propertyId = Number(req.params.propertyId);
 

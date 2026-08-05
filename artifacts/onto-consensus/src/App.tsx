@@ -4,6 +4,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
 import { ProtectedRoute } from '@/hooks/use-auth';
 import { useLogout } from '@workspace/api-client-react';
+import { clearAuthToken } from '@/lib/authToken';
 
 import Login from '@/pages/login';
 import Register from '@/pages/register';
@@ -41,7 +42,8 @@ function MainShell({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => {
     logout.mutate(undefined, {
-      onSuccess: () => {
+      onSettled: () => {
+        clearAuthToken();
         queryClient.clear();
         setLocation("/login");
       }

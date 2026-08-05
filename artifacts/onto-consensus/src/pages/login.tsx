@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useLogin, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { setAuthToken } from "@/lib/authToken";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -35,7 +36,8 @@ export default function Login() {
       { data: values },
       {
         onSuccess: (data) => {
-          queryClient.setQueryData(getGetMeQueryKey(), data);
+          setAuthToken(data.token);
+          queryClient.setQueryData(getGetMeQueryKey(), { id: data.id, username: data.username });
           setLocation("/");
         },
         onError: (error: any) => {

@@ -1,7 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
-import session from "express-session";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
@@ -32,23 +31,8 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-if (!process.env.SESSION_SECRET) {
-  throw new Error("SESSION_SECRET environment variable is required.");
-}
-
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    },
-  }),
-);
+// Auth is bearer-token based (see lib/auth.ts) rather than cookie sessions,
+// so each browser tab can hold its own independent login.
 
 app.use("/api", router);
 

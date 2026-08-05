@@ -2,7 +2,13 @@ import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
-import { hashPassword, verifyPassword } from "../lib/auth";
+import {
+  hashPassword,
+  verifyPassword,
+  createSessionToken,
+  destroySessionToken,
+  requireAuth,
+} from "../lib/auth";
 
 const router: IRouter = Router();
 
@@ -33,8 +39,8 @@ router.post("/auth/register", async (req, res) => {
     return;
   }
 
-  req.session.userId = user.id;
-  res.status(201).json({ id: user.id, username: user.username });
+  const token = createSessionToken(user.id);
+  res.status(201).json({ id: user.id, username: user.username, token });
 });
 
 router.post("/auth/login", async (req, res) => {
@@ -53,23 +59,21 @@ router.post("/auth/login", async (req, res) => {
     return;
   }
 
-  req.session.userId = user.id;
-  res.json({ id: user.id, username: user.username });
+  const token = createSessionToken(user.id);
+  res.json({ id: user.id, username: user.username, token });
 });
 
 router.post("/auth/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.status(204).end();
-  });
+  const header = req.headers.authorization;
+  if (header?.startsWith("Bearer ")) {
+    destroySessionToken(header.slice("Bearer ".length).trim());
+  }
+  res.status(204).end();
 });
 
-router.get("/auth/me", async (req, res) => {
-  if (!req.session.userId) {
-    res.status(401).json({ error: "Not authenticated" });
-    return;
-  }
+router.get("/auth/me", requireAuth, async (req, res) => {
   const user = await db.query.usersTable.findFirst({
-    where: eq(usersTable.id, req.session.userId),
+    where: eq(usersTable.id, req.userId!),
   });
   if (!user) {
     res.status(401).json({ error: "Not authenticated" });
