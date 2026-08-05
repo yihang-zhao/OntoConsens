@@ -20,7 +20,6 @@ import {
   ChevronLeft, 
   Loader2, 
   Network, 
-  Users,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useProjectSocket } from "@/hooks/useProjectSocket";
@@ -226,24 +225,10 @@ export default function ProjectWorkspace() {
         </div>
       </header>
 
-      {/* Consensus status strip - live, no refresh needed */}
-      <div className={`flex items-center gap-2 px-4 py-2 text-xs font-medium shrink-0 border-b transition-colors ${allReady ? 'bg-green-50 text-green-700 border-green-100 dark:bg-green-950/30 dark:text-green-400 dark:border-green-900' : 'bg-muted/40 text-muted-foreground'}`}>
-        <Users className="w-3.5 h-3.5" />
-        {allReady ? (
-          <span>Everyone is ready — the shared consensus space is live. Matching property names proposed by different people are merged as agreed.</span>
-        ) : (
-          <span>
-            Waiting for everyone to mark ready before the shared space opens:{" "}
-            {project.members.map((m, i) => (
-              <span key={m.userId} className={m.ready ? "text-green-600 dark:text-green-400 font-semibold" : ""}>
-                {m.username}{m.ready ? " ✓" : ""}{i < project.members.length - 1 ? ", " : ""}
-              </span>
-            ))}
-            . Until then you only see your own proposals.
-          </span>
-        )}
+      {/* Sync status strip - live, no refresh needed */}
+      <div className="flex items-center justify-center px-4 py-2 shrink-0 border-b bg-muted/40">
         <span
-          className={`ml-auto flex items-center gap-1.5 text-[11px] font-medium ${
+          className={`flex items-center gap-1.5 text-[11px] font-medium ${
             syncStatus === "connected"
               ? "text-muted-foreground"
               : syncStatus === "reconnecting"
