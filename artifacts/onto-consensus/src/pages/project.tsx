@@ -241,9 +241,9 @@ export default function ProjectWorkspace() {
 
           {/* Sync status - plain text floating on the workspace, no bar/box */}
           <span
-            className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-medium tracking-wide ${
+            className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-semibold tracking-wide ${
               syncStatus === "connected"
-                ? "text-muted-foreground"
+                ? "text-green-600 dark:text-green-400"
                 : syncStatus === "reconnecting"
                   ? "text-amber-600 dark:text-amber-400"
                   : "text-destructive"
