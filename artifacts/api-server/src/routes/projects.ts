@@ -198,13 +198,20 @@ router.get("/projects/:id", async (req, res) => {
   const users = await db.query.usersTable.findMany();
   const usersById = new Map(users.map((u) => [u.id, u]));
 
-  const members = memberRows.map((m) => ({
-    userId: m.userId,
-    username: usersById.get(m.userId)?.username ?? "unknown",
-    colorSlot: m.colorSlot,
-    ready: m.ready,
-    isOwner: m.userId === project.ownerId,
-  }));
+  // colorSlot is assigned once, at first join, and never changes — sorting by
+  // it (rather than trusting row order from the DB) guarantees each member's
+  // avatar always renders in the same fixed position, regardless of rejoins,
+  // reconnects, or query plan differences.
+  const members = memberRows
+    .slice()
+    .sort((a, b) => a.colorSlot - b.colorSlot)
+    .map((m) => ({
+      userId: m.userId,
+      username: usersById.get(m.userId)?.username ?? "unknown",
+      colorSlot: m.colorSlot,
+      ready: m.ready,
+      isOwner: m.userId === project.ownerId,
+    }));
 
   const classes = await db.query.ontologyClassesTable.findMany({
     where: eq(ontologyClassesTable.projectId, projectId),

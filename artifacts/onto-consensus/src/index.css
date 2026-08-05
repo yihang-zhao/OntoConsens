@@ -78,9 +78,9 @@
   --ring: 20 20% 15%;
   
   /* Vibrant, clear member colors against the warm background */
-  --member-0: 210 100% 50%; /* Electric Blue */
-  --member-1: 330 100% 50%; /* Vibrant Magenta */
-  --member-2: 150 100% 35%; /* Deep Green */
+  --member-0: 210 100% 50%; /* Blue */
+  --member-1: 270 90% 55%; /* Purple */
+  --member-2: 45 100% 50%; /* Yellow */
 
   --radius: 0.5rem; /* Sharp, technical corners */
 }
