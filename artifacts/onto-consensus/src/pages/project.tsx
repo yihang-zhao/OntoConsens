@@ -32,7 +32,13 @@ export default function ProjectWorkspace() {
   const queryClient = useQueryClient();
 
   const { data: me } = useGetMe();
-  const { data: project, isLoading, error } = useGetProject(projectId);
+  // The WebSocket push is the primary sync mechanism, but a slow background
+  // poll runs alongside it as a safety net: if a socket message is ever
+  // dropped (or a reconnect races a broadcast), this guarantees everyone
+  // converges on the same state within seconds without needing to refresh.
+  const { data: project, isLoading, error } = useGetProject(projectId, {
+    query: { queryKey: getGetProjectQueryKey(projectId), refetchInterval: 10_000 },
+  });
   
   const setReady = useSetReady();
   const exportQuery = useExportProject(projectId, { 
@@ -47,7 +53,7 @@ export default function ProjectWorkspace() {
   // a member is in the workspace (not just once they're ready) so that ready
   // status, joins, and property changes all show up live for everyone without
   // needing a page refresh.
-  const { cursors, sendCursor } = useProjectSocket({
+  const { cursors, sendCursor, status: syncStatus, onlineUserIds } = useProjectSocket({
     projectId,
     enabled: Boolean(project && meMember),
     onProjectChanged: () => queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) }),
@@ -155,33 +161,40 @@ export default function ProjectWorkspace() {
         <div className="flex items-center gap-6">
           {/* Member Chips */}
           <div className="flex items-center gap-2 bg-muted/50 p-1.5 rounded-full border">
-            {project.members.map(member => (
-              <Tooltip key={member.userId}>
-                <TooltipTrigger asChild>
-                  <div className="relative group">
-                    <Avatar 
-                      className={`w-8 h-8 border-2 transition-transform duration-200 ${member.ready ? 'scale-105 border-green-500 ring-2 ring-green-500/20' : 'border-transparent'}`}
-                    >
-                      <AvatarFallback 
-                        className="text-white text-xs font-semibold shadow-inner"
-                        style={{ backgroundColor: `hsl(var(--member-${member.colorSlot}))` }}
+            {project.members.map(member => {
+              // The green ring means "in this project right now" (has an open
+              // socket connection) — independent of readiness, so someone can
+              // be ready but not currently present, or present but not ready.
+              const isOnline = onlineUserIds.has(member.userId);
+              return (
+                <Tooltip key={member.userId}>
+                  <TooltipTrigger asChild>
+                    <div className="relative group">
+                      <Avatar 
+                        className={`w-8 h-8 border-2 transition-transform duration-200 ${isOnline ? 'scale-105 border-green-500 ring-2 ring-green-500/20' : 'border-transparent'}`}
                       >
-                        {member.username.substring(0, 2).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    {member.ready && (
-                      <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-card">
-                        <Check className="w-2.5 h-2.5" />
-                      </div>
-                    )}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="font-medium text-xs">
-                  {member.username} {member.userId === me?.id ? "(You)" : ""}
-                  {member.ready ? " - Ready for consensus" : " - Engineering..."}
-                </TooltipContent>
-              </Tooltip>
-            ))}
+                        <AvatarFallback 
+                          className="text-white text-xs font-semibold shadow-inner"
+                          style={{ backgroundColor: `hsl(var(--member-${member.colorSlot}))` }}
+                        >
+                          {member.username.substring(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      {member.ready && (
+                        <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-card">
+                          <Check className="w-2.5 h-2.5" />
+                        </div>
+                      )}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="font-medium text-xs">
+                    {member.username} {member.userId === me?.id ? "(You)" : ""}
+                    {" · "}{isOnline ? "In project" : "Not in project"}
+                    {member.ready ? " · Ready" : " · Not ready"}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
             
             {/* Empty slots placeholders */}
             {Array.from({ length: project.maxMembers - project.members.length }).map((_, i) => (
@@ -229,6 +242,26 @@ export default function ProjectWorkspace() {
             . Until then you only see your own proposals.
           </span>
         )}
+        <span
+          className={`ml-auto flex items-center gap-1.5 text-[11px] font-medium ${
+            syncStatus === "connected"
+              ? "text-muted-foreground"
+              : syncStatus === "reconnecting"
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-destructive"
+          }`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              syncStatus === "connected"
+                ? "bg-emerald-500"
+                : syncStatus === "reconnecting"
+                  ? "bg-amber-500 animate-pulse"
+                  : "bg-destructive animate-pulse"
+            }`}
+          />
+          {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
+        </span>
       </div>
 
       {/* Main Content Area */}

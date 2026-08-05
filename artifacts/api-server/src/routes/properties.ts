@@ -82,6 +82,64 @@ async function serializeProperty(
   };
 }
 
+// Before everyone in the project is ready, a member must not be able to see
+// anything about anyone else's activity on a property — not the real
+// proposer, not who else has agreed, not the true agreement count. That
+// includes properties that merged in one of your own proposals: from your
+// point of view it should look exactly like your own private proposal until
+// the shared space opens. This function builds that masked view.
+async function serializePropertyPrivate(
+  property: typeof propertiesTable.$inferSelect,
+  userId: number,
+) {
+  const viewer = await db.query.usersTable.findFirst({
+    where: eq(usersTable.id, userId),
+  });
+  const viewerMembership = await db.query.projectMembersTable.findFirst({
+    where: and(
+      eq(projectMembersTable.projectId, property.projectId),
+      eq(projectMembersTable.userId, userId),
+    ),
+  });
+
+  return {
+    id: property.id,
+    classId: property.classId,
+    name: property.name,
+    proposedByUserId: userId,
+    proposedByUsername: viewer?.username ?? "you",
+    proposedByColorSlot: viewerMembership?.colorSlot ?? 0,
+    createdAt: property.createdAt.toISOString(),
+    agreements: [
+      {
+        userId,
+        username: viewer?.username ?? "you",
+        colorSlot: viewerMembership?.colorSlot ?? 0,
+      },
+    ],
+    agreedByAll: false,
+  };
+}
+
+// Picks the masked or real serialization for a single viewer, consistently
+// across every endpoint that can return a property (list, create, rename,
+// agree) — so a member never learns about someone else's proposal or
+// agreement through an API response before the shared space opens, even if
+// their own action happened to merge into that property.
+async function serializePropertyForViewer(
+  property: typeof propertiesTable.$inferSelect,
+  userId: number,
+  projectId: number,
+) {
+  const members = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+  const allReady = members.length > 0 && members.every((m) => m.ready);
+  return allReady
+    ? serializeProperty(property, members.length)
+    : serializePropertyPrivate(property, userId);
+}
+
 router.get("/projects/:id/properties", async (req, res) => {
   const userId = req.userId!;
   const projectId = Number(req.params.id);
@@ -114,7 +172,9 @@ router.get("/projects/:id/properties", async (req, res) => {
   );
 
   const serialized = await Promise.all(
-    visible.map((p) => serializeProperty(p, members.length)),
+    visible.map((p) =>
+      allReady ? serializeProperty(p, members.length) : serializePropertyPrivate(p, userId),
+    ),
   );
   res.json(serialized);
 });
@@ -165,7 +225,7 @@ router.post("/projects/:id/properties", async (req, res) => {
       await db.insert(propertyAgreementsTable).values({ propertyId: existingMatch.id, userId });
     }
 
-    const result = await serializeProperty(existingMatch, members.length);
+    const result = await serializePropertyForViewer(existingMatch, userId, projectId);
     broadcastToProject(projectId, { type: "agreement_changed" });
     res.status(200).json(result);
     return;
@@ -189,7 +249,7 @@ router.post("/projects/:id/properties", async (req, res) => {
     .insert(propertyAgreementsTable)
     .values({ propertyId: property.id, userId });
 
-  const result = await serializeProperty(property, members.length);
+  const result = await serializePropertyForViewer(property, userId, projectId);
 
   broadcastToProject(projectId, { type: "property_created" });
 
@@ -260,7 +320,7 @@ router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
       .where(eq(propertyAgreementsTable.propertyId, propertyId));
     await db.delete(propertiesTable).where(eq(propertiesTable.id, propertyId));
 
-    const result = await serializeProperty(existingMatch, members.length);
+    const result = await serializePropertyForViewer(existingMatch, userId, projectId);
     broadcastToProject(projectId, { type: "property_deleted" });
     broadcastToProject(projectId, { type: "agreement_changed" });
     res.json(result);
@@ -273,7 +333,7 @@ router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
     .where(eq(propertiesTable.id, propertyId))
     .returning();
 
-  const result = await serializeProperty(updated ?? property, members.length);
+  const result = await serializePropertyForViewer(updated ?? property, userId, projectId);
 
   broadcastToProject(projectId, { type: "property_updated" });
 
@@ -349,10 +409,7 @@ router.post("/projects/:id/properties/:propertyId/agree", async (req, res) => {
     await db.insert(propertyAgreementsTable).values({ propertyId, userId });
   }
 
-  const members = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
-  const result = await serializeProperty(property, members.length);
+  const result = await serializePropertyForViewer(property, userId, projectId);
 
   broadcastToProject(projectId, { type: "agreement_changed" });
 

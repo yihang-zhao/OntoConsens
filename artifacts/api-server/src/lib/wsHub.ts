@@ -28,18 +28,33 @@ function consumeTicket(ticket: string | null): Ticket | undefined {
 interface ClientInfo {
   userId: number;
   projectId: number;
+  isAlive: boolean;
 }
 
 const clients = new Map<WebSocket, ClientInfo>();
 
 export type ServerEvent =
   | { type: "cursor"; userId: number; x: number; y: number }
+  | { type: "cursor_left"; userId: number }
+  | { type: "presence"; userIds: number[] }
   | { type: "property_created" }
   | { type: "property_updated" }
   | { type: "property_deleted" }
   | { type: "agreement_changed" }
   | { type: "member_joined" }
   | { type: "member_ready" };
+
+function onlineUserIds(projectId: number): number[] {
+  const ids = new Set<number>();
+  for (const info of clients.values()) {
+    if (info.projectId === projectId) ids.add(info.userId);
+  }
+  return Array.from(ids);
+}
+
+function broadcastPresence(projectId: number) {
+  broadcastToProject(projectId, { type: "presence", userIds: onlineUserIds(projectId) });
+}
 
 export function broadcastToProject(
   projectId: number,
@@ -54,8 +69,20 @@ export function broadcastToProject(
   }
 }
 
+const HEARTBEAT_INTERVAL_MS = 20_000;
+
 export function setupWebSocketServer(): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+
+  function leaveProject(socket: WebSocket) {
+    const info = clients.get(socket);
+    if (!info) return;
+    clients.delete(socket);
+    // Let everyone still in the project know this cursor is gone immediately,
+    // instead of leaving a stale cursor on screen until it times out client-side.
+    broadcastToProject(info.projectId, { type: "cursor_left", userId: info.userId });
+    broadcastPresence(info.projectId);
+  }
 
   wss.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const url = new URL(request.url ?? "", "http://localhost");
@@ -66,7 +93,15 @@ export function setupWebSocketServer(): WebSocketServer {
       return;
     }
 
-    clients.set(socket, { userId: ticket.userId, projectId: ticket.projectId });
+    clients.set(socket, { userId: ticket.userId, projectId: ticket.projectId, isAlive: true });
+    // Tell everyone (including this new connection) who's currently online,
+    // so avatar "in this project now" rings update live with no refresh.
+    broadcastPresence(ticket.projectId);
+
+    socket.on("pong", () => {
+      const info = clients.get(socket);
+      if (info) info.isAlive = true;
+    });
 
     socket.on("message", (raw) => {
       let data: unknown;
@@ -93,9 +128,28 @@ export function setupWebSocketServer(): WebSocketServer {
     });
 
     socket.on("close", () => {
-      clients.delete(socket);
+      leaveProject(socket);
+    });
+    socket.on("error", () => {
+      leaveProject(socket);
     });
   });
+
+  // Detect zombie connections (e.g. a laptop that went to sleep, or a network
+  // drop that never sent a close frame) so their cursors don't linger forever
+  // and so the server's client list stays accurate for broadcasts.
+  const heartbeat = setInterval(() => {
+    for (const [socket, info] of clients) {
+      if (!info.isAlive) {
+        socket.terminate();
+        leaveProject(socket);
+        continue;
+      }
+      info.isAlive = false;
+      socket.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  wss.on("close", () => clearInterval(heartbeat));
 
   return wss;
 }

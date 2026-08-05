@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback, useEffect } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetProject,
@@ -34,6 +34,27 @@ const NODE_WIDTH = 220;
 const NODE_HEIGHT = 64;
 const ROW_HEIGHT = 220;
 const COL_GAP = 40;
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2.5;
+
+interface ViewTransform {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function distanceBetween(a: { clientX: number; clientY: number }, b: { clientX: number; clientY: number }): number {
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+function midpointOf(a: { clientX: number; clientY: number }, b: { clientX: number; clientY: number }) {
+  return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+}
 
 function layoutClasses(
   classes: OntologyClass[],
@@ -93,11 +114,42 @@ export function GraphCanvas({
   const [editingProperty, setEditingProperty] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState("");
 
+  // The board never uses native scrolling — panning and zooming are handled
+  // entirely by this transform, driven by explicit gestures (right-click
+  // drag, trackpad two-finger slide, touch drag, wheel/pinch to zoom) so the
+  // page itself never scrolls or bounces.
+  const [view, setView] = useState<ViewTransform>({ x: 40, y: 20, zoom: 1 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  const panDragRef = useRef<{ lastX: number; lastY: number } | null>(null);
+  const touchPanRef = useRef<{ lastX: number; lastY: number } | null>(null);
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+
+  const zoomAt = useCallback((screenX: number, screenY: number, factor: number) => {
+    setView((prev) => {
+      const newZoom = clamp(prev.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+      const ratio = newZoom / prev.zoom;
+      return {
+        x: screenX - (screenX - prev.x) * ratio,
+        y: screenY - (screenY - prev.y) * ratio,
+        zoom: newZoom,
+      };
+    });
+  }, []);
+
+  const panBy = useCallback((dx: number, dy: number) => {
+    setView((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+  }, []);
+
+  // Same safety-net polling as the project page: the socket push should make
+  // this a no-op in practice, but it guarantees eventual consistency if a
+  // broadcast is ever missed.
   const { data: project } = useGetProject(projectId, {
-    query: { queryKey: getGetProjectQueryKey(projectId) },
+    query: { queryKey: getGetProjectQueryKey(projectId), refetchInterval: 10_000 },
   });
   const { data: properties } = useListProperties(projectId, {
-    query: { queryKey: getListPropertiesQueryKey(projectId) },
+    query: { queryKey: getListPropertiesQueryKey(projectId), refetchInterval: 10_000 },
   });
 
   const createProperty = useCreateProperty();
@@ -132,14 +184,120 @@ export function GraphCanvas({
     return map;
   }, [properties]);
 
+  // Cursor coordinates are sent in content-local space (i.e. as if zoom=1,
+  // pan=0) so every viewer renders them correctly regardless of their own
+  // individual pan/zoom state.
   const handleMouseMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (!sharedModeEnabled) return;
+      if (panDragRef.current) return;
       const rect = event.currentTarget.getBoundingClientRect();
-      sendCursor(event.clientX - rect.left, event.clientY - rect.top);
+      const { x, y, zoom } = viewRef.current;
+      const contentX = (event.clientX - rect.left - x) / zoom;
+      const contentY = (event.clientY - rect.top - y) / zoom;
+      sendCursor(contentX, contentY);
     },
     [sendCursor, sharedModeEnabled],
   );
+
+  // Mouse wheel: notches (an actual scroll wheel) zoom; ctrl/cmd+wheel
+  // (trackpad pinch, which browsers synthesize as ctrl+wheel) also zooms.
+  // A plain wheel event carrying a horizontal component, or with the small
+  // continuous deltas trackpads produce for a two-finger slide, pans instead
+  // — there's no perfect way to tell a mouse wheel from a trackpad scroll at
+  // the DOM event level, so this mirrors the heuristic other canvas apps use.
+  const handleWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const rect = event.currentTarget.getBoundingClientRect();
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+
+      if (event.ctrlKey || event.metaKey) {
+        zoomAt(screenX, screenY, Math.exp(-event.deltaY * 0.01));
+        return;
+      }
+      const looksLikeTrackpad = event.deltaX !== 0 || !Number.isInteger(event.deltaY) || Math.abs(event.deltaY) < 40;
+      if (looksLikeTrackpad) {
+        panBy(-event.deltaX, -event.deltaY);
+      } else {
+        zoomAt(screenX, screenY, Math.exp(-event.deltaY * 0.002));
+      }
+    },
+    [panBy, zoomAt],
+  );
+
+  // Right mouse button drag pans the board; left button is reserved for
+  // interacting with classes/properties, so panning never fights with them.
+  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 2) return;
+    event.preventDefault();
+    panDragRef.current = { lastX: event.clientX, lastY: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = panDragRef.current;
+      if (!drag) return;
+      const dx = event.clientX - drag.lastX;
+      const dy = event.clientY - drag.lastY;
+      panDragRef.current = { lastX: event.clientX, lastY: event.clientY };
+      panBy(dx, dy);
+    },
+    [panBy],
+  );
+
+  const stopPointerPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panDragRef.current) {
+      panDragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+  }, []);
+
+  // Touch: a single finger drags to pan; two fingers pinch to zoom (anchored
+  // at the midpoint between them) — no native touch scrolling is involved.
+  const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length === 1) {
+      touchPanRef.current = { lastX: event.touches[0].clientX, lastY: event.touches[0].clientY };
+      pinchRef.current = null;
+    } else if (event.touches.length === 2) {
+      touchPanRef.current = null;
+      pinchRef.current = { distance: distanceBetween(event.touches[0], event.touches[1]), zoom: viewRef.current.zoom };
+    }
+  }, []);
+
+  const handleTouchMove = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      if (event.touches.length === 1 && touchPanRef.current) {
+        const touch = event.touches[0];
+        const dx = touch.clientX - touchPanRef.current.lastX;
+        const dy = touch.clientY - touchPanRef.current.lastY;
+        touchPanRef.current = { lastX: touch.clientX, lastY: touch.clientY };
+        panBy(dx, dy);
+      } else if (event.touches.length === 2 && pinchRef.current) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const distance = distanceBetween(event.touches[0], event.touches[1]);
+        const mid = midpointOf(event.touches[0], event.touches[1]);
+        const factor = (distance / pinchRef.current.distance) * (pinchRef.current.zoom / viewRef.current.zoom);
+        zoomAt(mid.x - rect.left, mid.y - rect.top, factor);
+      }
+    },
+    [panBy, zoomAt],
+  );
+
+  const handleTouchEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length === 0) {
+      touchPanRef.current = null;
+      pinchRef.current = null;
+    } else if (event.touches.length === 1) {
+      pinchRef.current = null;
+      touchPanRef.current = { lastX: event.touches[0].clientX, lastY: event.touches[0].clientY };
+    }
+  }, []);
 
   useEffect(() => {
     setAddingToClass(null);
@@ -167,11 +325,28 @@ export function GraphCanvas({
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
-      className="relative h-full w-full overflow-auto bg-[radial-gradient(circle_at_1px_1px,theme(colors.border)_1px,transparent_0)] [background-size:24px_24px]"
+      onWheel={handleWheel}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={stopPointerPan}
+      onPointerLeave={stopPointerPan}
+      onPointerCancel={stopPointerPan}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ touchAction: "none" }}
+      className="relative h-full w-full overflow-hidden bg-[radial-gradient(circle_at_1px_1px,theme(colors.border)_1px,transparent_0)] [background-size:24px_24px]"
     >
       <div
-        className="relative"
-        style={{ width, height, minWidth: "100%", padding: "40px" }}
+        className="absolute left-0 top-0"
+        style={{
+          width,
+          height,
+          padding: "40px",
+          transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
+          transformOrigin: "0 0",
+        }}
       >
         <svg
           className="pointer-events-none absolute left-0 top-0"
@@ -259,7 +434,13 @@ export function GraphCanvas({
                             autoFocus
                             value={editDraft}
                             onChange={(e) => setEditDraft(e.target.value)}
-                            onBlur={() => setEditingProperty(null)}
+                            onBlur={(e) => {
+                              // Losing focus (click elsewhere, tab away, etc.)
+                              // must not silently discard the edit — commit it
+                              // just like pressing Enter would, and only
+                              // cancel outright if the field was left empty.
+                              e.currentTarget.form?.requestSubmit();
+                            }}
                             className="h-7 w-28 rounded-full border border-primary bg-background px-3 text-xs outline-none"
                           />
                         </form>
@@ -352,7 +533,13 @@ export function GraphCanvas({
                       value={draftName}
                       placeholder="Property name"
                       onChange={(e) => setDraftName(e.target.value)}
-                      onBlur={() => setAddingToClass(null)}
+                      onBlur={(e) => {
+                        // Same rationale as the edit form: clicking away must
+                        // commit a non-empty draft rather than silently drop
+                        // it. The submit handler itself no-ops on empty input
+                        // and still closes the form.
+                        e.currentTarget.form?.requestSubmit();
+                      }}
                       className="h-7 w-28 rounded-full border border-primary bg-background px-3 text-xs outline-none"
                     />
                   </form>
