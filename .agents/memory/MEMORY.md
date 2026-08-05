@@ -1,0 +1,3 @@
+- [Orval zod codegen breaks with catalog: zod pin](orval-zod-catalog-version.md) — fix before any multipart/file-upload or integer-field OpenAPI codegen.
+- [n3 package has no TypeScript types](n3-turtle-types.md) — write a local ambient .d.ts, no @types/n3 exists.
+- [Design subagent + main-agent color tokens](design-subagent-color-tokens.md) — reconcile per-entity color systems via shared CSS vars, not hardcoded palettes.

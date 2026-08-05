@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: OntoConsensus API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: projects
+    description: Project management
+  - name: properties
+    description: Class property proposals and consensus
 paths:
   /healthz:
     get:
@@ -24,7 +30,336 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthCredentials"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid input or username taken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthCredentials"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Log out
+      responses:
+        "204":
+          description: Logged out
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get the current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List projects the current user belongs to
+      responses:
+        "200":
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectSummary"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a project from an uploaded ontology file
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ProjectInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+        "400":
+          description: Invalid file or missing classes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/join:
+    post:
+      operationId: joinProject
+      tags: [projects]
+      summary: Join a project using an invite code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JoinProjectInput"
+      responses:
+        "200":
+          description: Joined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+        "400":
+          description: Invalid code or project full
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get project details, members and graph
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        "403":
+          description: Not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{id}/ready:
+    patch:
+      operationId: setReady
+      tags: [projects]
+      summary: Toggle current member's ready-for-consensus state
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReadyInput"
+      responses:
+        "200":
+          description: Updated member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+
+  /projects/{id}/ws-ticket:
+    post:
+      operationId: createWsTicket
+      tags: [projects]
+      summary: Create a short-lived ticket to open the realtime connection
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WsTicket"
+
+  /projects/{id}/properties:
+    get:
+      operationId: listProperties
+      tags: [properties]
+      summary: List properties visible to the current user for a project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Properties
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Property"
+    post:
+      operationId: createProperty
+      tags: [properties]
+      summary: Propose a new property on a class
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+
+  /projects/{id}/properties/{propertyId}:
+    patch:
+      operationId: updateProperty
+      tags: [properties]
+      summary: Refine the text of a property you proposed
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/PropertyId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+        "403":
+          description: Not your property
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: retractProperty
+      tags: [properties]
+      summary: Remove your own contribution (proposal or agreement) from a property
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/PropertyId"
+      responses:
+        "204":
+          description: Removed
+
+  /projects/{id}/properties/{propertyId}/agree:
+    post:
+      operationId: agreeProperty
+      tags: [properties]
+      summary: Add your color to a property stack to agree to retain it
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/PropertyId"
+      responses:
+        "200":
+          description: Updated property
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Property"
+
+  /projects/{id}/export:
+    get:
+      operationId: exportProject
+      tags: [projects]
+      summary: Export classes and fully-agreed properties as JSON
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Export file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportPayload"
+
 components:
+  parameters:
+    ProjectId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    PropertyId:
+      name: propertyId
+      in: path
+      required: true
+      schema:
+        type: integer
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +369,263 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    AuthCredentials:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+
+    User:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+
+    ProjectInput:
+      type: object
+      required: [name, file]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        file:
+          type: string
+          format: binary
+
+    JoinProjectInput:
+      type: object
+      required: [inviteCode]
+      properties:
+        inviteCode:
+          type: string
+
+    ReadyInput:
+      type: object
+      required: [ready]
+      properties:
+        ready:
+          type: boolean
+
+    PropertyInput:
+      type: object
+      required: [classId, name]
+      properties:
+        classId:
+          type: integer
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    PropertyUpdate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    WsTicket:
+      type: object
+      required: [ticket]
+      properties:
+        ticket:
+          type: string
+
+    Member:
+      type: object
+      required: [userId, username, colorSlot, ready, isOwner]
+      properties:
+        userId:
+          type: integer
+        username:
+          type: string
+        colorSlot:
+          type: integer
+        ready:
+          type: boolean
+        isOwner:
+          type: boolean
+
+    OntologyClass:
+      type: object
+      required: [id, uri, label]
+      properties:
+        id:
+          type: integer
+        uri:
+          type: string
+        label:
+          type: string
+
+    OntologyRelation:
+      type: object
+      required: [childId, parentId]
+      properties:
+        childId:
+          type: integer
+        parentId:
+          type: integer
+
+    ProjectSummary:
+      type: object
+      required:
+        [
+          id,
+          name,
+          inviteCode,
+          ownerId,
+          memberCount,
+          maxMembers,
+          createdAt,
+        ]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        inviteCode:
+          type: string
+        ownerId:
+          type: integer
+        memberCount:
+          type: integer
+        maxMembers:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    ProjectDetail:
+      type: object
+      required:
+        [
+          id,
+          name,
+          inviteCode,
+          ownerId,
+          maxMembers,
+          createdAt,
+          members,
+          classes,
+          relations,
+        ]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        inviteCode:
+          type: string
+        ownerId:
+          type: integer
+        maxMembers:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/Member"
+        classes:
+          type: array
+          items:
+            $ref: "#/components/schemas/OntologyClass"
+        relations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OntologyRelation"
+
+    PropertyAgreement:
+      type: object
+      required: [userId, username, colorSlot]
+      properties:
+        userId:
+          type: integer
+        username:
+          type: string
+        colorSlot:
+          type: integer
+
+    Property:
+      type: object
+      required:
+        [
+          id,
+          classId,
+          name,
+          proposedByUserId,
+          proposedByUsername,
+          proposedByColorSlot,
+          createdAt,
+          agreements,
+          agreedByAll,
+        ]
+      properties:
+        id:
+          type: integer
+        classId:
+          type: integer
+        name:
+          type: string
+        proposedByUserId:
+          type: integer
+        proposedByUsername:
+          type: string
+        proposedByColorSlot:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        agreements:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyAgreement"
+        agreedByAll:
+          type: boolean
+
+    ExportClass:
+      type: object
+      required: [uri, label, properties]
+      properties:
+        uri:
+          type: string
+        label:
+          type: string
+        properties:
+          type: array
+          items:
+            type: string
+
+    ExportPayload:
+      type: object
+      required: [projectName, exportedAt, classes]
+      properties:
+        projectName:
+          type: string
+        exportedAt:
+          type: string
+          format: date-time
+        classes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportClass"
