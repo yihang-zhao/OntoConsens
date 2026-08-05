@@ -3,3 +3,4 @@
 - [Design subagent + main-agent color tokens](design-subagent-color-tokens.md) — reconcile per-entity color systems via shared CSS vars, not hardcoded palettes.
 - [Gated realtime visibility + merge-by-name](gated-visibility-merge-by-name.md) — private-until-condition views must also show items the user has an agreement/stake in, not just items they authored.
 - [onBlur silently discarding inline-edit input](blur-discard-silent-loss.md) — Enter-only forms with onBlur=cancel drop real input with no error; looks like a sync bug.
+- [CSS transform translate+rotate pivot trap](css-transform-rotate-pivot-trap.md) -- radial layouts must position via trig + plain rotate, never combine translate+rotate with a custom origin.

@@ -32,19 +32,38 @@ interface LaidOutClass extends OntologyClass {
 
 // Each class renders as a circular badge (class label) surrounded by a ring
 // of tilted, petal-like tabs — one per property — radiating outward, similar
-// to flower petals / gear teeth. The pivot of every petal sits at the
-// badge's center (hidden behind the circle); only its outer portion is
-// visible beyond the circle's edge.
+// to flower petals / gear teeth. Every petal's *center point* is placed by
+// trigonometry at a fixed distance from the badge's center, then the petal
+// is rotated in place (plain `rotate()`, default center origin) to face
+// outward — this is deliberate: combining `translate()` and `rotate()` in a
+// single transform with a custom transform-origin does NOT pivot around the
+// translated position (the origin applies to the whole composed matrix, not
+// sequentially), so that approach silently flings rotated petals away from
+// the circle instead of anchoring them to it. Positioning by trig first and
+// rotating in place afterward sidesteps that trap entirely.
 const CIRCLE_SIZE = 128;
 const CIRCLE_RADIUS = CIRCLE_SIZE / 2;
 const PETAL_WIDTH = 56;
-const PETAL_VISIBLE_LENGTH = 86;
-const PETAL_HEIGHT = CIRCLE_RADIUS + PETAL_VISIBLE_LENGTH;
+const PETAL_LENGTH = 130;
+// How far the petal's inner edge tucks in *underneath* the circle, so it
+// reads as plugged into the badge with no gap, regardless of angle.
+const PETAL_OVERLAP = 30;
+const PETAL_CENTER_DIST = CIRCLE_RADIUS - PETAL_OVERLAP + PETAL_LENGTH / 2;
 // Square footprint per class node, sized to fit the full ring of petals
 // plus their counter-rotated name labels without clipping into neighbors.
-const NODE_SIZE = Math.round((PETAL_HEIGHT + 60) * 2);
-const ROW_HEIGHT = NODE_SIZE + 60;
-const COL_GAP = 70;
+const NODE_SIZE = Math.round((PETAL_CENTER_DIST + PETAL_LENGTH / 2 + 50) * 2);
+const ROW_HEIGHT = NODE_SIZE + 50;
+const COL_GAP = 60;
+
+/** Center point of a petal placed at `angle` degrees (0 = straight up,
+ * clockwise) around a circle centered at (originX, originY). */
+function petalCenter(angle: number, originX: number, originY: number) {
+  const rad = (angle * Math.PI) / 180;
+  return {
+    x: originX + Math.sin(rad) * PETAL_CENTER_DIST,
+    y: originY - Math.cos(rad) * PETAL_CENTER_DIST,
+  };
+}
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.5;
@@ -422,6 +441,7 @@ export function GraphCanvas({
             >
               {classProperties.map((property, i) => {
                 const angle = angleStep * i - 90 + angleOffset;
+                const center = petalCenter(angle, NODE_SIZE / 2, NODE_SIZE / 2);
                 const isMine = property.proposedByUserId === currentUserId;
                 const myAgreement = property.agreements.some((a) => a.userId === currentUserId);
                 const proposerColor = colorForSlot(property.proposedByColorSlot);
@@ -436,46 +456,50 @@ export function GraphCanvas({
                     key={property.id}
                     className="group/petal absolute"
                     style={{
-                      top: "50%",
-                      left: "50%",
+                      left: center.x - PETAL_WIDTH / 2,
+                      top: center.y - PETAL_LENGTH / 2,
                       width: PETAL_WIDTH,
-                      height: PETAL_HEIGHT,
-                      transformOrigin: "50% 100%",
-                      transform: `rotate(${angle}deg) translate(-50%, -100%)`,
+                      height: PETAL_LENGTH,
+                      transform: `rotate(${angle}deg)`,
                       zIndex: 5 + i,
                     }}
                   >
                     {isEditing ? (
-                      <div
-                        className="absolute left-1/2 top-3 w-24 -translate-x-1/2"
-                        style={{ transform: `translateX(-50%) rotate(${-angle}deg)` }}
-                      >
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            if (editDraft.trim()) {
-                              updateProperty.mutate(
-                                { id: projectId, propertyId: property.id, data: { name: editDraft.trim() } },
-                                { onSuccess: invalidateProperties },
-                              );
-                            }
-                            setEditingProperty(null);
-                          }}
-                        >
-                          <input
-                            autoFocus
-                            value={editDraft}
-                            onChange={(e) => setEditDraft(e.target.value)}
-                            onBlur={(e) => {
-                              // Losing focus (click elsewhere, tab away, etc.)
-                              // must not silently discard the edit — commit
-                              // it just like pressing Enter would, and only
-                              // cancel outright if the field was left empty.
-                              e.currentTarget.form?.requestSubmit();
+                      // Two-level nesting is required here: centering
+                      // (translateX) and counter-rotation (rotate) must be on
+                      // *separate* elements, or combining them in one
+                      // transform would pivot around the wrong point (same
+                      // trap as the outer petal placement above).
+                      <div className="absolute left-1/2 top-3 -translate-x-1/2">
+                        <div style={{ transform: `rotate(${-angle}deg)` }}>
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              if (editDraft.trim()) {
+                                updateProperty.mutate(
+                                  { id: projectId, propertyId: property.id, data: { name: editDraft.trim() } },
+                                  { onSuccess: invalidateProperties },
+                                );
+                              }
+                              setEditingProperty(null);
                             }}
-                            className="h-7 w-full rounded-full border border-primary bg-background px-2.5 text-center text-[11px] outline-none shadow-md"
-                          />
-                        </form>
+                          >
+                            <input
+                              autoFocus
+                              value={editDraft}
+                              onChange={(e) => setEditDraft(e.target.value)}
+                              onBlur={(e) => {
+                                // Losing focus (click elsewhere, tab away,
+                                // etc.) must not silently discard the edit —
+                                // commit it just like pressing Enter would,
+                                // and only cancel outright if the field was
+                                // left empty.
+                                e.currentTarget.form?.requestSubmit();
+                              }}
+                              className="h-7 w-24 rounded-full border border-primary bg-background px-2.5 text-center text-[11px] outline-none shadow-md"
+                            />
+                          </form>
+                        </div>
                       </div>
                     ) : (
                       <button
@@ -502,42 +526,46 @@ export function GraphCanvas({
                           borderWidth: 1.5,
                         }}
                       >
-                        <div
-                          className="absolute left-1/2 top-3 flex w-24 flex-col items-center gap-1"
-                          style={{ transform: `translateX(-50%) rotate(${-angle}deg)`, color: textColor }}
-                        >
-                          <span className="flex -space-x-1">
-                            {property.agreements.map((a) => (
-                              <span
-                                key={a.userId}
-                                className="h-2 w-2 rounded-full border border-background"
-                                style={{ background: colorForSlot(a.colorSlot).solid }}
-                              />
-                            ))}
-                          </span>
-                          <span className="line-clamp-2 text-center text-[11px] font-medium leading-tight">
-                            {property.name}
-                          </span>
+                        <div className="absolute left-1/2 top-3 -translate-x-1/2">
+                          <div
+                            className="flex w-24 flex-col items-center gap-1"
+                            style={{ transform: `rotate(${-angle}deg)`, color: textColor }}
+                          >
+                            <span className="flex -space-x-1">
+                              {property.agreements.map((a) => (
+                                <span
+                                  key={a.userId}
+                                  className="h-2 w-2 rounded-full border border-background"
+                                  style={{ background: colorForSlot(a.colorSlot).solid }}
+                                />
+                              ))}
+                            </span>
+                            <span className="line-clamp-2 text-center text-[11px] font-medium leading-tight">
+                              {property.name}
+                            </span>
+                          </div>
                         </div>
                       </button>
                     )}
 
                     {canDelete && !isEditing && (
-                      <button
-                        type="button"
-                        aria-label="Remove your contribution"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          retractProperty.mutate(
-                            { id: projectId, propertyId: property.id },
-                            { onSuccess: invalidateProperties },
-                          );
-                        }}
-                        className="absolute left-1/2 top-1 z-40 hidden h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] leading-none text-destructive-foreground group-hover/petal:flex"
-                        style={{ transform: `translateX(-50%) rotate(${-angle}deg)` }}
-                      >
-                        ×
-                      </button>
+                      <div className="absolute left-1/2 top-1 -translate-x-1/2">
+                        <button
+                          type="button"
+                          aria-label="Remove your contribution"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            retractProperty.mutate(
+                              { id: projectId, propertyId: property.id },
+                              { onSuccess: invalidateProperties },
+                            );
+                          }}
+                          className="z-40 hidden h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] leading-none text-destructive-foreground group-hover/petal:flex"
+                          style={{ transform: `rotate(${-angle}deg)` }}
+                        >
+                          ×
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
@@ -547,24 +575,22 @@ export function GraphCanvas({
                   and neutral until clicked. */}
               {(() => {
                 const angle = angleStep * classProperties.length - 90 + angleOffset;
+                const center = petalCenter(angle, NODE_SIZE / 2, NODE_SIZE / 2);
                 return (
                   <div
                     className="absolute"
                     style={{
-                      top: "50%",
-                      left: "50%",
+                      left: center.x - PETAL_WIDTH / 2,
+                      top: center.y - PETAL_LENGTH / 2,
                       width: PETAL_WIDTH,
-                      height: PETAL_HEIGHT,
-                      transformOrigin: "50% 100%",
-                      transform: `rotate(${angle}deg) translate(-50%, -100%)`,
+                      height: PETAL_LENGTH,
+                      transform: `rotate(${angle}deg)`,
                       zIndex: 5 + classProperties.length,
                     }}
                   >
                     {isAdding ? (
-                      <div
-                        className="absolute left-1/2 top-3 w-24 -translate-x-1/2"
-                        style={{ transform: `translateX(-50%) rotate(${-angle}deg)` }}
-                      >
+                      <div className="absolute left-1/2 top-3 -translate-x-1/2">
+                       <div style={{ transform: `rotate(${-angle}deg)` }}>
                         <form
                           onSubmit={(e) => {
                             e.preventDefault();
@@ -591,9 +617,10 @@ export function GraphCanvas({
                               // closes the form.
                               e.currentTarget.form?.requestSubmit();
                             }}
-                            className="h-7 w-full rounded-full border border-primary bg-background px-2.5 text-center text-[11px] outline-none shadow-md"
+                            className="h-7 w-24 rounded-full border border-primary bg-background px-2.5 text-center text-[11px] outline-none shadow-md"
                           />
                         </form>
+                        </div>
                       </div>
                     ) : (
                       <button
