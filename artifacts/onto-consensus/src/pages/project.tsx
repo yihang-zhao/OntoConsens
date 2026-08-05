@@ -225,30 +225,6 @@ export default function ProjectWorkspace() {
         </div>
       </header>
 
-      {/* Sync status strip - live, no refresh needed */}
-      <div className="flex items-center justify-center px-4 py-2 shrink-0 border-b bg-muted/40">
-        <span
-          className={`flex items-center gap-1.5 text-[11px] font-medium ${
-            syncStatus === "connected"
-              ? "text-muted-foreground"
-              : syncStatus === "reconnecting"
-                ? "text-amber-600 dark:text-amber-400"
-                : "text-destructive"
-          }`}
-        >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              syncStatus === "connected"
-                ? "bg-emerald-500"
-                : syncStatus === "reconnecting"
-                  ? "bg-amber-500 animate-pulse"
-                  : "bg-destructive animate-pulse"
-            }`}
-          />
-          {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
-        </span>
-      </div>
-
       {/* Main Content Area */}
       <div className="flex-1 flex min-h-0 relative">
         {/* Canvas Area (full width - the item list sidebar has been removed) */}
@@ -262,6 +238,19 @@ export default function ProjectWorkspace() {
               sharedModeEnabled={allReady}
             />
           )}
+
+          {/* Sync status - plain text floating on the workspace, no bar/box */}
+          <span
+            className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-medium tracking-wide ${
+              syncStatus === "connected"
+                ? "text-muted-foreground"
+                : syncStatus === "reconnecting"
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-destructive"
+            }`}
+          >
+            {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
+          </span>
         </main>
       </div>
 
