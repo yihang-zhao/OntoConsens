@@ -71,6 +71,14 @@ export default function Dashboard() {
   };
 
   const handleDeleteProject = (id: number) => {
+    // Optimistic removal: the card must vanish the instant the button is
+    // clicked, not after a round trip to the server. Strip it from the
+    // cached list immediately (and remember the previous list in case the
+    // request fails), then fire the actual mutation in the background.
+    const previousProjects = queryClient.getQueryData(getListProjectsQueryKey());
+    queryClient.setQueryData(getListProjectsQueryKey(), (old: any) =>
+      Array.isArray(old) ? old.filter((p: any) => p.id !== id) : old,
+    );
     deleteProject.mutate(
       { id },
       {
@@ -79,6 +87,9 @@ export default function Dashboard() {
         },
         onError: (err: any) => {
           console.error("Failed to delete project", err);
+          // Roll back -- the delete didn't actually happen, so put the
+          // project's card back instead of leaving it silently missing.
+          queryClient.setQueryData(getListProjectsQueryKey(), previousProjects);
         },
       },
     );
