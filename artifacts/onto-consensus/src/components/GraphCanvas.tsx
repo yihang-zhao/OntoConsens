@@ -241,6 +241,15 @@ export function GraphCanvas({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
+  // The transformed content layer's own DOM node — pan/zoom writes to its
+  // `style.transform` directly on every raw pointer/wheel event, bypassing
+  // React entirely, so the board tracks the input device with zero frames
+  // of latency. `view` (React state) still exists and is committed at most
+  // once per animation frame — it's what everything else (this file only
+  // reads `view` for one thing: the very same transform, so nothing else
+  // needs to re-render mid-gesture) eventually settles on, but the pixels
+  // on screen never wait for a React re-render to move.
+  const contentLayerRef = useRef<HTMLDivElement>(null);
   const [addingToClass, setAddingToClass] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
 
@@ -251,6 +260,33 @@ export function GraphCanvas({
   const [view, setView] = useState<ViewTransform>({ x: 40, y: 20, zoom: 1 });
   const viewRef = useRef(view);
   viewRef.current = view;
+  const pendingViewCommit = useRef(false);
+
+  const applyViewToDom = useCallback((v: ViewTransform) => {
+    const node = contentLayerRef.current;
+    if (node) {
+      node.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.zoom})`;
+    }
+  }, []);
+
+  // Every gesture step calls this: update the ref + DOM synchronously (so
+  // the visual result is never behind the input), then coalesce the
+  // React-state commit to once per animation frame instead of once per
+  // pointermove/wheel tick, since a drag or a trackpad zoom can fire far
+  // more often than the screen can even repaint.
+  const commitView = useCallback(
+    (next: ViewTransform) => {
+      viewRef.current = next;
+      applyViewToDom(next);
+      if (pendingViewCommit.current) return;
+      pendingViewCommit.current = true;
+      requestAnimationFrame(() => {
+        pendingViewCommit.current = false;
+        setView(viewRef.current);
+      });
+    },
+    [applyViewToDom],
+  );
 
   const panDragRef = useRef<{ lastX: number; lastY: number } | null>(null);
   const touchPanRef = useRef<{ lastX: number; lastY: number } | null>(null);
@@ -281,21 +317,21 @@ export function GraphCanvas({
 
   const zoomAt = useCallback((screenX: number, screenY: number, factor: number) => {
     markViewInteracting();
-    setView((prev) => {
-      const newZoom = clamp(prev.zoom * factor, MIN_ZOOM, MAX_ZOOM);
-      const ratio = newZoom / prev.zoom;
-      return {
-        x: screenX - (screenX - prev.x) * ratio,
-        y: screenY - (screenY - prev.y) * ratio,
-        zoom: newZoom,
-      };
+    const prev = viewRef.current;
+    const newZoom = clamp(prev.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+    const ratio = newZoom / prev.zoom;
+    commitView({
+      x: screenX - (screenX - prev.x) * ratio,
+      y: screenY - (screenY - prev.y) * ratio,
+      zoom: newZoom,
     });
-  }, [markViewInteracting]);
+  }, [markViewInteracting, commitView]);
 
   const panBy = useCallback((dx: number, dy: number) => {
     markViewInteracting();
-    setView((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
-  }, [markViewInteracting]);
+    const prev = viewRef.current;
+    commitView({ ...prev, x: prev.x + dx, y: prev.y + dy });
+  }, [markViewInteracting, commitView]);
 
   const stateTransition = { type: "spring", stiffness: 260, damping: 28 } as const;
   const activeTransition = isViewInteracting ? { duration: 0 } : stateTransition;
@@ -346,7 +382,13 @@ export function GraphCanvas({
 
   // Cursor coordinates are sent in content-local space (i.e. as if zoom=1,
   // pan=0) so every viewer renders them correctly regardless of their own
-  // individual pan/zoom state.
+  // individual pan/zoom state. Raw mousemove can fire far more often than
+  // the socket (or anyone receiving it) needs — coalesced to at most once
+  // per animation frame, same pattern as the pan/zoom commit above, so a
+  // fast mouse can't flood the connection or force extra re-renders on
+  // every other viewer's cursor overlay.
+  const pendingCursorSend = useRef<{ x: number; y: number } | null>(null);
+  const cursorSendScheduled = useRef(false);
   const handleMouseMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (!sharedModeEnabled) return;
@@ -355,7 +397,13 @@ export function GraphCanvas({
       const { x, y, zoom } = viewRef.current;
       const contentX = (event.clientX - rect.left - x) / zoom;
       const contentY = (event.clientY - rect.top - y) / zoom;
-      sendCursor(contentX, contentY);
+      pendingCursorSend.current = { x: contentX, y: contentY };
+      if (cursorSendScheduled.current) return;
+      cursorSendScheduled.current = true;
+      requestAnimationFrame(() => {
+        cursorSendScheduled.current = false;
+        if (pendingCursorSend.current) sendCursor(pendingCursorSend.current.x, pendingCursorSend.current.y);
+      });
     },
     [sendCursor, sharedModeEnabled],
   );
@@ -536,6 +584,7 @@ export function GraphCanvas({
       className="relative h-full w-full overflow-hidden"
     >
       <div
+        ref={contentLayerRef}
         className="absolute left-0 top-0"
         style={{
           width,
