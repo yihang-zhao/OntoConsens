@@ -324,6 +324,9 @@ export default function Dashboard() {
 
       <main className="flex-1 container mx-auto px-4 py-8">
         <div className="mb-8">
+          {me && (
+            <p className="text-sm text-muted-foreground mb-1">Hello, {me.username}</p>
+          )}
           <h1 className="text-3xl font-bold tracking-tight">Your Projects</h1>
         </div>
 
