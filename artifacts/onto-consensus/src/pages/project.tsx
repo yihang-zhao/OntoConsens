@@ -251,6 +251,7 @@ export default function ProjectWorkspace() {
               cursors={cursors}
               sendCursor={sendCursor}
               sharedModeEnabled={allReady}
+              ownSpaceLocked={isReady && !allReady}
             />
           )}
 

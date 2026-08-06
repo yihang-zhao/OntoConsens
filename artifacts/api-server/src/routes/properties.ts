@@ -57,6 +57,24 @@ async function getMembership(projectId: number, userId: number) {
   });
 }
 
+// Marking yourself ready is a one-way commitment (see the `/ready` route —
+// it can't be undone): the moment you do, your own private space is locked
+// as-is and you can no longer add, rename, or delete your own proposals
+// while waiting for the others. This only applies during the private phase
+// — once the shared space is open, "your individual space" no longer exists
+// as a concept and agree/retract there are ordinary shared-consensus
+// actions, not edits to a private space.
+async function isOwnSpaceLocked(
+  projectId: number,
+  membership: { ready: boolean },
+): Promise<boolean> {
+  if (!membership.ready) return false;
+  const members = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+  return !(await isProjectFullyReady(projectId, members));
+}
+
 function normalizeName(name: string): string {
   return name.trim().toLowerCase();
 }
@@ -332,6 +350,10 @@ router.post("/projects/:id/properties", async (req, res) => {
     res.status(403).json({ error: "You are not a member of this project" });
     return;
   }
+  if (await isOwnSpaceLocked(projectId, membership)) {
+    res.status(403).json({ error: "You marked yourself ready, so you can no longer add properties" });
+    return;
+  }
 
   const parsed = CreatePropertyBody.safeParse(req.body);
   if (!parsed.success) {
@@ -485,6 +507,10 @@ router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
     res.status(403).json({ error: "You are not a member of this project" });
     return;
   }
+  if (await isOwnSpaceLocked(projectId, membership)) {
+    res.status(403).json({ error: "You marked yourself ready, so you can no longer edit properties" });
+    return;
+  }
 
   const parsed = UpdatePropertyBody.safeParse(req.body);
   if (!parsed.success) {
@@ -567,6 +593,10 @@ router.delete("/projects/:id/properties/:propertyId", async (req, res) => {
   const membership = await getMembership(projectId, userId);
   if (!membership) {
     res.status(403).json({ error: "You are not a member of this project" });
+    return;
+  }
+  if (await isOwnSpaceLocked(projectId, membership)) {
+    res.status(403).json({ error: "You marked yourself ready, so you can no longer remove properties" });
     return;
   }
 

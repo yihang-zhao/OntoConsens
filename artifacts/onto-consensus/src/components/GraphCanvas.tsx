@@ -22,6 +22,12 @@ interface GraphCanvasProps {
   /** True once every project member has marked ready — the merged consensus
    * space (shared properties + live cursors) only appears then. */
   sharedModeEnabled: boolean;
+  /** True once the current user has marked themselves ready but the shared
+   * space hasn't opened yet (still waiting on others) — their own private
+   * space is frozen as a one-way commitment, so add/edit/remove on their
+   * own proposals must be disabled client-side too (the server also
+   * rejects them, but this avoids a round-trip error). */
+  ownSpaceLocked: boolean;
 }
 
 interface LaidOutClass extends OntologyClass {
@@ -254,6 +260,7 @@ export function GraphCanvas({
   cursors,
   sendCursor,
   sharedModeEnabled,
+  ownSpaceLocked,
 }: GraphCanvasProps) {
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -857,7 +864,8 @@ export function GraphCanvas({
           // only grows past 7 once a class actually needs more slots than
           // that while still showing an add button — an edge case shared
           // mode newly allows before its own cap kicks in.
-          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + (atCap ? 0 : 1));
+          const showAddButton = !atCap && !ownSpaceLocked;
+          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + (showAddButton ? 0 : 1));
           const angleStep = 360 / slotCount;
           // A fixed offset keeps petals from landing on the cardinal
           // directions (which, for even slot counts, would make them look
@@ -920,18 +928,20 @@ export function GraphCanvas({
                   >
                     <button
                       type="button"
-                      disabled={isOptimistic}
+                      disabled={isOptimistic || ownSpaceLocked}
                       title={
                         isOptimistic
                           ? `${property.name} — saving…`
-                          : docked
-                            ? `${property.name} — fully agreed`
-                            : hasMyAgreement
-                              ? "Click to remove your agreement"
-                              : "Click to agree"
+                          : ownSpaceLocked
+                            ? `${property.name} — your space is locked; you marked ready`
+                            : docked
+                              ? `${property.name} — fully agreed`
+                              : hasMyAgreement
+                                ? "Click to remove your agreement"
+                                : "Click to agree"
                       }
                       onClick={() => {
-                        if (isOptimistic) return;
+                        if (isOptimistic || ownSpaceLocked) return;
                         if (hasMyAgreement) {
                           retractProperty.mutate(
                             { id: projectId, propertyId: property.id },
@@ -1089,7 +1099,7 @@ export function GraphCanvas({
                   mode. The backend still owns the actual limit check; this
                   is just the affordance disappearing so there's nothing to
                   click that could only ever fail. */}
-              {!atCap && (() => {
+              {showAddButton && (() => {
                 const angle = angleStep * classProperties.length - 90 + angleOffset;
                 const center = petalCenter(angle, nodeSize / 2, nodeSize / 2, PETAL_CENTER_DIST);
                 return (
