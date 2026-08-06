@@ -347,6 +347,12 @@ export function GraphCanvas({
 
   const invalidateProperties = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) });
+    // `atPropertyCap` (which decides whether the add-property affordance
+    // shows) lives on `project.classes`, not on the properties list — so an
+    // add that pushes this member to their cap must also refresh the
+    // project query, or the "+" petal would keep showing (and failing) until
+    // the next 10s background poll happens to catch up.
+    queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
   }, [queryClient, projectId]);
 
   const membersById = useMemo(() => {
