@@ -1,6 +1,14 @@
-import { useMemo, useRef, useState, useCallback, useEffect, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Transition } from "framer-motion";
 import {
   useGetProject,
   getGetProjectQueryKey,
@@ -174,6 +182,80 @@ function labelGrowsUpward(petalAngle: number, rotationDeg: number): boolean {
   const localUpCompass = ((rotationDeg % 360) + 360) % 360;
   const localDownCompass = (localUpCompass + 180) % 360;
   return Math.abs(signedAngleDiff(localUpCompass, petalAngle)) < Math.abs(signedAngleDiff(localDownCompass, petalAngle));
+}
+
+// A property's name label. Broken out into its own component (rather than an
+// inline closure in the render loop) purely so it can hold its own
+// `useState`/`useLayoutEffect` for measuring its own rendered height — every
+// other animated value on a petal (its position, its rotation, this box's
+// `left`) is a plain number that Framer Motion can tween continuously frame
+// to frame, and this box's `top` needs to be exactly that too, or it's the
+// odd one out whenever a sibling deletion reshuffles indices and this
+// particular label crosses the `growUp` fold (roughly the ring's left/right
+// side): every other petal just slides to its new spot; this one used to
+// jump completely because it doesn't move (like the others) so much as
+// switch which of its own edges is even pinned.
+//
+// The box is always anchored via a single `top`, never `bottom` — when it
+// needs to grow upward (away from the node, on the fold's far side), `top`
+// is computed as `labelCenterY - measuredHeight` so the box's *bottom* edge
+// still lands exactly on the pinned node-side point, without ever touching
+// a second CSS position key. Framer Motion sees one continuous numeric
+// value to interpolate either way, exactly like `left` and `rotate`, so
+// crossing the fold now animates smoothly instead of snapping.
+//
+// The very first render (before layout has measured anything) assumes
+// height 0; `useLayoutEffect` corrects it synchronously before the browser
+// paints, so that guess is never actually visible on screen.
+function PropertyLabel({
+  name,
+  growUp,
+  left,
+  labelCenterY,
+  rotate,
+  transition,
+}: {
+  name: string;
+  growUp: boolean;
+  left: number;
+  labelCenterY: number;
+  rotate: number;
+  transition: Transition;
+}) {
+  const [height, setHeight] = useState(0);
+  const elRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const measured = elRef.current?.offsetHeight ?? 0;
+    if (measured !== height) setHeight(measured);
+  });
+
+  const top = growUp ? labelCenterY - height : labelCenterY;
+
+  return (
+    <motion.div
+      ref={elRef}
+      initial={false}
+      animate={{ left, top, rotate }}
+      transition={transition}
+      className="pointer-events-none absolute flex flex-col"
+      style={{
+        width: LABEL_WIDTH,
+        zIndex: 30,
+        transformOrigin: growUp ? "50% 100%" : "50% 0%",
+      }}
+    >
+      <span
+        className="line-clamp-3 w-full text-center text-[10px] font-medium leading-tight text-foreground [overflow-wrap:anywhere]"
+        style={{
+          textShadow:
+            "0 0 3px hsl(var(--background)), 0 0 3px hsl(var(--background)), 0 0 5px hsl(var(--background))",
+        }}
+      >
+        {name}
+      </span>
+    </motion.div>
+  );
 }
 
 const MIN_ZOOM = 0.25;
@@ -1045,68 +1127,28 @@ export function GraphCanvas({
                       translate+rotate trap: the label needs its own
                       independent position and tilt in the same world-space
                       coordinate frame the petal itself is placed in. */}
-                  {!docked && (() => {
+                  {!docked && (
                     // `labelCenter` is the box's fixed INNER edge (nearest
                     // the node), not its center — a wrapped label must grow
                     // by adding lines on the outward side only, or the extra
                     // lines creep back toward the node and under the petal.
                     // Which local edge is actually "outward" flips with the
-                    // legibility fold (see `labelGrowsUpward`), so the box
-                    // is anchored via `top` (grows down) or `bottom` (grows
-                    // up) accordingly, each paired with a matching
-                    // `transformOrigin` so the rotation pivots on that same
-                    // fixed edge instead of a center that would otherwise
-                    // shift every time the line count changes.
-                    const growUp = labelGrowsUpward(angle, labelAngle);
-                    const left = labelCenter.x - LABEL_WIDTH / 2;
-                    // Framer Motion writes each animated style key straight to
-                    // the DOM element and never clears one that simply stops
-                    // appearing in a later `animate` call — it just leaves the
-                    // last value it wrote sitting there. Since `growUp`
-                    // flipping (crossing the fold near the ring's left/right
-                    // side, as an index shift from a sibling deletion can
-                    // trigger) switches which of `top`/`bottom` is even
-                    // present in this object, the *other* one's stale pixel
-                    // value from before the flip would otherwise stay glued
-                    // to the element. With both a real `top` and a real
-                    // `bottom` simultaneously set on this height-less
-                    // `position: absolute` box, the browser stretches it to
-                    // span the distance between them instead of sizing to its
-                    // text, which collapses the visible label to nothing.
-                    // Explicitly animating the inactive side to "auto" every
-                    // render guarantees it's always present in the object (so
-                    // Framer always writes over whatever pixel value was
-                    // there before) and never fights the active side for the
-                    // box's height.
-                    return (
-                      <motion.div
-                        initial={false}
-                        animate={
-                          growUp
-                            ? { left, bottom: nodeSize - labelCenter.y, top: "auto", rotate: labelAngle }
-                            : { left, top: labelCenter.y, bottom: "auto", rotate: labelAngle }
-                        }
-                        transition={activeTransition}
-                        className="pointer-events-none absolute flex flex-col"
-                        style={{
-                          width: LABEL_WIDTH,
-                          zIndex: 30,
-                          transformOrigin: growUp ? "50% 100%" : "50% 0%",
-                          justifyContent: growUp ? "flex-end" : "flex-start",
-                        }}
-                      >
-                        <span
-                          className="line-clamp-3 w-full text-center text-[10px] font-medium leading-tight text-foreground [overflow-wrap:anywhere]"
-                          style={{
-                            textShadow:
-                              "0 0 3px hsl(var(--background)), 0 0 3px hsl(var(--background)), 0 0 5px hsl(var(--background))",
-                          }}
-                        >
-                          {property.name}
-                        </span>
-                      </motion.div>
-                    );
-                  })()}
+                    // legibility fold (see `labelGrowsUpward`); `PropertyLabel`
+                    // handles that by always positioning via a single
+                    // continuous `top` (computed from its own measured
+                    // height when growing upward) so this animates exactly
+                    // like every other numeric value on the petal, including
+                    // when a sibling deletion reshuffles this one across the
+                    // fold.
+                    <PropertyLabel
+                      name={property.name}
+                      growUp={labelGrowsUpward(angle, labelAngle)}
+                      left={labelCenter.x - LABEL_WIDTH / 2}
+                      labelCenterY={labelCenter.y}
+                      rotate={labelAngle}
+                      transition={activeTransition}
+                    />
+                  )}
                   </div>
                 );
               })}
