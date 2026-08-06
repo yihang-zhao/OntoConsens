@@ -169,7 +169,6 @@ export default function Dashboard() {
                       </p>
                     )}
                     <DialogFooter>
-                      <Button type="button" variant="outline" onClick={() => setJoinOpen(false)}>Cancel</Button>
                       <Button type="submit" disabled={joinProject.isPending}>Join</Button>
                     </DialogFooter>
                   </form>
