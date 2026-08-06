@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -43,21 +42,14 @@ export default function Register() {
     },
   });
 
-  // Every error shown on this form -- whether a client-side validation
-  // message (too short, passwords don't match) or a server-reported one
-  // (username taken, generic failure) -- should vanish on its own after 1s,
-  // so this watches the error object as a whole rather than duplicating a
-  // setTimeout at each individual place an error can be set.
-  const clearTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => {
-    if (Object.keys(form.formState.errors).length === 0) return;
-    clearTimeout(clearTimer.current);
-    clearTimer.current = setTimeout(
-      () => form.clearErrors(["username", "password", "confirmPassword", "root" as "username"]),
-      1000
-    );
-    return () => clearTimeout(clearTimer.current);
-  }, [form.formState.errors, form]);
+  // Client-side validation failures (too short, passwords don't match) are
+  // set by the zod resolver itself, not by this component -- `handleSubmit`'s
+  // second argument fires exactly once whenever that happens, so this is the
+  // one place to schedule their auto-dismiss, mirroring the explicit
+  // setTimeout used for the server-reported errors below.
+  function onInvalid() {
+    setTimeout(() => form.clearErrors(["username", "password", "confirmPassword"]), 1000);
+  }
 
   function onSubmit(values: z.infer<typeof registerSchema>) {
     register.mutate(
@@ -72,10 +64,12 @@ export default function Register() {
           const message = error?.data?.error;
           if (message === "Username already taken") {
             form.setError("username", { message: "This username is already taken" });
+            setTimeout(() => form.clearErrors("username"), 1000);
           } else {
             form.setError("root", {
               message: message || "An error occurred during registration.",
             });
+            setTimeout(() => form.clearErrors("root"), 1000);
           }
         },
       }
@@ -98,7 +92,7 @@ export default function Register() {
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-4">
                 <FormField
                   control={form.control}
                   name="username"
