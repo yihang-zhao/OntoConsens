@@ -8,12 +8,12 @@ import { setAuthToken } from "@/lib/authToken";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Network } from "lucide-react";
 
 const loginSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters").max(32, "Username too long"),
-  password: z.string().min(6, "Password must be at least 6 characters").max(128, "Password too long"),
+  username: z.string().min(1),
+  password: z.string().min(1),
 });
 
 export default function Login() {
@@ -72,7 +72,6 @@ export default function Login() {
                       <FormControl>
                         <Input {...field} />
                       </FormControl>
-                      <FormMessage />
                     </FormItem>
                   )}
                 />
@@ -85,15 +84,14 @@ export default function Login() {
                       <FormControl>
                         <Input type="password" {...field} />
                       </FormControl>
-                      <FormMessage />
+                      {form.formState.errors.root && (
+                        <p className="text-sm font-medium text-destructive">
+                          {form.formState.errors.root.message}
+                        </p>
+                      )}
                     </FormItem>
                   )}
                 />
-                {form.formState.errors.root && (
-                  <p className="text-sm font-medium text-destructive">
-                    {form.formState.errors.root.message}
-                  </p>
-                )}
                 <Button type="submit" className="w-full" disabled={login.isPending}>
                   {login.isPending ? "Signing in..." : "Sign in"}
                 </Button>
