@@ -1,13 +1,15 @@
-import { Link } from "wouter";
-import { useListProjects, useCreateProject, useJoinProject, useDeleteProject, useGetMe, getListProjectsQueryKey } from "@workspace/api-client-react";
+import { Link, useLocation } from "wouter";
+import { useListProjects, useCreateProject, useJoinProject, useDeleteProject, useGetMe, useLogout, getListProjectsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { format } from "date-fns";
+import { clearAuthToken } from "@/lib/authToken";
 
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
@@ -25,7 +27,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2 } from "lucide-react";
+import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const createSchema = z.object({
@@ -43,12 +45,24 @@ export default function Dashboard() {
   const { data: me } = useGetMe();
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
-  
+  const [, setLocation] = useLocation();
+
   const createProject = useCreateProject();
   const joinProject = useJoinProject();
   const deleteProject = useDeleteProject();
+  const logout = useLogout();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const handleLogout = () => {
+    logout.mutate(undefined, {
+      onSettled: () => {
+        clearAuthToken();
+        queryClient.clear();
+        setLocation("/login");
+      },
+    });
+  };
 
   const handleDeleteProject = (id: number) => {
     deleteProject.mutate(
@@ -120,6 +134,19 @@ export default function Dashboard() {
             <span className="font-mono font-bold text-lg">OntoConsensus</span>
           </div>
           <div className="flex items-center gap-4">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLogout}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Sign out</TooltipContent>
+            </Tooltip>
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-2">
