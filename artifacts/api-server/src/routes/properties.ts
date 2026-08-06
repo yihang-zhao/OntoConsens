@@ -16,6 +16,12 @@ const router: IRouter = Router();
 
 router.use(requireAuth);
 
+// A distinct property name proposed by several members still counts once.
+// This cap is a pure backend constraint — the client is never told about it
+// (no count badge, no disabled "+" state); it just surfaces the error below
+// if a class is already full.
+const MAX_PROPERTIES_PER_CLASS = 9;
+
 async function getMembership(projectId: number, userId: number) {
   return db.query.projectMembersTable.findFirst({
     where: and(
@@ -212,6 +218,20 @@ router.post("/projects/:id/properties", async (req, res) => {
   });
 
   const existingMatch = await findMatchingProperty(projectId, parsed.data.classId, trimmedName);
+  // The 9-distinct-properties-per-class cap is enforced here only — the
+  // client has no knowledge of this limit at all (no count, no disabled
+  // state); it simply gets a plain error to show if it's ever hit. Agreeing
+  // with an existing name (the branch below) never adds a new row, so it
+  // never counts against the cap.
+  if (!existingMatch) {
+    const existingCount = await db.query.propertiesTable.findMany({
+      where: and(eq(propertiesTable.projectId, projectId), eq(propertiesTable.classId, parsed.data.classId)),
+    });
+    if (existingCount.length >= MAX_PROPERTIES_PER_CLASS) {
+      res.status(400).json({ error: `This class already has the maximum of ${MAX_PROPERTIES_PER_CLASS} properties` });
+      return;
+    }
+  }
   if (existingMatch) {
     // Someone else already proposed this exact property name for this class:
     // merge by recording the new proposer's agreement instead of duplicating.

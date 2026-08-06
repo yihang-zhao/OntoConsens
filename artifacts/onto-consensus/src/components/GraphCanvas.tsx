@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useCallback, useEffect, type PointerEvent as ReactPointerEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   useGetProject,
   getGetProjectQueryKey,
@@ -12,6 +13,7 @@ import {
 import type { OntologyClass, OntologyRelation, Property } from "@workspace/api-client-react";
 import { colorForSlot } from "@/lib/memberColors";
 import type { RemoteCursor } from "@/hooks/useProjectSocket";
+import { useToast } from "@/hooks/use-toast";
 
 interface GraphCanvasProps {
   projectId: number;
@@ -47,34 +49,55 @@ const PETAL_LENGTH = 64;
 // Clear space between the circle's edge and the nearest petal — the shape
 // must never touch the badge.
 const GAP_TO_NODE = 14;
-// Every class is capped at 9 distinct property names (a name proposed by
-// several members still counts once) — this bounds the ring to at most 9
-// evenly spaced slots, which is also why the node's footprint below can be a
-// fixed, calculated size instead of depending on how many properties exist.
+
+/** Distance from the circle's center to the middle of a floating (not yet
+ * fully agreed) petal. */
+const PETAL_CENTER_DIST = CIRCLE_RADIUS + GAP_TO_NODE + PETAL_LENGTH / 2;
+/** Outer edge of the whole petal ring — used to anchor connecting lines and
+ * property-name labels outside the ring instead of guessing a fixed offset. */
+const RING_OUTER_RADIUS = CIRCLE_RADIUS + GAP_TO_NODE + PETAL_LENGTH;
+const LABEL_DIST = RING_OUTER_RADIUS + 14;
+
+// Once every project member has agreed on a property, its petal "docks"
+// directly onto the node: it shrinks into a small upright chip that overlaps
+// the circle's edge instead of floating, tilted, out in the ring — a clear,
+// immediate visual contrast between settled and still-pending properties.
+const DOCK_DIST = CIRCLE_RADIUS - 5;
+const DOCK_WIDTH = 46;
+const DOCK_HEIGHT = 22;
+
+// How far past the label ring a connecting line must stop so it clears the
+// property-name badges instead of running underneath them. Comfortably
+// beyond LABEL_DIST (which already sits at the petal ring's outer edge) to
+// leave a clear visual gap before the line reaches either node.
+const LINE_CLEARANCE = LABEL_DIST + 40;
+
+// Mirrors the backend's per-class property limit purely so the "add
+// property" control can hide itself once a node is full — this is the one
+// place the frontend is allowed to know about the cap; every other rule
+// (rejecting a 10th property, the actual count check) still lives
+// server-side only.
 const MAX_PROPERTIES_PER_CLASS = 9;
 
-/** Distance from the circle's center to the middle of any petal — every
- * petal sits at the same radius; agreement is shown via colored dots inside
- * the petal, not by stacking layers at different distances. */
-const PETAL_CENTER_DIST = CIRCLE_RADIUS + GAP_TO_NODE + PETAL_LENGTH / 2;
-
-/** Square footprint big enough to fit the full ring of petals (bounded by
- * MAX_PROPERTIES_PER_CLASS, which only affects label crowding, not radius)
- * plus label overhang margin, without clipping into neighboring nodes. */
+/** Square footprint big enough to fit the full ring of petals plus label
+ * overhang, without clipping into neighboring nodes. */
 function computeNodeSize(): number {
-  const reach = CIRCLE_RADIUS + GAP_TO_NODE + PETAL_LENGTH;
-  return Math.round((reach + 50) * 2);
+  return Math.round((LABEL_DIST + 60) * 2);
 }
 const NODE_SIZE = computeNodeSize();
 
 /** Center point of a petal placed at `angle` degrees (0 = straight up,
  * clockwise) and `dist` px from a circle centered at (originX, originY). */
-function petalCenter(angle: number, originX: number, originY: number, dist: number = PETAL_CENTER_DIST) {
+function petalCenter(angle: number, originX: number, originY: number, dist: number) {
   const rad = (angle * Math.PI) / 180;
   return {
     x: originX + Math.sin(rad) * dist,
     y: originY - Math.cos(rad) * dist,
   };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 const MIN_ZOOM = 0.25;
@@ -86,10 +109,6 @@ interface ViewTransform {
   zoom: number;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 function distanceBetween(a: { clientX: number; clientY: number }, b: { clientX: number; clientY: number }): number {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 }
@@ -98,51 +117,65 @@ function midpointOf(a: { clientX: number; clientY: number }, b: { clientX: numbe
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
 }
 
+// Left-to-right pyramid layout: depth (generation) maps to the horizontal
+// axis instead of the vertical one, so the hierarchy narrows toward the root
+// on the left and fans out toward its leaves on the right. This is an
+// adaptive tidy-tree placement, not a fixed grid — each node's vertical slot
+// is derived from how many leaves its subtree contains, so it resolves into
+// a clean pyramid for any mix of branching and depth, not just one
+// pre-tuned case.
 function layoutClasses(
   classes: OntologyClass[],
   relations: OntologyRelation[],
   nodeSize: number,
 ): LaidOutClass[] {
   const rowHeight = nodeSize + 50;
-  const colGap = 60;
-  const childToParent = new Map<number, number>();
+  const colGap = 160;
+  const idSet = new Set(classes.map((c) => c.id));
+  const parentOf = new Map<number, number>();
+  const childrenOf = new Map<number, number[]>();
   for (const rel of relations) {
-    childToParent.set(rel.childId, rel.parentId);
+    if (!idSet.has(rel.childId) || !idSet.has(rel.parentId)) continue;
+    parentOf.set(rel.childId, rel.parentId);
+    const list = childrenOf.get(rel.parentId) ?? [];
+    list.push(rel.childId);
+    childrenOf.set(rel.parentId, list);
   }
 
-  const depthCache = new Map<number, number>();
-  function depthOf(id: number, guard = 0): number {
-    if (guard > classes.length) return 0;
-    if (depthCache.has(id)) return depthCache.get(id)!;
-    const parent = childToParent.get(id);
-    const depth = parent === undefined ? 0 : depthOf(parent, guard + 1) + 1;
-    depthCache.set(id, depth);
-    return depth;
+  const positions = new Map<number, { x: number; y: number; depth: number }>();
+  const visited = new Set<number>();
+  let leafCursor = 0;
+
+  // Returns the vertical slot (in leaf units) this node's subtree is
+  // centered on, so a parent with several children centers over their span.
+  function place(id: number, depth: number): number {
+    if (visited.has(id)) return leafCursor;
+    visited.add(id);
+    const kids = (childrenOf.get(id) ?? []).filter((k) => !visited.has(k));
+    let slot: number;
+    if (kids.length === 0) {
+      slot = leafCursor;
+      leafCursor += 1;
+    } else {
+      const childSlots = kids.map((k) => place(k, depth + 1));
+      slot = (Math.min(...childSlots) + Math.max(...childSlots)) / 2;
+    }
+    positions.set(id, { x: depth * (nodeSize + colGap), y: slot * rowHeight, depth });
+    return slot;
   }
 
-  const byDepth = new Map<number, OntologyClass[]>();
+  const roots = classes.filter((c) => !parentOf.has(c.id));
+  for (const root of roots) place(root.id, 0);
+  // Anything unreachable (orphaned by a cycle, defensively) still needs a
+  // slot so it isn't silently dropped from the canvas.
   for (const cls of classes) {
-    const depth = depthOf(cls.id);
-    const list = byDepth.get(depth) ?? [];
-    list.push(cls);
-    byDepth.set(depth, list);
+    if (!positions.has(cls.id)) {
+      positions.set(cls.id, { x: 0, y: leafCursor * rowHeight, depth: 0 });
+      leafCursor += 1;
+    }
   }
 
-  const laidOut: LaidOutClass[] = [];
-  const depths = Array.from(byDepth.keys()).sort((a, b) => a - b);
-  for (const depth of depths) {
-    const row = byDepth.get(depth)!;
-    row.forEach((cls, index) => {
-      laidOut.push({
-        ...cls,
-        depth,
-        x: index * (nodeSize + colGap),
-        y: depth * rowHeight,
-      });
-    });
-  }
-
-  return laidOut;
+  return classes.map((cls) => ({ ...cls, ...positions.get(cls.id)! }));
 }
 
 export function GraphCanvas({
@@ -153,6 +186,7 @@ export function GraphCanvas({
   sharedModeEnabled,
 }: GraphCanvasProps) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
   const [addingToClass, setAddingToClass] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -169,7 +203,31 @@ export function GraphCanvas({
   const touchPanRef = useRef<{ lastX: number; lastY: number } | null>(null);
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
 
+  // Every pan/zoom gesture funnels through zoomAt/panBy, so marking
+  // "interacting" there (rather than in each individual gesture handler)
+  // covers wheel, drag, touch-drag, and pinch alike. While this is true,
+  // every motion element below renders with a zero-duration transition
+  // instead of its normal spring/ease — the shapes, labels, and fill bands
+  // must track the view transform rigidly, with no catch-up animation, and
+  // only resume animating once a real state change happens after the user
+  // stops touching the canvas.
+  const [isViewInteracting, setIsViewInteracting] = useState(false);
+  const interactionEndTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const markViewInteracting = useCallback(() => {
+    setIsViewInteracting(true);
+    if (interactionEndTimer.current) clearTimeout(interactionEndTimer.current);
+    interactionEndTimer.current = setTimeout(() => setIsViewInteracting(false), 120);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (interactionEndTimer.current) clearTimeout(interactionEndTimer.current);
+    };
+  }, []);
+
   const zoomAt = useCallback((screenX: number, screenY: number, factor: number) => {
+    markViewInteracting();
     setView((prev) => {
       const newZoom = clamp(prev.zoom * factor, MIN_ZOOM, MAX_ZOOM);
       const ratio = newZoom / prev.zoom;
@@ -179,11 +237,16 @@ export function GraphCanvas({
         zoom: newZoom,
       };
     });
-  }, []);
+  }, [markViewInteracting]);
 
   const panBy = useCallback((dx: number, dy: number) => {
+    markViewInteracting();
     setView((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
-  }, []);
+  }, [markViewInteracting]);
+
+  const stateTransition = { type: "spring", stiffness: 260, damping: 28 } as const;
+  const activeTransition = isViewInteracting ? { duration: 0 } : stateTransition;
+  const fillTransition = { duration: isViewInteracting ? 0 : 0.25 };
 
   // Same safety-net polling as the project page: the socket push should make
   // this a no-op in practice, but it guarantees eventual consistency if a
@@ -396,7 +459,7 @@ export function GraphCanvas({
     800,
     (Math.max(1, ...laidOut.map((c) => c.x + nodeSize)) || nodeSize) + 80,
   );
-  const height = Math.max(400, (laidOut.at(-1)?.y ?? 0) + nodeSize + 50 + 40);
+  const height = Math.max(400, (Math.max(0, ...laidOut.map((c) => c.y)) || 0) + nodeSize + 80);
 
   const relations = project.relations;
   const positionById = new Map(laidOut.map((c) => [c.id, c]));
@@ -450,20 +513,33 @@ export function GraphCanvas({
             const child = positionById.get(rel.childId);
             const parent = positionById.get(rel.parentId);
             if (!child || !parent) return null;
-            // Connect at the circle's edge, not the full petal footprint, so
-            // arrows plug straight into the badges regardless of how many
-            // petals surround them.
-            const x1 = parent.x + 40 + nodeSize / 2;
-            const y1 = parent.y + 40 + nodeSize / 2 + CIRCLE_RADIUS;
-            const x2 = child.x + 40 + nodeSize / 2;
-            const y2 = child.y + 40 + nodeSize / 2 - CIRCLE_RADIUS;
-            const midY = (y1 + y2) / 2;
+            // Straight lines drawn along the true center-to-center axis
+            // between the two nodes (not a fixed horizontal offset), then
+            // pulled back from each end by LINE_CLEARANCE along that same
+            // direction — this generalizes correctly even when a parent and
+            // child aren't at the same vertical slot (e.g. a parent
+            // centered over several children), stopping just past each
+            // node's label ring instead of cutting through the badge or
+            // running underneath a property label.
+            const centerA = { x: parent.x + 40 + nodeSize / 2, y: parent.y + 40 + nodeSize / 2 };
+            const centerB = { x: child.x + 40 + nodeSize / 2, y: child.y + 40 + nodeSize / 2 };
+            const dx = centerB.x - centerA.x;
+            const dy = centerB.y - centerA.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            const x1 = centerA.x + ux * LINE_CLEARANCE;
+            const y1 = centerA.y + uy * LINE_CLEARANCE;
+            const x2 = centerB.x - ux * LINE_CLEARANCE;
+            const y2 = centerB.y - uy * LINE_CLEARANCE;
             return (
-              <path
+              <line
                 key={i}
-                d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
-                fill="none"
-                stroke="hsl(var(--muted-foreground))"
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="hsl(var(--muted-foreground) / 0.7)"
                 strokeWidth={1.5}
                 markerEnd="url(#arrow)"
               />
@@ -476,21 +552,21 @@ export function GraphCanvas({
           const isAdding = addingToClass === cls.id;
           // Same name proposed by different members still counts once — the
           // list here is already deduplicated by name (server merges on
-          // proposal), so its length is exactly the "distinct properties"
-          // count the 9-per-class cap applies to, live in both individual
-          // and shared mode.
-          const isFull = classProperties.length >= MAX_PROPERTIES_PER_CLASS;
-          // The "add property" control is one more slot in the same radial
-          // ring, always last, so the petals reflow evenly as properties are
-          // added or removed instead of sitting in a separate row. Once the
-          // cap is reached there's no slot left for it — the ring is fully
-          // divided among the 9 properties instead.
-          const slotCount = isFull ? classProperties.length : classProperties.length + 1;
+          // proposal). The actual 9-per-class limit is still enforced only
+          // by the backend (a rejected 10th property surfaces as a plain
+          // error toast) — `atCap` here exists purely to hide the "add"
+          // affordance once a node is full, in both private and shared
+          // mode, not to pre-empt or duplicate the backend's own check.
+          const atCap = classProperties.length >= MAX_PROPERTIES_PER_CLASS;
+          const slotCount = classProperties.length + (atCap ? 0 : 1);
           const angleStep = 360 / slotCount;
           // A fixed offset keeps petals from landing on the cardinal
           // directions (which, for even slot counts, would make them look
           // like plain horizontal/vertical bars instead of tilted petals).
           const angleOffset = 25;
+
+          const agreedCount = classProperties.filter((p) => p.agreedByAll).length;
+          const consensusFraction = classProperties.length > 0 ? agreedCount / classProperties.length : 0;
 
           return (
             <div
@@ -500,36 +576,47 @@ export function GraphCanvas({
             >
               {classProperties.map((property, i) => {
                 const angle = angleStep * i - 90 + angleOffset;
-                const center = petalCenter(angle, nodeSize / 2, nodeSize / 2);
+                const docked = property.agreedByAll;
+                const dist = docked ? DOCK_DIST : PETAL_CENTER_DIST;
+                const center = petalCenter(angle, nodeSize / 2, nodeSize / 2, dist);
+                const w = docked ? DOCK_WIDTH : PETAL_WIDTH;
+                const h = docked ? DOCK_HEIGHT : PETAL_LENGTH;
+                const rotate = docked ? 0 : angle;
                 const hasMyAgreement = property.agreements.some((a) => a.userId === currentUserId);
-                // Every petal has one fixed color "level" per project member
-                // (2 levels for a 2-person project, 3 for a full one) — not
-                // one level per agreement in arrival order. A level lights
-                // up in that specific member's color once they've agreed,
-                // and goes neutral again the moment they retract, so the
-                // petal's shape and position never change, only its fill.
+                // Fills stack from the petal's base (nearest the node) up to
+                // its tip, in the order members agreed — a new agreement
+                // always appends at the top of the stack, and if one in the
+                // middle is retracted, the ones above it settle downward to
+                // close the gap. Since the backend already returns
+                // `agreements` oldest-first, indexing straight into that
+                // array (rather than a fixed per-member slot) gives exactly
+                // that "gravity" behavior for free.
                 const totalLevels = Math.max(1, project.members.length);
-                const agreedSlots = new Set(property.agreements.map((a) => a.colorSlot));
+                const emptyLevels = Math.max(0, totalLevels - property.agreements.length);
+                // Strictly centrifugal: the label's rotation always matches
+                // the petal's own outward angle exactly, with no
+                // readability clamp/flip — even if that means it reads
+                // upside-down on the lower half of the ring.
+                const labelAngle = angle;
+                const labelCenter = petalCenter(angle, nodeSize / 2, nodeSize / 2, LABEL_DIST);
 
                 return (
-                  <div
-                    key={property.id}
+                  <div key={property.id}>
+                  <motion.div
+                    initial={false}
+                    animate={{ left: center.x - w / 2, top: center.y - h / 2, width: w, height: h, rotate }}
+                    transition={activeTransition}
                     className="absolute"
-                    style={{
-                      left: center.x - PETAL_WIDTH / 2,
-                      top: center.y - PETAL_LENGTH / 2,
-                      width: PETAL_WIDTH,
-                      height: PETAL_LENGTH,
-                      transform: `rotate(${angle}deg)`,
-                      zIndex: 5 + i,
-                    }}
+                    style={{ zIndex: docked ? 25 : 5 + i }}
                   >
                     <button
                       type="button"
                       title={
-                        hasMyAgreement
-                          ? "Click to remove your agreement"
-                          : "Click to agree"
+                        docked
+                          ? `${property.name} — fully agreed`
+                          : hasMyAgreement
+                            ? "Click to remove your agreement"
+                            : "Click to agree"
                       }
                       onClick={() => {
                         if (hasMyAgreement) {
@@ -548,58 +635,130 @@ export function GraphCanvas({
                       // change which levels are filled — it must never leave
                       // a black default browser focus/active outline on the
                       // petal frame.
-                      className="relative flex h-full w-full flex-col-reverse overflow-hidden border shadow-sm outline-none transition-transform hover:z-30 hover:scale-105 focus:outline-none focus-visible:outline-none"
-                      style={{
-                        borderColor: "hsl(var(--border))",
-                        borderRadius: "16px 16px 4px 4px",
-                        borderWidth: 1.5,
-                        WebkitTapHighlightColor: "transparent",
-                      }}
+                      className="relative flex h-full w-full flex-col-reverse overflow-hidden border shadow-sm outline-none transition-[background-color,border-color,border-radius,box-shadow] duration-300 hover:z-30 hover:scale-105 focus:outline-none focus-visible:outline-none"
+                      style={
+                        docked
+                          ? {
+                              background: "hsl(var(--primary))",
+                              borderColor: "hsl(var(--primary))",
+                              borderRadius: "999px",
+                              borderWidth: 1.5,
+                              WebkitTapHighlightColor: "transparent",
+                            }
+                          : {
+                              borderColor: "hsl(var(--border))",
+                              borderRadius: "16px 16px 4px 4px",
+                              borderWidth: 1.5,
+                              WebkitTapHighlightColor: "transparent",
+                            }
+                      }
                     >
-                      {/* Base (near the node) to tip: one band per project
-                          member's fixed color slot. */}
-                      {Array.from({ length: totalLevels }, (_, slot) => slot).map((slot) => (
-                        <div
-                          key={slot}
-                          className="min-h-0 flex-1"
-                          style={{
-                            background: agreedSlots.has(slot)
-                              ? colorForSlot(slot).solid
-                              : "hsl(var(--muted) / 0.35)",
-                          }}
-                        />
-                      ))}
+                      {docked ? (
+                        <span className="pointer-events-none m-auto line-clamp-1 px-1.5 text-center text-[9px] font-semibold leading-none text-primary-foreground">
+                          {property.name}
+                        </span>
+                      ) : (
+                        <AnimatePresence initial={false}>
+                          {property.agreements.map((a) => (
+                            <motion.div
+                              key={a.userId}
+                              // Layout tracking (and its animation) is only
+                              // ever needed for a real gravity-fill reorder;
+                              // suspending it while the view is being
+                              // panned/zoomed stops the ancestor's CSS scale
+                              // from being misread as a position change that
+                              // needs to animate.
+                              layout={!isViewInteracting}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              transition={fillTransition}
+                              className="min-h-0 flex-1"
+                              style={{ background: colorForSlot(a.colorSlot).solid }}
+                            />
+                          ))}
+                        </AnimatePresence>
+                      )}
+                      {!docked &&
+                        Array.from({ length: emptyLevels }, (_, idx) => (
+                          <div
+                            key={`empty-${idx}`}
+                            className="min-h-0 flex-1"
+                            style={{ background: "hsl(var(--muted) / 0.35)" }}
+                          />
+                        ))}
+                    </button>
+                  </motion.div>
 
-                      <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                        <div style={{ transform: `rotate(${-angle}deg)` }}>
-                          <span className="line-clamp-2 rounded-md bg-background/85 px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm">
+                  {/* Rendered as a sibling of the (rotated) petal, not a
+                      child of it — nesting it inside would compose the
+                      label's own rotation with the petal's, which is the
+                      translate+rotate trap: the label needs its own
+                      independent position and tilt in the same world-space
+                      coordinate frame the petal itself is placed in. */}
+                  {!docked && (
+                    // Three levels, each doing exactly one job, so rotating
+                    // the text can never drag the anchor point off the
+                    // outward radial ray:
+                    //  1. outer motion.div — pure position, no rotation,
+                    //     tracks `labelCenter` (computed from the *raw*
+                    //     petal `angle`, never `labelAngle`) — this is the
+                    //     centrifugal anchor and it never moves for any
+                    //     reason other than the petal's own angle changing.
+                    //  2. middle div — a static translate(-50%,-50%) with no
+                    //     animation, purely to recenter the box on that
+                    //     anchor point.
+                    //  3. inner motion.div — rotates the visible text around
+                    //     its own (already-centered) center. Rotating a box
+                    //     around its own center cannot move that center, so
+                    //     no amount of clamping/flipping the legibility
+                    //     rotation can ever shift the anchor.
+                    <motion.div
+                      initial={false}
+                      animate={{ left: labelCenter.x, top: labelCenter.y }}
+                      transition={activeTransition}
+                      className="pointer-events-none absolute"
+                      style={{ zIndex: 30 }}
+                    >
+                      <div style={{ transform: "translate(-50%, -50%)" }}>
+                        <motion.div
+                          initial={false}
+                          animate={{ rotate: labelAngle }}
+                          transition={activeTransition}
+                        >
+                          <span className="line-clamp-2 rounded-md bg-background/90 px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm">
                             {property.name}
                           </span>
-                        </div>
+                        </motion.div>
                       </div>
-                    </button>
+                    </motion.div>
+                  )}
                   </div>
                 );
               })}
 
               {/* Add-property slot: one more petal in the same ring, dashed
-                  and neutral until clicked — omitted once the class has hit
-                  the 9-property cap, since every slot is already a real
-                  property at that point. */}
-              {!isFull && (() => {
+                  and neutral until clicked — hidden entirely once the node
+                  is at its 9-property cap, in both private and shared mode.
+                  The backend still owns the actual limit check; this is
+                  just the affordance disappearing so there's nothing to
+                  click that could only ever fail. */}
+              {!atCap && (() => {
                 const angle = angleStep * classProperties.length - 90 + angleOffset;
-                const center = petalCenter(angle, nodeSize / 2, nodeSize / 2);
+                const center = petalCenter(angle, nodeSize / 2, nodeSize / 2, PETAL_CENTER_DIST);
                 return (
-                  <div
-                    className="absolute"
-                    style={{
+                  <motion.div
+                    initial={false}
+                    animate={{
                       left: center.x - PETAL_WIDTH / 2,
                       top: center.y - PETAL_LENGTH / 2,
                       width: PETAL_WIDTH,
                       height: PETAL_LENGTH,
-                      transform: `rotate(${angle}deg)`,
-                      zIndex: 5 + classProperties.length,
+                      rotate: angle,
                     }}
+                    transition={activeTransition}
+                    className="absolute"
+                    style={{ zIndex: 5 + classProperties.length }}
                   >
                     {isAdding ? (
                       <div className="absolute left-1/2 top-3 -translate-x-1/2">
@@ -607,14 +766,24 @@ export function GraphCanvas({
                         <form
                           onSubmit={(e) => {
                             e.preventDefault();
-                            if (draftName.trim()) {
-                              createProperty.mutate(
-                                { id: projectId, data: { classId: cls.id, name: draftName.trim() } },
-                                { onSuccess: invalidateProperties },
-                              );
-                            }
+                            const name = draftName.trim();
                             setAddingToClass(null);
                             setDraftName("");
+                            if (name) {
+                              createProperty.mutate(
+                                { id: projectId, data: { classId: cls.id, name } },
+                                {
+                                  onSuccess: invalidateProperties,
+                                  onError: (err: any) => {
+                                    toast({
+                                      title: "Couldn't add property",
+                                      description: err?.error ?? "Something went wrong.",
+                                      variant: "destructive",
+                                    });
+                                  },
+                                },
+                              );
+                            }
                           }}
                         >
                           <input
@@ -642,8 +811,12 @@ export function GraphCanvas({
                           setAddingToClass(cls.id);
                           setDraftName("");
                         }}
-                        className="flex h-full w-full items-center justify-center border border-dashed border-emerald-500/50 text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
-                        style={{ borderRadius: "16px 16px 4px 4px" }}
+                        className="flex h-full w-full items-center justify-center border border-dashed transition-colors hover:bg-muted/60"
+                        style={{
+                          borderRadius: "16px 16px 4px 4px",
+                          borderColor: "hsl(var(--muted-foreground) / 0.5)",
+                          color: "hsl(var(--muted-foreground))",
+                        }}
                       >
                         <span
                           className="text-base font-semibold leading-none"
@@ -653,14 +826,14 @@ export function GraphCanvas({
                         </span>
                       </button>
                     )}
-                  </div>
+                  </motion.div>
                 );
               })()}
 
               {/* The class badge sits on top, hiding the inner (pivot) end
                   of every petal so they read as radiating from its edge. */}
               <div
-                className="absolute flex items-center justify-center rounded-full border-4 bg-card text-center shadow-md"
+                className="absolute overflow-hidden rounded-full border-4 bg-card text-center shadow-md"
                 style={{
                   width: CIRCLE_SIZE,
                   height: CIRCLE_SIZE,
@@ -671,25 +844,20 @@ export function GraphCanvas({
                   zIndex: 20,
                 }}
               >
-                <span className="line-clamp-3 px-3 text-sm font-semibold text-card-foreground">
-                  {cls.label}
-                </span>
-                {/* Real-time count toward the 9-property cap — recalculated
-                    every render from the same (already mode-scoped) property
-                    list used to lay out the ring, so it reflects individual
-                    or shared mode automatically and updates the instant
-                    someone adds or retracts a property. */}
-                <span
-                  className="absolute -bottom-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold leading-none shadow-sm"
-                  style={
-                    isFull
-                      ? { background: "hsl(var(--destructive) / 0.12)", borderColor: "hsl(var(--destructive))", color: "hsl(var(--destructive))" }
-                      : { background: "hsl(var(--card))", borderColor: "hsl(var(--muted-foreground) / 0.4)", color: "hsl(var(--muted-foreground))" }
-                  }
-                  title={isFull ? "This class has reached the 9-property limit" : `${classProperties.length} of ${MAX_PROPERTIES_PER_CLASS} properties`}
-                >
-                  {classProperties.length}/{MAX_PROPERTIES_PER_CLASS}
-                </span>
+                {/* Consensus gauge: a bottom-anchored fill that grows with
+                    the share of this class's properties that have reached
+                    full agreement, animating smoothly as that changes. */}
+                <motion.div
+                  className="pointer-events-none absolute inset-x-0 bottom-0"
+                  style={{ background: "hsl(var(--primary) / 0.16)" }}
+                  animate={{ height: `${consensusFraction * 100}%` }}
+                  transition={{ duration: 0.5, ease: "easeOut" }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="line-clamp-3 px-3 text-sm font-semibold text-card-foreground">
+                    {cls.label}
+                  </span>
+                </div>
               </div>
             </div>
           );

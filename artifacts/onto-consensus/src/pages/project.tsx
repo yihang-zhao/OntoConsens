@@ -5,6 +5,7 @@ import {
   useSetReady, 
   useExportProject, 
   useGetMe,
+  useListProperties,
   getGetProjectQueryKey,
   getListPropertiesQueryKey,
   getExportProjectQueryKey
@@ -48,6 +49,15 @@ export default function ProjectWorkspace() {
   const meMember = project?.members.find(m => m.userId === me?.id);
   const isReady = meMember?.ready || false;
   const allReady = Boolean(project && project.members.length > 0 && project.members.every(m => m.ready));
+
+  // Reuses the same query (and cache) GraphCanvas is already fetching, just
+  // to derive whether the whole workspace has reached full consensus. This
+  // recalculates on every render, so the moment any agreement is reached or
+  // broken anywhere, the Export button's enabled state updates immediately.
+  const { data: allProperties } = useListProperties(projectId, {
+    query: { queryKey: getListPropertiesQueryKey(projectId), refetchInterval: 10_000, enabled: Boolean(project && meMember) },
+  });
+  const workspaceFullyAgreed = allReady && Boolean(allProperties) && allProperties!.length > 0 && allProperties!.every(p => p.agreedByAll);
 
   // A single socket connection per project page: it stays open the whole time
   // a member is in the workspace (not just once they're ready) so that ready
@@ -276,22 +286,19 @@ export default function ProjectWorkspace() {
       </div>
 
       {/* Bottom Export Bar */}
-      <footer className="h-16 shrink-0 bg-card border-t flex items-center justify-between px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20">
-        <div className="flex flex-col">
-          <span className="text-sm font-medium">Consensus Export</span>
-          <span className="text-xs text-muted-foreground">Download the fully agreed ontology properties</span>
-        </div>
-        <Button 
-          onClick={handleExport} 
-          disabled={exportQuery.isFetching}
-          className="gap-2 bg-foreground text-background hover:bg-foreground/90 shadow-md"
+      <footer className="h-16 shrink-0 bg-card border-t flex items-center justify-center px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20">
+        <Button
+          onClick={handleExport}
+          disabled={!workspaceFullyAgreed || exportQuery.isFetching}
+          title={workspaceFullyAgreed ? "Download the fully agreed ontology" : "Export unlocks once every property has full agreement"}
+          className="gap-2 bg-foreground text-background hover:bg-foreground/90 shadow-md transition-opacity disabled:opacity-40"
         >
           {exportQuery.isFetching ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Download className="w-4 h-4" />
           )}
-          Export JSON
+          Export
         </Button>
       </footer>
     </div>
