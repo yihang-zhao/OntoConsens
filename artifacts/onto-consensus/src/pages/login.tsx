@@ -38,10 +38,9 @@ export default function Login() {
           queryClient.setQueryData(getGetMeQueryKey(), { id: data.id, username: data.username });
           setLocation("/");
         },
-        onError: (error: any) => {
-          form.setError("root", {
-            message: error.error || "Please check your credentials and try again.",
-          });
+        onError: () => {
+          form.setError("root", { message: "Wrong username or password" });
+          setTimeout(() => form.clearErrors("root"), 1000);
         },
       }
     );
