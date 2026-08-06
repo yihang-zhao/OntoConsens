@@ -157,7 +157,9 @@ export const GetProjectResponse = zod.object({
   "classes": zod.array(zod.object({
   "id": zod.number().int(),
   "uri": zod.string(),
-  "label": zod.string()
+  "label": zod.string(),
+  "propertyCount": zod.number().int().describe('Total distinct properties proposed for this class across ALL members, including ones the current viewer cannot see yet (private, pre-consensus proposals). Used to decide whether the \"add property\" affordance should be hidden for everyone, without revealing the private proposals themselves.'),
+  "atPropertyCap": zod.boolean().describe('True once propertyCount has reached the server-enforced maximum of distinct properties per class — no member can add a new, differently-named property at that point.')
 })),
   "relations": zod.array(zod.object({
   "childId": zod.number().int(),

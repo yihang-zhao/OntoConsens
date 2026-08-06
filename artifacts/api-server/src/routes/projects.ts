@@ -15,6 +15,7 @@ import { JoinProjectBody, SetReadyBody } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth";
 import { parseOntologyFile } from "../lib/ontologyParser";
 import { issueTicket, broadcastToProject } from "../lib/wsHub";
+import { MAX_PROPERTIES_PER_CLASS } from "./properties";
 
 const router: IRouter = Router();
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
@@ -220,6 +221,22 @@ router.get("/projects/:id", async (req, res) => {
     where: eq(ontologyRelationsTable.projectId, projectId),
   });
 
+  // Counted across ALL properties ever proposed for the class, regardless of
+  // who proposed them or whether the current viewer can see them yet (before
+  // everyone is ready, each member only sees their own proposals). The cap
+  // is a shared, project-wide resource — if it's already full from proposals
+  // a member can't see, they still must not be able to add a new, differently
+  // -named one, so this total (not the viewer's visible count) is what
+  // decides whether the "add" affordance shows for anyone.
+  const { propertiesTable } = await import("@workspace/db");
+  const allProperties = await db.query.propertiesTable.findMany({
+    where: eq(propertiesTable.projectId, projectId),
+  });
+  const propertyCountByClass = new Map<number, number>();
+  for (const p of allProperties) {
+    propertyCountByClass.set(p.classId, (propertyCountByClass.get(p.classId) ?? 0) + 1);
+  }
+
   res.json({
     id: project.id,
     name: project.name,
@@ -228,7 +245,16 @@ router.get("/projects/:id", async (req, res) => {
     maxMembers: MAX_PROJECT_MEMBERS,
     createdAt: project.createdAt.toISOString(),
     members,
-    classes: classes.map((c) => ({ id: c.id, uri: c.uri, label: c.label })),
+    classes: classes.map((c) => {
+      const propertyCount = propertyCountByClass.get(c.id) ?? 0;
+      return {
+        id: c.id,
+        uri: c.uri,
+        label: c.label,
+        propertyCount,
+        atPropertyCap: propertyCount >= MAX_PROPERTIES_PER_CLASS,
+      };
+    }),
     relations: relations.map((r) => ({ childId: r.childId, parentId: r.parentId })),
   });
 });

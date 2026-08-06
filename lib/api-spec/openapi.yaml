@@ -489,7 +489,7 @@ components:
 
     OntologyClass:
       type: object
-      required: [id, uri, label]
+      required: [id, uri, label, propertyCount, atPropertyCap]
       properties:
         id:
           type: integer
@@ -497,6 +497,20 @@ components:
           type: string
         label:
           type: string
+        propertyCount:
+          type: integer
+          description: >-
+            Total distinct properties proposed for this class across ALL
+            members, including ones the current viewer cannot see yet
+            (private, pre-consensus proposals). Used to decide whether the
+            "add property" affordance should be hidden for everyone, without
+            revealing the private proposals themselves.
+        atPropertyCap:
+          type: boolean
+          description: >-
+            True once propertyCount has reached the server-enforced maximum
+            of distinct properties per class — no member can add a new,
+            differently-named property at that point.
 
     OntologyRelation:
       type: object

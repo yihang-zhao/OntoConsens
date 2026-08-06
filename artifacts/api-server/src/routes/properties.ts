@@ -17,10 +17,12 @@ const router: IRouter = Router();
 router.use(requireAuth);
 
 // A distinct property name proposed by several members still counts once.
-// This cap is a pure backend constraint — the client is never told about it
-// (no count badge, no disabled "+" state); it just surfaces the error below
-// if a class is already full.
-const MAX_PROPERTIES_PER_CLASS = 7;
+// This is enforced here (the actual insert guard) and also surfaced on
+// GET /projects/:id as each class's `atPropertyCap` flag (total count across
+// ALL members, including proposals the viewer can't see yet) so the client
+// can hide the "add" affordance for everyone once a class is full, without
+// exposing the private proposals that filled it.
+export const MAX_PROPERTIES_PER_CLASS = 7;
 
 async function getMembership(projectId: number, userId: number) {
   return db.query.projectMembersTable.findFirst({

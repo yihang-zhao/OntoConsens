@@ -85,6 +85,10 @@ export interface OntologyClass {
   id: number;
   uri: string;
   label: string;
+  /** Total distinct properties proposed for this class across ALL members, including ones the current viewer cannot see yet (private, pre-consensus proposals). Used to decide whether the "add property" affordance should be hidden for everyone, without revealing the private proposals themselves. */
+  propertyCount: number;
+  /** True once propertyCount has reached the server-enforced maximum of distinct properties per class — no member can add a new, differently-named property at that point. */
+  atPropertyCap: boolean;
 }
 
 export interface OntologyRelation {

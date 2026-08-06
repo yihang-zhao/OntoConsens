@@ -85,13 +85,6 @@ const DOCK_DIST = CIRCLE_RADIUS + PETAL_LENGTH / 2 - DOCK_OVERLAP;
 // leave a clear visual gap before the line reaches either node.
 const LINE_CLEARANCE = LABEL_DIST + 40;
 
-// Mirrors the backend's per-class property limit purely so the "add
-// property" control can hide itself once a node is full — this is the one
-// place the frontend is allowed to know about the cap; every other rule
-// (rejecting an 8th property, the actual count check) still lives
-// server-side only.
-const MAX_PROPERTIES_PER_CLASS = 7;
-
 /** Square footprint big enough to fit the full ring of petals plus label
  * overhang, without clipping into neighboring nodes. */
 function computeNodeSize(): number {
@@ -761,14 +754,18 @@ export function GraphCanvas({
         {laidOut.map((cls) => {
           const classProperties = propertiesByClass.get(cls.id) ?? [];
           const isAdding = addingToClass === cls.id;
-          // Same name proposed by different members still counts once — the
-          // list here is already deduplicated by name (server merges on
-          // proposal). The actual 7-per-class limit is still enforced only
-          // by the backend (a rejected 8th property surfaces as a plain
-          // error toast) — `atCap` here exists purely to hide the "add"
-          // affordance once a node is full, in both private and shared
-          // mode, not to pre-empt or duplicate the backend's own check.
-          const atCap = classProperties.length >= MAX_PROPERTIES_PER_CLASS;
+          // `atCap` must reflect the total proposed across ALL members, not
+          // just the ones this viewer can currently see — before everyone is
+          // ready, each member only sees their own proposals (plus ones
+          // they've agreed to), so `classProperties.length` alone could
+          // under-count a class another member has already filled. The
+          // server tracks the true total and sends it as `atPropertyCap` on
+          // every class; that's what actually decides whether the "add"
+          // affordance shows, in both private and shared mode. The backend
+          // still enforces the cap independently on create (a rejected
+          // property surfaces as a plain error toast) — this is purely
+          // about not showing an affordance that would just fail anyway.
+          const atCap = cls.atPropertyCap;
           const slotCount = classProperties.length + (atCap ? 0 : 1);
           const angleStep = 360 / slotCount;
           // A fixed offset keeps petals from landing on the cardinal
