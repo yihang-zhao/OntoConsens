@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import {
   db,
   ontologyClassesTable,
@@ -108,8 +108,18 @@ async function serializeProperty(
   property: typeof propertiesTable.$inferSelect,
   totalMembers: number,
 ) {
+  // Ordered oldest-first (createdAt, then id as a tiebreaker for same-
+  // millisecond agreements) since the frontend stacks fills bottom-to-top
+  // in exactly this array order — a new agreement is always meant to append
+  // at the top and stay there. Without an explicit ORDER BY, Postgres does
+  // not guarantee row order is stable across queries, so a freshly added
+  // agreement could come back in a different position on the very next
+  // fetch (e.g. right after the optimistic write is reconciled), which
+  // looked like the new color jumping from the top of the stack to the
+  // bottom a moment later.
   const agreements = await db.query.propertyAgreementsTable.findMany({
     where: eq(propertyAgreementsTable.propertyId, property.id),
+    orderBy: [asc(propertyAgreementsTable.createdAt), asc(propertyAgreementsTable.id)],
   });
   const users = await db.query.usersTable.findMany();
   const members = await db.query.projectMembersTable.findMany({
