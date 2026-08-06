@@ -253,6 +253,20 @@ export function GraphCanvas({
   const [addingToClass, setAddingToClass] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
 
+  // Retracting the topmost fill (the newest agreement, which sits right
+  // next to the empty region at the petal's tip) frees space that nothing
+  // else needs to move into — the total slot count is constant, so an
+  // empty level simply appears where the color used to be. Retracting a
+  // *middle* fill is different: everything above it has to slide down one
+  // slot to close the gap, and that shift is the "gravity" layout
+  // animation. Framer's `layout` prop can't tell these apart on its own —
+  // AnimatePresence keeps the exiting bar mounted one extra frame, which
+  // briefly changes the sibling count and would make `layout` treat a
+  // top-only removal as a resize for every other bar too. This ref records
+  // "this property's last retraction was a top removal" for the one
+  // render where it matters, so only the exiting bar animates.
+  const suppressGravityRef = useRef<Map<number, boolean>>(new Map());
+
   // The board never uses native scrolling — panning and zooming are handled
   // entirely by this transform, driven by explicit gestures (right-click
   // drag, trackpad two-finger slide, touch drag, wheel/pinch to zoom) so the
@@ -832,6 +846,12 @@ export function GraphCanvas({
                       }
                       onClick={() => {
                         if (hasMyAgreement) {
+                          const isTopmost =
+                            property.agreements[property.agreements.length - 1]?.userId === currentUserId;
+                          suppressGravityRef.current.set(property.id, isTopmost);
+                          if (isTopmost) {
+                            setTimeout(() => suppressGravityRef.current.delete(property.id), 300);
+                          }
                           retractProperty.mutate(
                             { id: projectId, propertyId: property.id },
                             { onSuccess: invalidateProperties },
@@ -905,8 +925,11 @@ export function GraphCanvas({
                               // suspending it while the view is being
                               // panned/zoomed stops the ancestor's CSS scale
                               // from being misread as a position change that
-                              // needs to animate.
-                              layout={!isViewInteracting}
+                              // needs to animate, and suspending it right
+                              // after a top-only retraction stops the other
+                              // bars from animating a resize they don't
+                              // actually need.
+                              layout={!isViewInteracting && !suppressGravityRef.current.get(property.id)}
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
                               exit={{ opacity: 0 }}
