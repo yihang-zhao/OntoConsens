@@ -476,6 +476,16 @@ export function GraphCanvas({
       list.push(property);
       map.set(property.classId, list);
     }
+    // Newest first: index 0 is always the most recently created property in
+    // the class, and index 0 sits in the slot immediately next to the
+    // "add" petal (see the render loop below). Without this, the array
+    // order — the API has no ORDER BY, so its order isn't guaranteed, and
+    // even insertion order would put a new property at the *opposite* side
+    // of the circle from the add box, not next to it — leaves a freshly
+    // added property landing wherever it happens to fall.
+    for (const list of map.values()) {
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
     return map;
   }, [properties]);
 
