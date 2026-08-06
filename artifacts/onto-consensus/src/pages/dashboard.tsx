@@ -278,17 +278,7 @@ export default function Dashboard() {
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
               <FolderPlus className="w-8 h-8 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-semibold mb-6">No projects yet</h3>
-            <div className="flex items-center gap-3">
-              <Button variant="outline" onClick={() => setJoinOpen(true)} className="gap-2">
-                <ArrowRight className="w-4 h-4" />
-                Join Project
-              </Button>
-              <Button onClick={() => setCreateOpen(true)} className="gap-2">
-                <Plus className="w-4 h-4" />
-                Create Project
-              </Button>
-            </div>
+            <h3 className="text-lg font-semibold">No projects yet</h3>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
