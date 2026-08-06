@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { useListProjects, useCreateProject, useJoinProject, useDeleteProject, useGetMe, useLogout, getListProjectsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -25,7 +25,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut } from "lucide-react";
+import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText } from "lucide-react";
 
 const createSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Project name is too long"),
@@ -43,6 +43,7 @@ export default function Dashboard() {
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
   const [, setLocation] = useLocation();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const createProject = useCreateProject();
   const joinProject = useJoinProject();
@@ -217,23 +218,50 @@ export default function Dashboard() {
                     <FormField
                       control={createForm.control}
                       name="file"
-                      render={({ field: { value, onChange, ...fieldProps } }) => (
-                        <FormItem>
-                          <FormLabel>Ontology File (.ttl, .owl, .rdf)</FormLabel>
-                          <FormControl>
-                            <Input 
-                              type="file" 
-                              accept=".ttl,.owl,.rdf"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) onChange(file);
-                              }}
-                              {...fieldProps} 
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
+                      render={({ field: { value, onChange, ref, ...fieldProps } }) => {
+                        const selectedFile = value instanceof File ? value : undefined;
+                        return (
+                          <FormItem>
+                            <FormLabel>Ontology File (.ttl, .owl, .rdf)</FormLabel>
+                            <FormControl>
+                              <div>
+                                <input
+                                  type="file"
+                                  accept=".ttl,.owl,.rdf"
+                                  className="sr-only"
+                                  ref={(el) => {
+                                    fileInputRef.current = el;
+                                    ref(el);
+                                  }}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) onChange(file);
+                                  }}
+                                  {...fieldProps}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => fileInputRef.current?.click()}
+                                  className="flex w-full items-center gap-3 rounded-md border border-dashed border-input bg-transparent px-3 py-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  {selectedFile ? (
+                                    <>
+                                      <FileText className="w-4 h-4 shrink-0 text-primary" />
+                                      <span className="truncate font-medium">{selectedFile.name}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Upload className="w-4 h-4 shrink-0 text-muted-foreground" />
+                                      <span className="text-muted-foreground">Click to select a file</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
                     />
                     {createForm.formState.errors.root && (
                       <p className="text-sm font-medium text-destructive">
