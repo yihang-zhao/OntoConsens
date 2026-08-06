@@ -818,12 +818,15 @@ export function GraphCanvas({
           // phase, before anyone can see anyone else's proposals. Once the
           // shared space is open, proposals are visible to everyone and
           // same-name duplicates merge instead of competing (see the
-          // backend's cross-member merge-on-create), so the quota no longer
-          // applies at all in shared mode — members can add as many
-          // properties per class as they want.
+          // backend's cross-member merge-on-create), so the per-member split
+          // goes away — but the class as a whole is still capped at the same
+          // TOTAL_PROPERTY_SLOTS (7) total, now shared collectively across
+          // all members instead of divided into fixed per-member slices.
           const myPropertyCountInClass = classProperties.filter((p) => p.proposedByUserId === currentUserId).length;
           const myQuota = getPropertyQuota(totalMembers, membersById.get(currentUserId)?.colorSlot ?? 0);
-          const atCap = !sharedModeEnabled && myPropertyCountInClass >= myQuota;
+          const atCap = sharedModeEnabled
+            ? classProperties.length >= TOTAL_PROPERTY_SLOTS
+            : myPropertyCountInClass >= myQuota;
           // The ring is divided into a FIXED number of wedges (the global
           // 7-property budget every project shares, split across members),
           // never into `classProperties.length + 1` — that would recompute

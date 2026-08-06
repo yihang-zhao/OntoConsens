@@ -34,6 +34,13 @@ const PROPERTY_QUOTAS_BY_MEMBER_COUNT: Record<number, number[]> = {
   3: [3, 2, 2],
 };
 
+// The per-member budgets above always sum to this — it's the total number of
+// properties a class can ever hold. Before the shared space opens that total
+// is split into fixed per-member slices; once shared, the split goes away
+// but the total itself doesn't, so this same number becomes a single
+// class-wide cap shared by everyone instead.
+const TOTAL_PROPERTY_CAP = 7;
+
 export function getPropertyQuota(memberCount: number, colorSlot: number): number {
   const quotas =
     PROPERTY_QUOTAS_BY_MEMBER_COUNT[memberCount] ??
@@ -392,12 +399,31 @@ router.post("/projects/:id/properties", async (req, res) => {
     }
   }
 
-  // The per-member propose quota only exists to keep the private phase fair
-  // before anyone can see anyone else's proposals. Once the shared space is
-  // open, everything is visible and cross-member duplicates merge instead of
-  // competing (see above), so there's nothing left for a quota to protect —
-  // members can add as many properties as they want per class in shared mode.
-  if (!isSharedSpaceOpen) {
+  // Two different caps apply depending on phase:
+  // - Before the shared space opens, each member is limited to their own
+  //   fixed per-member budget (see PROPERTY_QUOTAS_BY_MEMBER_COUNT), which
+  //   keeps things fair while no one can see anyone else's proposals.
+  // - Once shared, the per-member split no longer makes sense (proposals are
+  //   visible to everyone and same-name ones merge instead of competing —
+  //   see above), but the class as a whole is still capped at the same
+  //   TOTAL_PROPERTY_CAP of 7 properties every project has always budgeted
+  //   for that class, shared collectively across all members now instead of
+  //   split into fixed per-member slices. A merge (cross-member match above)
+  //   never reaches this check, since it doesn't create a new row.
+  if (isSharedSpaceOpen) {
+    const classTotalCount = await db.query.propertiesTable.findMany({
+      where: and(
+        eq(propertiesTable.projectId, projectId),
+        eq(propertiesTable.classId, parsed.data.classId),
+      ),
+    });
+    if (classTotalCount.length >= TOTAL_PROPERTY_CAP) {
+      res
+        .status(400)
+        .json({ error: `This class has reached its limit of ${TOTAL_PROPERTY_CAP} properties` });
+      return;
+    }
+  } else {
     const myExistingCount = await db.query.propertiesTable.findMany({
       where: and(
         eq(propertiesTable.projectId, projectId),
