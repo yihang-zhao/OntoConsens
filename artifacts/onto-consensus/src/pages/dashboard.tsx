@@ -30,7 +30,7 @@ import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut } from "lu
 const createSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Project name is too long"),
   file: z.instanceof(File, { message: "Ontology file is required" }),
-  memberCount: z.enum(["1", "2", "3"], { message: "Choose how many members this project is for" }),
+  memberCount: z.enum(["2", "3"], { message: "Choose how many members this project is for" }),
 });
 
 const joinSchema = z.object({
@@ -76,7 +76,7 @@ export default function Dashboard() {
 
   const createForm = useForm<z.infer<typeof createSchema>>({
     resolver: zodResolver(createSchema),
-    defaultValues: { name: "", memberCount: "1" },
+    defaultValues: { name: "", memberCount: "2" },
   });
 
   const joinForm = useForm<z.infer<typeof joinSchema>>({
@@ -206,7 +206,6 @@ export default function Dashboard() {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="1">1 (just me)</SelectItem>
                               <SelectItem value="2">2 members</SelectItem>
                               <SelectItem value="3">3 members</SelectItem>
                             </SelectContent>
