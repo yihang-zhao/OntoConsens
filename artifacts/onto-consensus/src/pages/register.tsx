@@ -28,6 +28,14 @@ export default function Register() {
 
   const form = useForm<z.infer<typeof registerSchema>>({
     resolver: zodResolver(registerSchema),
+    // Errors should only ever appear right after clicking "Create account",
+    // never live while typing -- the default `reValidateMode` is "onChange",
+    // which (once a first submit has failed) would re-run validation and
+    // pop errors back up on every keystroke. Pinning both modes to
+    // "onSubmit" means validation, and therefore any visible error, only
+    // ever runs as a direct result of a submit click.
+    mode: "onSubmit",
+    reValidateMode: "onSubmit",
     defaultValues: {
       username: "",
       password: "",
