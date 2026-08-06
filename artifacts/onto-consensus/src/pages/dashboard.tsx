@@ -94,6 +94,14 @@ export default function Dashboard() {
     defaultValues: { inviteCode: "" },
   });
 
+  // Client-side validation failures (missing name/file, bad member count) are
+  // set by the zod resolver itself, not inside onCreateSubmit -- handleSubmit's
+  // second argument fires exactly once whenever that happens, so this is the
+  // one place to schedule their auto-dismiss.
+  const onCreateInvalid = () => {
+    setTimeout(() => createForm.clearErrors(["name", "file", "memberCount"]), 1000);
+  };
+
   const onCreateSubmit = (values: z.infer<typeof createSchema>) => {
     createProject.mutate(
       { data: { name: values.name, file: values.file, memberCount: Number(values.memberCount) } },
@@ -192,7 +200,7 @@ export default function Dashboard() {
                   <DialogTitle>Create New Project</DialogTitle>
                 </DialogHeader>
                 <Form {...createForm}>
-                  <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
+                  <form onSubmit={createForm.handleSubmit(onCreateSubmit, onCreateInvalid)} className="space-y-4">
                     <FormField
                       control={createForm.control}
                       name="name"
