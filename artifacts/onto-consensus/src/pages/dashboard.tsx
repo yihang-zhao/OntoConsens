@@ -147,7 +147,7 @@ export default function Dashboard() {
                         <FormItem>
                           <FormLabel>Invite Code</FormLabel>
                           <FormControl>
-                            <Input placeholder="e.g. 123456" {...field} />
+                            <Input {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -187,7 +187,7 @@ export default function Dashboard() {
                         <FormItem>
                           <FormLabel>Project Name</FormLabel>
                           <FormControl>
-                            <Input placeholder="Domain Ontology v2" {...field} />
+                            <Input {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
