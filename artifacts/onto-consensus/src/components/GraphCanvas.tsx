@@ -502,15 +502,25 @@ export function GraphCanvas({
       list.push(property);
       map.set(property.classId, list);
     }
-    // Newest first: index 0 is always the most recently created property in
-    // the class, and index 0 sits in the slot immediately next to the
-    // "add" petal (see the render loop below). Without this, the array
-    // order — the API has no ORDER BY, so its order isn't guaranteed, and
-    // even insertion order would put a new property at the *opposite* side
-    // of the circle from the add box, not next to it — leaves a freshly
-    // added property landing wherever it happens to fall.
+    // Oldest first: index i is always the i-th property ever created in the
+    // class, and the render loop below always draws the "add" petal at
+    // index `classProperties.length` — i.e. the very next slot after the
+    // last one filled. Sorting ascending means a newly created property
+    // always sorts to the END of the array, landing in exactly that slot
+    // (rather than snapping to slot 0 and shoving every already-placed
+    // petal clockwise by one), so the new property visibly appears right
+    // where the add button was, the add button then reappears one slot
+    // further clockwise, and no already-placed petal ever moves. Without
+    // this ordering (the API has no ORDER BY, so raw array order isn't
+    // guaranteed) a freshly added property could land anywhere. Retracting
+    // a property still shifts every later-created one down by one slot,
+    // closing the gap instead of leaving a permanent hole in the ring — the
+    // same rule applies whether classProperties holds just this viewer's
+    // own proposals (private, pre-ready) or the full shared list
+    // (post-ready consensus mode), since both are ordered by this same
+    // ascending sort.
     for (const list of map.values()) {
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }
     return map;
   }, [properties]);
