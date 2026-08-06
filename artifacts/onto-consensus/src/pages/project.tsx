@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { GraphCanvas } from "@/components/GraphCanvas";
 import { 
-  Copy, 
   Check, 
   Download, 
   ChevronLeft, 
@@ -102,12 +101,6 @@ export default function ProjectWorkspace() {
     };
   }, [syncStatus]);
 
-  const handleCopyInvite = () => {
-    if (project?.inviteCode) {
-      navigator.clipboard.writeText(project.inviteCode);
-    }
-  };
-
   const handleMarkReady = () => {
     if (isReady) return;
     setReady.mutate(
@@ -185,12 +178,6 @@ export default function ProjectWorkspace() {
           </Button>
           <div className="flex flex-col">
             <h1 className="font-semibold text-sm leading-tight">{project.name}</h1>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors group" onClick={handleCopyInvite}>
-                Code: <span className="font-mono bg-muted px-1 rounded">{project.inviteCode}</span>
-                <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </span>
-            </div>
           </div>
         </div>
 
