@@ -257,7 +257,7 @@ export default function ProjectWorkspace() {
       {/* Main Content Area */}
       <div className="flex-1 flex min-h-0 relative">
         {/* Canvas Area (full width - the item list sidebar has been removed) */}
-        <main className="flex-1 min-w-0 bg-muted/10 relative">
+        <main className="flex-1 min-w-0 bg-background relative">
           {me && (
             <GraphCanvas
               projectId={projectId}

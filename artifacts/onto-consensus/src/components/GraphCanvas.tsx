@@ -66,9 +66,9 @@ const LABEL_DIST = RING_OUTER_RADIUS + 14;
 // Bound to the petal's own width (not a wider arbitrary box) so a long
 // property name wraps onto extra lines instead of ever reading wider than
 // the petal it belongs to — true for both the floating label and the
-// docked in-petal text.
+// docked in-petal text. Height is intentionally not fixed: a wrapped label
+// grows from a pinned edge (see `labelGrowsUpward`), not a fixed box.
 const LABEL_WIDTH = PETAL_WIDTH;
-const LABEL_HEIGHT = 40;
 
 // Once every project member has agreed on a property, its petal "docks"
 // directly onto the node: same petal shape and outward tilt as before, just
@@ -131,6 +131,26 @@ function labelRotation(petalAngle: number): number {
   if (a > 90) a -= 180;
   else if (a < -90) a += 180;
   return a;
+}
+
+function signedAngleDiff(a: number, b: number): number {
+  return (((a - b + 180) % 360) + 360) % 360 - 180;
+}
+
+// A wrapped label is rotated as a single rigid box (so its extra lines still
+// read along the petal's radial direction), but which of that box's two
+// local edges is "outward" flips depending on the legibility fold above —
+// e.g. a petal pointing straight up keeps rotate=0, where local-up is
+// outward, while a petal pointing straight down ALSO ends up at rotate=0,
+// where local-down is outward instead. Growing a wrapped label from the
+// wrong fixed edge would push new lines back toward the node and under the
+// petal, so this compares the box's two rotated edge directions against the
+// petal's true (unfolded) outward angle and returns whichever one actually
+// points away from the node.
+function labelGrowsUpward(petalAngle: number, rotationDeg: number): boolean {
+  const localUpCompass = ((rotationDeg % 360) + 360) % 360;
+  const localDownCompass = (localUpCompass + 180) % 360;
+  return Math.abs(signedAngleDiff(localUpCompass, petalAngle)) < Math.abs(signedAngleDiff(localDownCompass, petalAngle));
 }
 
 const MIN_ZOOM = 0.25;
@@ -513,7 +533,7 @@ export function GraphCanvas({
       // it off to (no native scroll/zoom action, no rubber-band handoff to
       // an ancestor scroller), so the page never moves.
       style={{ touchAction: "none", overscrollBehavior: "contain" }}
-      className="relative h-full w-full overflow-hidden bg-[radial-gradient(circle_at_1px_1px,theme(colors.border)_1px,transparent_0)] [background-size:24px_24px]"
+      className="relative h-full w-full overflow-hidden"
     >
       <div
         className="absolute left-0 top-0"
@@ -756,34 +776,49 @@ export function GraphCanvas({
                       translate+rotate trap: the label needs its own
                       independent position and tilt in the same world-space
                       coordinate frame the petal itself is placed in. */}
-                  {!docked && (
-                    // Single element, fixed width/height, positioned by
-                    // plain subtraction (anchor - half the known box size)
-                    // rather than a CSS percentage translate. The box's
-                    // `left`/`top` are computed from `labelCenter`, which is
-                    // itself derived from the raw (unfolded) petal `angle`
-                    // — never from `labelAngle` — so the box's placement is
-                    // strictly centrifugal and cannot be nudged by the
-                    // legibility rotation. `rotate` is the only other
-                    // transform applied, around the box's own default
-                    // center origin, which by definition cannot move that
-                    // center: only the text's reading direction adapts.
-                    <motion.div
-                      initial={false}
-                      animate={{
-                        left: labelCenter.x - LABEL_WIDTH / 2,
-                        top: labelCenter.y - LABEL_HEIGHT / 2,
-                        rotate: labelAngle,
-                      }}
-                      transition={activeTransition}
-                      className="pointer-events-none absolute flex items-center justify-center"
-                      style={{ width: LABEL_WIDTH, height: LABEL_HEIGHT, zIndex: 30 }}
-                    >
-                      <span className="line-clamp-3 w-full rounded-md bg-background/90 px-1 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm [overflow-wrap:anywhere]">
-                        {property.name}
-                      </span>
-                    </motion.div>
-                  )}
+                  {!docked && (() => {
+                    // `labelCenter` is the box's fixed INNER edge (nearest
+                    // the node), not its center — a wrapped label must grow
+                    // by adding lines on the outward side only, or the extra
+                    // lines creep back toward the node and under the petal.
+                    // Which local edge is actually "outward" flips with the
+                    // legibility fold (see `labelGrowsUpward`), so the box
+                    // is anchored via `top` (grows down) or `bottom` (grows
+                    // up) accordingly, each paired with a matching
+                    // `transformOrigin` so the rotation pivots on that same
+                    // fixed edge instead of a center that would otherwise
+                    // shift every time the line count changes.
+                    const growUp = labelGrowsUpward(angle, labelAngle);
+                    const left = labelCenter.x - LABEL_WIDTH / 2;
+                    return (
+                      <motion.div
+                        initial={false}
+                        animate={
+                          growUp
+                            ? { left, bottom: nodeSize - labelCenter.y, rotate: labelAngle }
+                            : { left, top: labelCenter.y, rotate: labelAngle }
+                        }
+                        transition={activeTransition}
+                        className="pointer-events-none absolute flex flex-col"
+                        style={{
+                          width: LABEL_WIDTH,
+                          zIndex: 30,
+                          transformOrigin: growUp ? "50% 100%" : "50% 0%",
+                          justifyContent: growUp ? "flex-end" : "flex-start",
+                        }}
+                      >
+                        <span
+                          className="line-clamp-3 w-full text-center text-[10px] font-medium leading-tight text-foreground [overflow-wrap:anywhere]"
+                          style={{
+                            textShadow:
+                              "0 0 3px hsl(var(--background)), 0 0 3px hsl(var(--background)), 0 0 5px hsl(var(--background))",
+                          }}
+                        >
+                          {property.name}
+                        </span>
+                      </motion.div>
+                    );
+                  })()}
                   </div>
                 );
               })}
