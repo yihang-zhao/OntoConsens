@@ -837,13 +837,16 @@ export function GraphCanvas({
           // already placed ever moves, and the add button always sits in the
           // very next wedge after the last filled one — i.e. immediately
           // "to the right" of wherever it currently is.
-          // In shared mode the per-member quota no longer applies, so a class
-          // can grow past the private-phase budget of 7. The wedge count
-          // stays fixed at 7 for the normal case (matches every prior
-          // private-mode layout, no rotation on add/remove there) and only
-          // grows past 7 once a class actually needs more slots than that —
-          // an edge case shared mode newly allows.
-          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + 1);
+          // The "+1" only reserves room for the add button when it will
+          // actually render — once a class is at cap (no add button at
+          // all), reserving that extra wedge anyway would spread the filled
+          // petals out to leave a visible empty gap where the button isn't.
+          // Wedge count stays fixed at 7 for the normal case (matches every
+          // prior private-mode layout, no rotation on add/remove there) and
+          // only grows past 7 once a class actually needs more slots than
+          // that while still showing an add button — an edge case shared
+          // mode newly allows before its own cap kicks in.
+          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + (atCap ? 0 : 1));
           const angleStep = 360 / slotCount;
           // A fixed offset keeps petals from landing on the cardinal
           // directions (which, for even slot counts, would make them look

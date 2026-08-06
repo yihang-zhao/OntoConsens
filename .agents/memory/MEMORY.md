@@ -7,3 +7,5 @@
 - [React-state-drives-one-CSS-transform re-render trap](react-state-single-css-transform-perf.md) — grep all reads of a hot state var before assuming a full re-render is needed per input event.
 - [Unhandled pg Pool 'error' crashes whole process](pg-pool-idle-error-handler.md) — dropped idle Postgres connections need `pool.on('error', ...)` or an uncaught exception takes the server down.
 - [Radix composeEventHandlers preventDefault trap](radix-composeeventhandlers-preventdefault-trap.md) — a trigger's own preventDefault() silently blocks Radix from opening Dialog/AlertDialog/Popover/etc.
+- [Multi-service edit needs multi-workflow restart](multi-service-restart-after-edit.md) — editing backend + frontend but restarting only one workflow makes the unrestarted service's change look broken/absent.
+- [Fixed radial slot count must match visible-item count exactly](radial-slot-reserve-matches-visibility.md) — reserving a wedge for an add-button slot that isn't rendered (e.g. at cap) leaves a visible gap.
