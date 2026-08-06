@@ -99,6 +99,15 @@ router.post("/projects", upload.single("file"), async (req, res) => {
     return;
   }
 
+  // Project names must be unique across the whole app, not just per-owner —
+  // compared case-insensitively so "Foo" and "foo" still collide.
+  const allProjects = await db.query.projectsTable.findMany();
+  const nameTaken = allProjects.some((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (nameTaken) {
+    res.status(409).json({ error: "Project name already exists" });
+    return;
+  }
+
   const inviteCode = crypto.randomBytes(4).toString("hex");
 
   const [project] = await db
