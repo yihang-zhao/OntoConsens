@@ -13,7 +13,6 @@ import {
 import type { OntologyClass, OntologyRelation, Property } from "@workspace/api-client-react";
 import { colorForSlot } from "@/lib/memberColors";
 import type { RemoteCursor } from "@/hooks/useProjectSocket";
-import { useToast } from "@/hooks/use-toast";
 
 interface GraphCanvasProps {
   projectId: number;
@@ -239,7 +238,6 @@ export function GraphCanvas({
   sharedModeEnabled,
 }: GraphCanvasProps) {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
   // The transformed content layer's own DOM node — pan/zoom writes to its
   // `style.transform` directly on every raw pointer/wheel event, bypassing
@@ -1036,11 +1034,7 @@ export function GraphCanvas({
                                 {
                                   onSuccess: invalidateProperties,
                                   onError: (err: any) => {
-                                    toast({
-                                      title: "Couldn't add property",
-                                      description: err?.error ?? "Something went wrong.",
-                                      variant: "destructive",
-                                    });
+                                    console.error("Couldn't add property", err);
                                   },
                                 },
                               );

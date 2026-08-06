@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Network } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 
 const loginSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(32, "Username too long"),
@@ -21,7 +20,6 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const login = useLogin();
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -41,10 +39,8 @@ export default function Login() {
           setLocation("/");
         },
         onError: (error: any) => {
-          toast({
-            title: "Login failed",
-            description: error.error || "Please check your credentials and try again.",
-            variant: "destructive",
+          form.setError("root", {
+            message: error.error || "Please check your credentials and try again.",
           });
         },
       }
@@ -94,6 +90,11 @@ export default function Login() {
                     </FormItem>
                   )}
                 />
+                {form.formState.errors.root && (
+                  <p className="text-sm font-medium text-destructive">
+                    {form.formState.errors.root.message}
+                  </p>
+                )}
                 <Button type="submit" className="w-full" disabled={login.isPending}>
                   {login.isPending ? "Signing in..." : "Sign in"}
                 </Button>

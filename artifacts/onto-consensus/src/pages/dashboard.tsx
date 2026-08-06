@@ -26,7 +26,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 
 const createSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Project name is too long"),
@@ -50,7 +49,6 @@ export default function Dashboard() {
   const deleteProject = useDeleteProject();
   const logout = useLogout();
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   const handleLogout = () => {
     logout.mutate(undefined, {
@@ -68,10 +66,9 @@ export default function Dashboard() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
-          toast({ title: "Project deleted" });
         },
         onError: (err: any) => {
-          toast({ title: "Failed to delete project", description: err.error, variant: "destructive" });
+          console.error("Failed to delete project", err);
         },
       },
     );
@@ -93,12 +90,11 @@ export default function Dashboard() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
-          toast({ title: "Project created successfully" });
           setCreateOpen(false);
           createForm.reset();
         },
         onError: (err: any) => {
-          toast({ title: "Failed to create project", description: err.error, variant: "destructive" });
+          createForm.setError("root", { message: err.error || "Failed to create project." });
         }
       }
     );
@@ -110,12 +106,11 @@ export default function Dashboard() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
-          toast({ title: "Joined project successfully" });
           setJoinOpen(false);
           joinForm.reset();
         },
         onError: (err: any) => {
-          toast({ title: "Failed to join project", description: err.error, variant: "destructive" });
+          joinForm.setError("root", { message: err.error || "Failed to join project." });
         }
       }
     );
@@ -158,6 +153,11 @@ export default function Dashboard() {
                         </FormItem>
                       )}
                     />
+                    {joinForm.formState.errors.root && (
+                      <p className="text-sm font-medium text-destructive">
+                        {joinForm.formState.errors.root.message}
+                      </p>
+                    )}
                     <DialogFooter>
                       <Button type="button" variant="outline" onClick={() => setJoinOpen(false)}>Cancel</Button>
                       <Button type="submit" disabled={joinProject.isPending}>Join</Button>
@@ -236,6 +236,11 @@ export default function Dashboard() {
                         </FormItem>
                       )}
                     />
+                    {createForm.formState.errors.root && (
+                      <p className="text-sm font-medium text-destructive">
+                        {createForm.formState.errors.root.message}
+                      </p>
+                    )}
                     <DialogFooter>
                       <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
                       <Button type="submit" disabled={createProject.isPending}>Create</Button>
@@ -273,14 +278,17 @@ export default function Dashboard() {
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
               <FolderPlus className="w-8 h-8 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-semibold mb-2">No projects yet</h3>
-            <p className="text-muted-foreground mb-6 max-w-md">
-              Create a new project by uploading an ontology file, or join an existing one using an invite code.
-            </p>
-            <Button onClick={() => setCreateOpen(true)} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Create Project
-            </Button>
+            <h3 className="text-lg font-semibold mb-6">No projects yet</h3>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" onClick={() => setJoinOpen(true)} className="gap-2">
+                <ArrowRight className="w-4 h-4" />
+                Join Project
+              </Button>
+              <Button onClick={() => setCreateOpen(true)} className="gap-2">
+                <Plus className="w-4 h-4" />
+                Create Project
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

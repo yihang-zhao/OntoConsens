@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
+import { Route, Switch, Router as WouterRouter } from 'wouter';
 import { ProtectedRoute } from '@/hooks/use-auth';
 
 import Login from '@/pages/login';
@@ -54,14 +53,6 @@ function Router() {
   );
 }
 
-function ScopedToaster() {
-  // The project workspace intentionally has no popup "message window" — status
-  // (ready, errors) is shown inline in its own UI instead of transient toasts.
-  const [location] = useLocation();
-  if (location.startsWith('/projects/')) return null;
-  return <Toaster />;
-}
-
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -69,7 +60,6 @@ function App() {
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Router />
         </WouterRouter>
-        <ScopedToaster />
       </TooltipProvider>
     </QueryClientProvider>
   );

@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Network } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 
 const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(32, "Username too long"),
@@ -25,7 +24,6 @@ export default function Register() {
   const [, setLocation] = useLocation();
   const register = useRegister();
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   const form = useForm<z.infer<typeof registerSchema>>({
     resolver: zodResolver(registerSchema),
@@ -43,17 +41,11 @@ export default function Register() {
         onSuccess: (data) => {
           setAuthToken(data.token);
           queryClient.setQueryData(getGetMeQueryKey(), { id: data.id, username: data.username });
-          toast({
-            title: "Welcome aboard!",
-            description: "Your account has been created.",
-          });
           setLocation("/");
         },
         onError: (error: any) => {
-          toast({
-            title: "Registration failed",
-            description: error.error || "An error occurred during registration.",
-            variant: "destructive",
+          form.setError("root", {
+            message: error.error || "An error occurred during registration.",
           });
         },
       }
@@ -116,6 +108,11 @@ export default function Register() {
                     </FormItem>
                   )}
                 />
+                {form.formState.errors.root && (
+                  <p className="text-sm font-medium text-destructive">
+                    {form.formState.errors.root.message}
+                  </p>
+                )}
                 <Button type="submit" className="w-full" disabled={register.isPending}>
                   {register.isPending ? "Creating account..." : "Create account"}
                 </Button>

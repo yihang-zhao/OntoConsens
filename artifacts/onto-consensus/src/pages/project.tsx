@@ -23,13 +23,11 @@ import {
   Loader2, 
   Network, 
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { useProjectSocket } from "@/hooks/useProjectSocket";
 
 export default function ProjectWorkspace() {
   const { id: idStr } = useParams();
   const projectId = parseInt(idStr || "0", 10);
-  const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
 
@@ -82,7 +80,6 @@ export default function ProjectWorkspace() {
     onProjectDeleted: () => {
       queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
       queryClient.removeQueries({ queryKey: getGetProjectQueryKey(projectId) });
-      toast({ title: "This project was deleted by its owner" });
       navigate("/");
     },
   });
@@ -108,7 +105,6 @@ export default function ProjectWorkspace() {
   const handleCopyInvite = () => {
     if (project?.inviteCode) {
       navigator.clipboard.writeText(project.inviteCode);
-      toast({ title: "Invite code copied to clipboard!" });
     }
   };
 
@@ -127,13 +123,9 @@ export default function ProjectWorkspace() {
               )
             };
           });
-          toast({ 
-            title: "You are marked as ready",
-            description: "Once everyone is ready, the shared consensus space opens automatically."
-          });
         },
         onError: (err: any) => {
-          toast({ title: "Failed to update ready state", description: err.error, variant: "destructive" });
+          console.error("Failed to update ready state", err);
         }
       }
     );
@@ -152,10 +144,9 @@ export default function ProjectWorkspace() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        toast({ title: "Export downloaded successfully" });
       }
     } catch (e) {
-      toast({ title: "Export failed", variant: "destructive" });
+      console.error("Export failed", e);
     }
   };
 
