@@ -12,8 +12,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel } from "@/components/
 import { Network } from "lucide-react";
 
 const loginSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
+  username: z.string(),
+  password: z.string(),
 });
 
 export default function Login() {
