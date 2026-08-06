@@ -4,3 +4,5 @@
 - [Gated realtime visibility + merge-by-name](gated-visibility-merge-by-name.md) — private-until-condition views must also show items the user has an agreement/stake in, not just items they authored.
 - [onBlur silently discarding inline-edit input](blur-discard-silent-loss.md) — Enter-only forms with onBlur=cancel drop real input with no error; looks like a sync bug.
 - [CSS transform translate+rotate pivot trap](css-transform-rotate-pivot-trap.md) -- radial layouts must position via trig + plain rotate, never combine translate+rotate with a custom origin.
+- [React-state-drives-one-CSS-transform re-render trap](react-state-single-css-transform-perf.md) — grep all reads of a hot state var before assuming a full re-render is needed per input event.
+- [Unhandled pg Pool 'error' crashes whole process](pg-pool-idle-error-handler.md) — dropped idle Postgres connections need `pool.on('error', ...)` or an uncaught exception takes the server down.
