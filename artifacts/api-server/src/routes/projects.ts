@@ -15,7 +15,7 @@ import { JoinProjectBody, SetReadyBody } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth";
 import { parseOntologyFile } from "../lib/ontologyParser";
 import { issueTicket, broadcastToProject } from "../lib/wsHub";
-import { getPropertyQuota } from "./properties";
+import { getPropertyQuota, mergeDuplicatePropertiesOnReady } from "./properties";
 
 const router: IRouter = Router();
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
@@ -328,6 +328,24 @@ router.patch("/projects/:id/ready", async (req, res) => {
 
   const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
   const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+
+  // Re-check readiness against the just-written state (not the pre-update
+  // `membership`/`members` snapshot) — this is the one moment the shared
+  // space opens for the whole project, so it's also the one moment
+  // duplicate same-name properties proposed by different members collapse
+  // into a single merged property. Safe to call every time all members
+  // happen to already be ready (e.g. re-fetching this route), since the
+  // merge is a no-op once no duplicates remain.
+  const membersAfterUpdate = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+  const nowFullyReady =
+    project != null &&
+    membersAfterUpdate.length === project.maxMembers &&
+    membersAfterUpdate.every((m) => m.ready);
+  if (nowFullyReady) {
+    await mergeDuplicatePropertiesOnReady(projectId);
+  }
 
   broadcastToProject(projectId, { type: "member_ready" });
 

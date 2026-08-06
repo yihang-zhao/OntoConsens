@@ -174,6 +174,66 @@ async function isProjectFullyReady(projectId: number, members: (typeof projectMe
   return members.length === maxMembers && members.every((m) => m.ready);
 }
 
+// The moment the shared space opens (every expected member has marked
+// ready) is the one point where two members' independently-proposed but
+// identically-named properties on the same class stop being separate
+// per-member proposals and become a single shared claim — so this runs once
+// at that transition and physically merges the duplicate rows: the
+// earliest-created one survives as canonical, every other duplicate's
+// agreements (plus its own proposer, who implicitly "agrees" by having
+// proposed the same thing) are copied onto the canonical row, and the
+// duplicate rows are deleted. Cascading FKs take the duplicates' own
+// agreement rows with them, so there's no manual cleanup needed there.
+// Idempotent: once no class has more than one row per normalized name, this
+// is a no-op, so calling it more than once (e.g. if this endpoint is ever
+// hit again after the project is already fully ready) is harmless.
+export async function mergeDuplicatePropertiesOnReady(projectId: number) {
+  const allProperties = await db.query.propertiesTable.findMany({
+    where: eq(propertiesTable.projectId, projectId),
+  });
+  const groups = new Map<string, typeof allProperties>();
+  for (const p of allProperties) {
+    const key = `${p.classId}::${normalizeName(p.name)}`;
+    const list = groups.get(key) ?? [];
+    list.push(p);
+    groups.set(key, list);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const [canonical, ...duplicates] = [...group].sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id - b.id,
+    );
+    if (!canonical) continue;
+
+    const canonicalAgreements = await db.query.propertyAgreementsTable.findMany({
+      where: eq(propertyAgreementsTable.propertyId, canonical.id),
+    });
+    const alreadyAgreed = new Set(canonicalAgreements.map((a) => a.userId));
+
+    for (const duplicate of duplicates) {
+      const duplicateAgreements = await db.query.propertyAgreementsTable.findMany({
+        where: eq(propertyAgreementsTable.propertyId, duplicate.id),
+      });
+      const userIdsToCarryOver = new Set(duplicateAgreements.map((a) => a.userId));
+      // The proposer implicitly agrees with their own proposal even on the
+      // rare chance their own agreement row is somehow missing.
+      userIdsToCarryOver.add(duplicate.proposedByUserId);
+
+      for (const userId of userIdsToCarryOver) {
+        if (alreadyAgreed.has(userId)) continue;
+        await db
+          .insert(propertyAgreementsTable)
+          .values({ propertyId: canonical.id, userId })
+          .onConflictDoNothing();
+        alreadyAgreed.add(userId);
+      }
+
+      await db.delete(propertiesTable).where(eq(propertiesTable.id, duplicate.id));
+    }
+  }
+}
+
 async function serializePropertyForViewer(
   property: typeof propertiesTable.$inferSelect,
   userId: number,
