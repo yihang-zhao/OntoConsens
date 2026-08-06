@@ -91,6 +91,24 @@ const LINE_CLEARANCE = LABEL_DIST + 40;
 // other already-placed petal or the add button.
 const TOTAL_PROPERTY_SLOTS = 7;
 
+// Mirrors the backend's PROPERTY_QUOTAS_BY_MEMBER_COUNT / getPropertyQuota
+// (see artifacts/api-server/src/routes/properties.ts) exactly, so the "at
+// cap" check can be computed instantly from the properties already sitting
+// in the local (optimistic) query cache instead of waiting on a project
+// refetch — the add/remove of a property is otherwise already reflected in
+// this component immediately, so the affordance that depends on it must be
+// too, or there's a visible lag between the two.
+const PROPERTY_QUOTAS_BY_MEMBER_COUNT: Record<number, number[]> = {
+  1: [7],
+  2: [4, 3],
+  3: [3, 2, 2],
+};
+
+function getPropertyQuota(memberCount: number, colorSlot: number): number {
+  const quotas = PROPERTY_QUOTAS_BY_MEMBER_COUNT[memberCount] ?? PROPERTY_QUOTAS_BY_MEMBER_COUNT[3];
+  return quotas[colorSlot] ?? quotas[quotas.length - 1];
+}
+
 /** Square footprint big enough to fit the full ring of petals plus label
  * overhang, without clipping into neighboring nodes. */
 function computeNodeSize(): number {
@@ -347,11 +365,12 @@ export function GraphCanvas({
 
   const invalidateProperties = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) });
-    // `atPropertyCap` (which decides whether the add-property affordance
-    // shows) lives on `project.classes`, not on the properties list — so an
-    // add that pushes this member to their cap must also refresh the
-    // project query, or the "+" petal would keep showing (and failing) until
-    // the next 10s background poll happens to catch up.
+    // The project query also carries each class's server-computed
+    // `propertyCount`/`atPropertyCap`, which is otherwise unused by this
+    // component (the add-property affordance derives its own "at cap" check
+    // straight from the properties cache above, so it updates the instant
+    // the optimistic write lands, with no round trip) — refreshed here only
+    // so the two stay in sync for anything else that reads them.
     queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) });
   }, [queryClient, projectId]);
 
@@ -775,11 +794,19 @@ export function GraphCanvas({
           // under-count a class another member has already filled. The
           // server tracks the true total and sends it as `atPropertyCap` on
           // every class; that's what actually decides whether the "add"
-          // affordance shows, in both private and shared mode. The backend
-          // still enforces the cap independently on create (a rejected
-          // property surfaces as a plain error toast) — this is purely
-          // about not showing an affordance that would just fail anyway.
-          const atCap = cls.atPropertyCap;
+          // affordance shows, in both private and shared mode. Computed
+          // straight from the (optimistic) properties cache — the same one
+          // that already drives the petals themselves — rather than the
+          // separate project query's `atPropertyCap` field, which only
+          // updates on its own refetch/poll and would otherwise leave a
+          // visible lag between adding/removing a property and the "+"
+          // affordance reacting to it. The backend still enforces the cap
+          // independently on create (a rejected property surfaces as a
+          // plain error toast) — this is purely about not showing an
+          // affordance that would just fail anyway.
+          const myPropertyCountInClass = classProperties.filter((p) => p.proposedByUserId === currentUserId).length;
+          const myQuota = getPropertyQuota(totalMembers, membersById.get(currentUserId)?.colorSlot ?? 0);
+          const atCap = myPropertyCountInClass >= myQuota;
           // The ring is divided into a FIXED number of wedges (the global
           // 7-property budget every project shares, split across members),
           // never into `classProperties.length + 1` — that would recompute
