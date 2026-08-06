@@ -134,19 +134,6 @@ export default function Dashboard() {
             <span className="font-mono font-bold text-lg">OntoConsensus</span>
           </div>
           <div className="flex items-center gap-4">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleLogout}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <LogOut className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Sign out</TooltipContent>
-            </Tooltip>
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-2">
@@ -265,6 +252,20 @@ export default function Dashboard() {
                 </Form>
               </DialogContent>
             </Dialog>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLogout}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Sign out</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </header>
