@@ -29,6 +29,13 @@ interface TokenEntry {
 const tokens = new Map<string, TokenEntry>();
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// An account may only be signed in in one place at a time. Tracking the
+// single currently-valid token per user (separate from the token -> user
+// map above, which still supports concurrent *different* accounts in
+// different tabs) lets a fresh login immediately invalidate whatever
+// session existed before it, anywhere.
+const activeTokenByUser = new Map<number, string>();
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 10);
 }
@@ -41,13 +48,25 @@ export async function verifyPassword(
 }
 
 export function createSessionToken(userId: number): string {
+  // Kick out whatever session this account already had, wherever it was —
+  // only the newest login should remain valid.
+  const previousToken = activeTokenByUser.get(userId);
+  if (previousToken) {
+    tokens.delete(previousToken);
+  }
+
   const token = crypto.randomBytes(32).toString("hex");
   tokens.set(token, { userId, expiresAt: Date.now() + TOKEN_TTL_MS });
+  activeTokenByUser.set(userId, token);
   return token;
 }
 
 export function destroySessionToken(token: string): void {
+  const entry = tokens.get(token);
   tokens.delete(token);
+  if (entry && activeTokenByUser.get(entry.userId) === token) {
+    activeTokenByUser.delete(entry.userId);
+  }
 }
 
 function getBearerToken(req: Request): string | null {
