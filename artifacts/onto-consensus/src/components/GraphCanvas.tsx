@@ -57,6 +57,14 @@ const PETAL_CENTER_DIST = CIRCLE_RADIUS + GAP_TO_NODE + PETAL_LENGTH / 2;
  * property-name labels outside the ring instead of guessing a fixed offset. */
 const RING_OUTER_RADIUS = CIRCLE_RADIUS + GAP_TO_NODE + PETAL_LENGTH;
 const LABEL_DIST = RING_OUTER_RADIUS + 14;
+// A fixed footprint for the label box itself. Positioning it via plain
+// arithmetic (anchor minus half of these fixed dimensions, computed in JS)
+// rather than a CSS percentage `translate(-50%,-50%)` removes any ambiguity
+// from how a browser/framer composes translate+rotate on the same element —
+// rotating a box of KNOWN width/height around its own default center origin
+// cannot move that center, full stop, no percentage-transform math involved.
+const LABEL_WIDTH = 88;
+const LABEL_HEIGHT = 28;
 
 // Once every project member has agreed on a property, its petal "docks"
 // directly onto the node: it shrinks into a small upright chip that overlaps
@@ -712,40 +720,31 @@ export function GraphCanvas({
                       independent position and tilt in the same world-space
                       coordinate frame the petal itself is placed in. */}
                   {!docked && (
-                    // Three levels, each doing exactly one job, so rotating
-                    // the text can never drag the anchor point off the
-                    // outward radial ray:
-                    //  1. outer motion.div — pure position, no rotation,
-                    //     tracks `labelCenter` (computed from the *raw*
-                    //     petal `angle`, never `labelAngle`) — this is the
-                    //     centrifugal anchor and it never moves for any
-                    //     reason other than the petal's own angle changing.
-                    //  2. middle div — a static translate(-50%,-50%) with no
-                    //     animation, purely to recenter the box on that
-                    //     anchor point.
-                    //  3. inner motion.div — rotates the visible text around
-                    //     its own (already-centered) center. Rotating a box
-                    //     around its own center cannot move that center, so
-                    //     no amount of clamping/flipping the legibility
-                    //     rotation can ever shift the anchor.
+                    // Single element, fixed width/height, positioned by
+                    // plain subtraction (anchor - half the known box size)
+                    // rather than a CSS percentage translate. The box's
+                    // `left`/`top` are computed from `labelCenter`, which is
+                    // itself derived from the raw (unfolded) petal `angle`
+                    // — never from `labelAngle` — so the box's placement is
+                    // strictly centrifugal and cannot be nudged by the
+                    // legibility rotation. `rotate` is the only other
+                    // transform applied, around the box's own default
+                    // center origin, which by definition cannot move that
+                    // center: only the text's reading direction adapts.
                     <motion.div
                       initial={false}
-                      animate={{ left: labelCenter.x, top: labelCenter.y }}
+                      animate={{
+                        left: labelCenter.x - LABEL_WIDTH / 2,
+                        top: labelCenter.y - LABEL_HEIGHT / 2,
+                        rotate: labelAngle,
+                      }}
                       transition={activeTransition}
-                      className="pointer-events-none absolute"
-                      style={{ zIndex: 30 }}
+                      className="pointer-events-none absolute flex items-center justify-center"
+                      style={{ width: LABEL_WIDTH, height: LABEL_HEIGHT, zIndex: 30 }}
                     >
-                      <div style={{ transform: "translate(-50%, -50%)" }}>
-                        <motion.div
-                          initial={false}
-                          animate={{ rotate: labelAngle }}
-                          transition={activeTransition}
-                        >
-                          <span className="line-clamp-2 rounded-md bg-background/90 px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm">
-                            {property.name}
-                          </span>
-                        </motion.div>
-                      </div>
+                      <span className="line-clamp-2 rounded-md bg-background/90 px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm">
+                        {property.name}
+                      </span>
                     </motion.div>
                   )}
                   </div>
