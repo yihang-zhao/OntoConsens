@@ -4,7 +4,6 @@ import {
   useState,
   useCallback,
   useEffect,
-  useLayoutEffect,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -80,7 +79,7 @@ const LABEL_DIST = RING_OUTER_RADIUS + 14;
 // property name wraps onto extra lines instead of ever reading wider than
 // the petal it belongs to — true for both the floating label and the
 // docked in-petal text. Height is intentionally not fixed: a wrapped label
-// grows from a pinned edge (see `labelGrowsUpward`), not a fixed box.
+// grows from a pinned edge (see `PropertyLabel`), not a fixed box.
 const LABEL_WIDTH = PETAL_WIDTH;
 
 // Once every project member has agreed on a property, its petal "docks"
@@ -164,96 +163,64 @@ function labelRotation(petalAngle: number): number {
   return a;
 }
 
-function signedAngleDiff(a: number, b: number): number {
-  return (((a - b + 180) % 360) + 360) % 360 - 180;
-}
-
-// A wrapped label is rotated as a single rigid box (so its extra lines still
-// read along the petal's radial direction), but which of that box's two
-// local edges is "outward" flips depending on the legibility fold above —
-// e.g. a petal pointing straight up keeps rotate=0, where local-up is
-// outward, while a petal pointing straight down ALSO ends up at rotate=0,
-// where local-down is outward instead. Growing a wrapped label from the
-// wrong fixed edge would push new lines back toward the node and under the
-// petal, so this compares the box's two rotated edge directions against the
-// petal's true (unfolded) outward angle and returns whichever one actually
-// points away from the node.
-function labelGrowsUpward(petalAngle: number, rotationDeg: number): boolean {
-  const localUpCompass = ((rotationDeg % 360) + 360) % 360;
-  const localDownCompass = (localUpCompass + 180) % 360;
-  return Math.abs(signedAngleDiff(localUpCompass, petalAngle)) < Math.abs(signedAngleDiff(localDownCompass, petalAngle));
-}
-
-// A property's name label. Broken out into its own component (rather than an
-// inline closure in the render loop) purely so it can hold its own
-// `useState`/`useLayoutEffect` for measuring its own rendered height — every
-// other animated value on a petal (its position, its rotation, this box's
-// `left`) is a plain number that Framer Motion can tween continuously frame
-// to frame, and this box's `top` needs to be exactly that too, or it's the
-// odd one out whenever a sibling deletion reshuffles indices and this
-// particular label crosses the `growUp` fold (roughly the ring's left/right
-// side): every other petal just slides to its new spot; this one used to
-// jump completely because it doesn't move (like the others) so much as
-// switch which of its own edges is even pinned.
+// A property's name label. The box itself is rotated by the exact same raw,
+// continuous `angle` as its petal (never a folded/clamped copy) — that's
+// what the petal's own frame already does, so giving the label the identical
+// value guarantees the two move in perfect lockstep, with no separate spin
+// of its own, no matter how a sibling deletion reshuffles indices.
 //
-// The box is always anchored via a single `top`, never `bottom` — when it
-// needs to grow upward (away from the node, on the fold's far side), `top`
-// is computed as `labelCenterY - measuredHeight` so the box's *bottom* edge
-// still lands exactly on the pinned node-side point, without ever touching
-// a second CSS position key. Framer Motion sees one continuous numeric
-// value to interpolate either way, exactly like `left` and `rotate`, so
-// crossing the fold now animates smoothly instead of snapping.
+// Rotating by the true (unclamped) outward angle also means the box's local
+// "up" edge always ends up pointing away from the node, for every angle
+// around the full circle, with no left/right-side special case: pin the
+// anchor to that edge (i.e. position via `bottom`, growing upward) and it's
+// simultaneously correct everywhere and a single continuous value for
+// Framer to tween, exactly like `left` and `rotate`.
 //
-// The very first render (before layout has measured anything) assumes
-// height 0; `useLayoutEffect` corrects it synchronously before the browser
-// paints, so that guess is never actually visible on screen.
+// The one thing raw rotation doesn't give you for free is upright text —
+// for roughly half the circle it would read upside-down. That's corrected
+// on a separate, un-animated inner wrapper that just counter-rotates by
+// whatever exact multiple of 180 degrees keeps the text legible (the same
+// `labelAngle - angle` trick already used for the docked in-petal label,
+// see below). Since that correction lives outside the `animate` object
+// entirely, it pops instantly rather than tweening — but it only ever
+// flips a small text element in place, not the whole box's position, so it
+// never produces the "extra spin" the outer box+petal apparently show.
 function PropertyLabel({
   name,
-  growUp,
+  angle,
+  labelAngle,
   left,
   labelCenterY,
-  rotate,
+  nodeSize,
   transition,
 }: {
   name: string;
-  growUp: boolean;
+  angle: number;
+  labelAngle: number;
   left: number;
   labelCenterY: number;
-  rotate: number;
+  nodeSize: number;
   transition: Transition;
 }) {
-  const [height, setHeight] = useState(0);
-  const elRef = useRef<HTMLDivElement | null>(null);
-
-  useLayoutEffect(() => {
-    const measured = elRef.current?.offsetHeight ?? 0;
-    if (measured !== height) setHeight(measured);
-  });
-
-  const top = growUp ? labelCenterY - height : labelCenterY;
-
   return (
     <motion.div
-      ref={elRef}
       initial={false}
-      animate={{ left, top, rotate }}
+      animate={{ left, bottom: nodeSize - labelCenterY, rotate: angle }}
       transition={transition}
-      className="pointer-events-none absolute flex flex-col"
-      style={{
-        width: LABEL_WIDTH,
-        zIndex: 30,
-        transformOrigin: growUp ? "50% 100%" : "50% 0%",
-      }}
+      className="pointer-events-none absolute flex flex-col justify-end"
+      style={{ width: LABEL_WIDTH, zIndex: 30, transformOrigin: "50% 100%" }}
     >
-      <span
-        className="line-clamp-3 w-full text-center text-[10px] font-medium leading-tight text-foreground [overflow-wrap:anywhere]"
-        style={{
-          textShadow:
-            "0 0 3px hsl(var(--background)), 0 0 3px hsl(var(--background)), 0 0 5px hsl(var(--background))",
-        }}
-      >
-        {name}
-      </span>
+      <div style={{ transform: `rotate(${labelAngle - angle}deg)` }}>
+        <span
+          className="line-clamp-3 w-full text-center text-[10px] font-medium leading-tight text-foreground [overflow-wrap:anywhere]"
+          style={{
+            textShadow:
+              "0 0 3px hsl(var(--background)), 0 0 3px hsl(var(--background)), 0 0 5px hsl(var(--background))",
+          }}
+        >
+          {name}
+        </span>
+      </div>
     </motion.div>
   );
 }
@@ -1132,20 +1099,18 @@ export function GraphCanvas({
                     // the node), not its center — a wrapped label must grow
                     // by adding lines on the outward side only, or the extra
                     // lines creep back toward the node and under the petal.
-                    // Which local edge is actually "outward" flips with the
-                    // legibility fold (see `labelGrowsUpward`); `PropertyLabel`
-                    // handles that by always positioning via a single
-                    // continuous `top` (computed from its own measured
-                    // height when growing upward) so this animates exactly
-                    // like every other numeric value on the petal, including
-                    // when a sibling deletion reshuffles this one across the
-                    // fold.
+                    // `PropertyLabel` rotates by the same raw `angle` as the
+                    // petal itself (not the folded `labelAngle`), so it
+                    // always moves in lockstep with its petal with no
+                    // separate spin, correcting the text's own orientation
+                    // separately and without animation.
                     <PropertyLabel
                       name={property.name}
-                      growUp={labelGrowsUpward(angle, labelAngle)}
+                      angle={angle}
+                      labelAngle={labelAngle}
                       left={labelCenter.x - LABEL_WIDTH / 2}
                       labelCenterY={labelCenter.y}
-                      rotate={labelAngle}
+                      nodeSize={nodeSize}
                       transition={activeTransition}
                     />
                   )}
