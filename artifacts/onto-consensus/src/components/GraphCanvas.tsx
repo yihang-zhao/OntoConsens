@@ -347,8 +347,6 @@ export function GraphCanvas({
     query: { queryKey: getListPropertiesQueryKey(projectId), refetchInterval: 10_000 },
   });
 
-  const createProperty = useCreateProperty();
-
   const invalidateProperties = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) });
   }, [queryClient, projectId]);
@@ -361,15 +359,50 @@ export function GraphCanvas({
     return map;
   }, [project]);
 
-  // Clicking a petal must repaint instantly — the fill level, docking, and
-  // gauge all read straight off the properties query cache, so the click's
-  // visual result can only be immediate if that cache itself is updated
-  // synchronously, before the request round-trips. `onMutate` writes the
-  // optimistic agreement/retraction directly into the cache (a plain
-  // `setQueryData`, no network wait); the real response then reconciles it
-  // via the existing `onSuccess` -> invalidate, and `onError` rolls the
+  // Clicking a petal (or submitting the add-property form) must repaint
+  // instantly — the fill level, docking, and gauge all read straight off
+  // the properties query cache, so the visual result can only be immediate
+  // if that cache itself is updated synchronously, before the request
+  // round-trips. Each `onMutate` below writes the optimistic add/agreement/
+  // retraction directly into the cache (a plain `setQueryData`, no network
+  // wait); the real response then reconciles it (invalidate-and-refetch for
+  // create, since that also handles the "merge into an existing property by
+  // name" server behavior a client can't predict), and `onError` rolls the
   // optimistic write back if the request actually fails.
   const totalMembers = Math.max(1, project?.members.length ?? 1);
+
+  // A temporary property (with the proposer's own agreement already on it,
+  // matching what the backend does on create) appears the moment you hit
+  // enter. The temp row never needs its id reconciled by hand — the call
+  // site's own `onSuccess` (below) invalidates and refetches the list
+  // regardless, which replaces the whole array with the server's real data
+  // and naturally drops the temporary entry in the same pass.
+  const createProperty = useCreateProperty({
+    mutation: {
+      onMutate: async ({ data }) => {
+        const queryKey = getListPropertiesQueryKey(projectId);
+        await queryClient.cancelQueries({ queryKey });
+        const previous = queryClient.getQueryData<Property[]>(queryKey);
+        const me = membersById.get(currentUserId);
+        const optimistic: Property = {
+          id: -Date.now(),
+          classId: data.classId,
+          name: data.name.trim(),
+          proposedByUserId: currentUserId,
+          proposedByUsername: me?.username ?? "",
+          proposedByColorSlot: me?.colorSlot ?? 0,
+          createdAt: new Date().toISOString(),
+          agreements: [{ userId: currentUserId, username: me?.username ?? "", colorSlot: me?.colorSlot ?? 0 }],
+          agreedByAll: totalMembers <= 1,
+        };
+        queryClient.setQueryData<Property[]>(queryKey, (old) => [...(old ?? []), optimistic]);
+        return { previous, queryKey };
+      },
+      onError: (_err, _vars, context) => {
+        if (context?.previous) queryClient.setQueryData(context.queryKey, context.previous);
+      },
+    },
+  });
 
   const retractProperty = useRetractProperty({
     mutation: {
@@ -377,16 +410,24 @@ export function GraphCanvas({
         const queryKey = getListPropertiesQueryKey(projectId);
         await queryClient.cancelQueries({ queryKey });
         const previous = queryClient.getQueryData<Property[]>(queryKey);
+        // Mirrors the backend exactly: retracting your only remaining
+        // agreement on a property (typically one you proposed yourself)
+        // deletes the row outright, not just your slot in it — so the
+        // optimistic write must remove the property from the list, not
+        // leave an empty husk behind, or the petal would visibly linger
+        // until the refetch caught up.
         queryClient.setQueryData<Property[]>(queryKey, (old) =>
-          (old ?? []).map((p) =>
-            p.id !== propertyId
-              ? p
-              : {
-                  ...p,
-                  agreements: p.agreements.filter((a) => a.userId !== currentUserId),
-                  agreedByAll: false,
-                },
-          ),
+          (old ?? [])
+            .map((p) =>
+              p.id !== propertyId
+                ? p
+                : {
+                    ...p,
+                    agreements: p.agreements.filter((a) => a.userId !== currentUserId),
+                    agreedByAll: false,
+                  },
+            )
+            .filter((p) => p.id !== propertyId || p.agreements.length > 0),
         );
         return { previous, queryKey };
       },
