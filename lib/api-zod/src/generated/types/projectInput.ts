@@ -10,4 +10,10 @@ export interface ProjectInput {
   /** @minLength 1 */
   name: string;
   file: Blob;
+  /**
+     * Exact number of members this project is for, chosen once at creation and fixed afterward. Invites are capped at this number, the shared consensus space only opens once exactly this many members have all marked ready, and each member's private property budget is derived from this number from the start.
+     * @minimum 1
+     * @maximum 3
+     */
+  memberCount: number;
 }

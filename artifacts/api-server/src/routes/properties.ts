@@ -3,7 +3,9 @@ import { and, eq } from "drizzle-orm";
 import {
   db,
   ontologyClassesTable,
+  MAX_PROJECT_MEMBERS,
   projectMembersTable,
+  projectsTable,
   propertiesTable,
   propertyAgreementsTable,
   usersTable,
@@ -16,13 +18,28 @@ const router: IRouter = Router();
 
 router.use(requireAuth);
 
-// A distinct property name proposed by several members still counts once.
-// This is enforced here (the actual insert guard) and also surfaced on
-// GET /projects/:id as each class's `atPropertyCap` flag (total count across
-// ALL members, including proposals the viewer can't see yet) so the client
-// can hide the "add" affordance for everyone once a class is full, without
-// exposing the private proposals that filled it.
-export const MAX_PROPERTIES_PER_CLASS = 7;
+// Each member gets their OWN fixed budget of distinct properties per class,
+// based on how many members the project has and this member's join order
+// (colorSlot, assigned once at first join and never reassigned — see
+// projectMembersTable). Budgets always sum to 7 regardless of member count.
+// There is deliberately no shared/global cap and no cross-member duplicate
+// check: two members can independently propose the same name for the same
+// class, and each one's budget is spent purely on their own distinct
+// proposals. Surfaced on GET /projects/:id as each class's `atPropertyCap`
+// (computed for the requesting viewer specifically) so the client can hide
+// the "add" affordance once THIS member is out of budget for a class.
+const PROPERTY_QUOTAS_BY_MEMBER_COUNT: Record<number, number[]> = {
+  1: [7],
+  2: [4, 3],
+  3: [3, 2, 2],
+};
+
+export function getPropertyQuota(memberCount: number, colorSlot: number): number {
+  const quotas =
+    PROPERTY_QUOTAS_BY_MEMBER_COUNT[memberCount] ??
+    PROPERTY_QUOTAS_BY_MEMBER_COUNT[MAX_PROJECT_MEMBERS];
+  return quotas[colorSlot] ?? quotas[quotas.length - 1];
+}
 
 async function getMembership(projectId: number, userId: number) {
   return db.query.projectMembersTable.findFirst({
@@ -37,19 +54,26 @@ function normalizeName(name: string): string {
   return name.trim().toLowerCase();
 }
 
-// If another property with the same name already exists in the same class,
-// proposing that name again counts as agreeing with it rather than creating
-// a duplicate — this is how independently-proposed properties merge into a
-// single agreed item once the board comes together.
-async function findMatchingProperty(
+// Duplicate checking is scoped to a single member's own proposals only — by
+// design there is no cross-member check, so two different members may
+// independently propose the exact same name for the same class and both
+// rows stand on their own. If the SAME member proposes (or renames into) a
+// name that already matches one of their own existing properties in this
+// class, that's treated as a no-op repeat rather than a new property.
+async function findMatchingOwnProperty(
   projectId: number,
   classId: number,
+  proposedByUserId: number,
   name: string,
   excludePropertyId?: number,
 ) {
   const normalized = normalizeName(name);
   const candidates = await db.query.propertiesTable.findMany({
-    where: and(eq(propertiesTable.projectId, projectId), eq(propertiesTable.classId, classId)),
+    where: and(
+      eq(propertiesTable.projectId, projectId),
+      eq(propertiesTable.classId, classId),
+      eq(propertiesTable.proposedByUserId, proposedByUserId),
+    ),
   });
   return candidates.find(
     (p) => p.id !== excludePropertyId && normalizeName(p.name) === normalized,
@@ -134,6 +158,22 @@ async function serializePropertyPrivate(
 // agree) — so a member never learns about someone else's proposal or
 // agreement through an API response before the shared space opens, even if
 // their own action happened to merge into that property.
+async function getProjectMaxMembers(projectId: number): Promise<number> {
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, projectId),
+  });
+  return project?.maxMembers ?? MAX_PROJECT_MEMBERS;
+}
+
+// The shared space only opens once exactly the SPECIFIED number of members
+// (project.maxMembers) have joined and all marked ready — not just however
+// many happen to have joined so far. A 1-of-3-expected member being "ready"
+// must never flip the whole project into shared mode.
+async function isProjectFullyReady(projectId: number, members: (typeof projectMembersTable.$inferSelect)[]) {
+  const maxMembers = await getProjectMaxMembers(projectId);
+  return members.length === maxMembers && members.every((m) => m.ready);
+}
+
 async function serializePropertyForViewer(
   property: typeof propertiesTable.$inferSelect,
   userId: number,
@@ -142,9 +182,9 @@ async function serializePropertyForViewer(
   const members = await db.query.projectMembersTable.findMany({
     where: eq(projectMembersTable.projectId, projectId),
   });
-  const allReady = members.length > 0 && members.every((m) => m.ready);
+  const allReady = await isProjectFullyReady(projectId, members);
   return allReady
-    ? serializeProperty(property, members.length)
+    ? serializeProperty(property, await getProjectMaxMembers(projectId))
     : serializePropertyPrivate(property, userId);
 }
 
@@ -161,9 +201,10 @@ router.get("/projects/:id/properties", async (req, res) => {
   const members = await db.query.projectMembersTable.findMany({
     where: eq(projectMembersTable.projectId, projectId),
   });
-  // The shared consensus space only appears once every member has marked
-  // themselves ready — until then everyone only sees their own proposals.
-  const allReady = members.length > 0 && members.every((m) => m.ready);
+  // The shared consensus space only appears once exactly the project's
+  // specified number of members have joined and all marked ready — until
+  // then everyone only sees their own proposals.
+  const allReady = await isProjectFullyReady(projectId, members);
 
   const allProperties = await db.query.propertiesTable.findMany({
     where: eq(propertiesTable.projectId, projectId),
@@ -179,9 +220,10 @@ router.get("/projects/:id/properties", async (req, res) => {
     (p) => p.proposedByUserId === userId || myAgreedPropertyIds.has(p.id) || allReady,
   );
 
+  const maxMembers = await getProjectMaxMembers(projectId);
   const serialized = await Promise.all(
     visible.map((p) =>
-      allReady ? serializeProperty(p, members.length) : serializePropertyPrivate(p, userId),
+      allReady ? serializeProperty(p, maxMembers) : serializePropertyPrivate(p, userId),
     ),
   );
   res.json(serialized);
@@ -215,41 +257,35 @@ router.post("/projects/:id/properties", async (req, res) => {
   }
 
   const trimmedName = parsed.data.name.trim();
-  const members = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
 
-  const existingMatch = await findMatchingProperty(projectId, parsed.data.classId, trimmedName);
-  // The 9-distinct-properties-per-class cap is enforced here only — the
-  // client has no knowledge of this limit at all (no count, no disabled
-  // state); it simply gets a plain error to show if it's ever hit. Agreeing
-  // with an existing name (the branch below) never adds a new row, so it
-  // never counts against the cap.
-  if (!existingMatch) {
-    const existingCount = await db.query.propertiesTable.findMany({
-      where: and(eq(propertiesTable.projectId, projectId), eq(propertiesTable.classId, parsed.data.classId)),
-    });
-    if (existingCount.length >= MAX_PROPERTIES_PER_CLASS) {
-      res.status(400).json({ error: `This class already has the maximum of ${MAX_PROPERTIES_PER_CLASS} properties` });
-      return;
-    }
-  }
-  if (existingMatch) {
-    // Someone else already proposed this exact property name for this class:
-    // merge by recording the new proposer's agreement instead of duplicating.
-    const alreadyAgreed = await db.query.propertyAgreementsTable.findFirst({
-      where: and(
-        eq(propertyAgreementsTable.propertyId, existingMatch.id),
-        eq(propertyAgreementsTable.userId, userId),
-      ),
-    });
-    if (!alreadyAgreed) {
-      await db.insert(propertyAgreementsTable).values({ propertyId: existingMatch.id, userId });
-    }
-
-    const result = await serializePropertyForViewer(existingMatch, userId, projectId);
-    broadcastToProject(projectId, { type: "agreement_changed" });
+  // Re-proposing a name you've already used for this class is a no-op: the
+  // repeat is silently dropped (no new row, no error) and the existing one
+  // is returned as-is — there's no cross-member check here at all, so this
+  // never looks at anyone else's properties.
+  const ownDuplicate = await findMatchingOwnProperty(
+    projectId,
+    parsed.data.classId,
+    userId,
+    trimmedName,
+  );
+  if (ownDuplicate) {
+    const result = await serializePropertyForViewer(ownDuplicate, userId, projectId);
     res.status(200).json(result);
+    return;
+  }
+
+  const myExistingCount = await db.query.propertiesTable.findMany({
+    where: and(
+      eq(propertiesTable.projectId, projectId),
+      eq(propertiesTable.classId, parsed.data.classId),
+      eq(propertiesTable.proposedByUserId, userId),
+    ),
+  });
+  const quota = getPropertyQuota(await getProjectMaxMembers(projectId), membership.colorSlot);
+  if (myExistingCount.length >= quota) {
+    res
+      .status(400)
+      .json({ error: `You've reached your limit of ${quota} propert${quota === 1 ? "y" : "ies"} for this class` });
     return;
   }
 
@@ -308,19 +344,19 @@ router.patch("/projects/:id/properties/:propertyId", async (req, res) => {
   }
 
   const trimmedName = parsed.data.name.trim();
-  const members = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
 
-  const existingMatch = await findMatchingProperty(
+  const existingMatch = await findMatchingOwnProperty(
     projectId,
     property.classId,
+    userId,
     trimmedName,
     property.id,
   );
   if (existingMatch) {
-    // Renaming into an already-proposed name merges the two: fold this
-    // property's agreements into the matching one and drop the duplicate.
+    // Renaming into a name you've already used elsewhere in this class
+    // merges the two: fold this property's agreements into the matching
+    // one and drop the duplicate. Still scoped to your own properties only
+    // — this never looks at another member's proposals.
     const existingAgreements = await db.query.propertyAgreementsTable.findMany({
       where: eq(propertyAgreementsTable.propertyId, propertyId),
     });

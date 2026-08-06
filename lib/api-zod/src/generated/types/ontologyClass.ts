@@ -10,8 +10,8 @@ export interface OntologyClass {
   id: number;
   uri: string;
   label: string;
-  /** Total distinct properties proposed for this class across ALL members, including ones the current viewer cannot see yet (private, pre-consensus proposals). Used to decide whether the "add property" affordance should be hidden for everyone, without revealing the private proposals themselves. */
+  /** Number of distinct properties the REQUESTING member has proposed for this class. Each member has their own fixed budget (see atPropertyCap) — there is no shared/global cap and no cross-member duplicate check, so this never reflects other members' proposals. */
   propertyCount: number;
-  /** True once propertyCount has reached the server-enforced maximum of distinct properties per class — no member can add a new, differently-named property at that point. */
+  /** True once the requesting member has reached their own budget of distinct properties for this class (budget depends on project member count and join order — e.g. 7/4+3/3+2+2 for 1/2/3 members). Used to hide the "add property" affordance once THIS member is out of budget; other members may still have room. */
   atPropertyCap: boolean;
 }

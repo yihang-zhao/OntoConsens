@@ -97,11 +97,14 @@ export const ListProjectsResponse = zod.array(ListProjectsResponseItem)
  * @summary Create a project from an uploaded ontology file
  */
 
+export const createProjectBodyMemberCountMax = 3;
+
 
 
 export const CreateProjectBody = zod.object({
   "name": zod.string().min(1),
-  "file": zod.instanceof(File)
+  "file": zod.instanceof(File),
+  "memberCount": zod.number().int().min(1).max(createProjectBodyMemberCountMax).describe('Exact number of members this project is for, chosen once at creation and fixed afterward. Invites are capped at this number, the shared consensus space only opens once exactly this many members have all marked ready, and each member\'s private property budget is derived from this number from the start.')
 })
 
 export const CreateProjectResponse = zod.object({
@@ -158,14 +161,24 @@ export const GetProjectResponse = zod.object({
   "id": zod.number().int(),
   "uri": zod.string(),
   "label": zod.string(),
-  "propertyCount": zod.number().int().describe('Total distinct properties proposed for this class across ALL members, including ones the current viewer cannot see yet (private, pre-consensus proposals). Used to decide whether the \"add property\" affordance should be hidden for everyone, without revealing the private proposals themselves.'),
-  "atPropertyCap": zod.boolean().describe('True once propertyCount has reached the server-enforced maximum of distinct properties per class — no member can add a new, differently-named property at that point.')
+  "propertyCount": zod.number().int().describe('Number of distinct properties the REQUESTING member has proposed for this class. Each member has their own fixed budget (see atPropertyCap) — there is no shared\/global cap and no cross-member duplicate check, so this never reflects other members\' proposals.'),
+  "atPropertyCap": zod.boolean().describe('True once the requesting member has reached their own budget of distinct properties for this class (budget depends on project member count and join order — e.g. 7\/4+3\/3+2+2 for 1\/2\/3 members). Used to hide the \"add property\" affordance once THIS member is out of budget; other members may still have room.')
 })),
   "relations": zod.array(zod.object({
   "childId": zod.number().int(),
   "parentId": zod.number().int()
 }))
 })
+
+
+/**
+ * @summary Delete a project (owner only) — removes it for every member
+ */
+export const DeleteProjectParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteProjectResponse = zod.void()
 
 
 /**

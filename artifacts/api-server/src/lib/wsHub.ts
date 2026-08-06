@@ -42,7 +42,8 @@ export type ServerEvent =
   | { type: "property_deleted" }
   | { type: "agreement_changed" }
   | { type: "member_joined" }
-  | { type: "member_ready" };
+  | { type: "member_ready" }
+  | { type: "project_deleted" };
 
 function onlineUserIds(projectId: number): number[] {
   const ids = new Set<number>();

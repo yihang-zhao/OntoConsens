@@ -17,13 +17,15 @@ type ServerEvent =
   | { type: "property_deleted" }
   | { type: "agreement_changed" }
   | { type: "member_joined" }
-  | { type: "member_ready" };
+  | { type: "member_ready" }
+  | { type: "project_deleted" };
 
 interface UseProjectSocketOptions {
   projectId: number;
   enabled: boolean;
   onProjectChanged?: () => void;
   onPropertiesChanged?: () => void;
+  onProjectDeleted?: () => void;
 }
 
 // Cursors older than this are considered stale and pruned even if no new
@@ -45,14 +47,15 @@ export function useProjectSocket({
   enabled,
   onProjectChanged,
   onPropertiesChanged,
+  onProjectDeleted,
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
   const socketRef = useRef<WebSocket | null>(null);
   const [cursors, setCursors] = useState<Map<number, RemoteCursor>>(new Map());
   const [status, setStatus] = useState<SocketStatus>("reconnecting");
   const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(new Set());
-  const callbacksRef = useRef({ onProjectChanged, onPropertiesChanged });
-  callbacksRef.current = { onProjectChanged, onPropertiesChanged };
+  const callbacksRef = useRef({ onProjectChanged, onPropertiesChanged, onProjectDeleted });
+  callbacksRef.current = { onProjectChanged, onPropertiesChanged, onProjectDeleted };
 
   useEffect(() => {
     if (!enabled) {
@@ -150,6 +153,9 @@ export function useProjectSocket({
             // some unrelated property edit happened to trigger it.
             callbacksRef.current.onProjectChanged?.();
             callbacksRef.current.onPropertiesChanged?.();
+            break;
+          case "project_deleted":
+            callbacksRef.current.onProjectDeleted?.();
             break;
         }
       });

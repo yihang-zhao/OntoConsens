@@ -15,7 +15,7 @@ import { JoinProjectBody, SetReadyBody } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth";
 import { parseOntologyFile } from "../lib/ontologyParser";
 import { issueTicket, broadcastToProject } from "../lib/wsHub";
-import { MAX_PROPERTIES_PER_CLASS } from "./properties";
+import { getPropertyQuota } from "./properties";
 
 const router: IRouter = Router();
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
@@ -29,7 +29,7 @@ function serializeProject(project: typeof projectsTable.$inferSelect, memberCoun
     inviteCode: project.inviteCode,
     ownerId: project.ownerId,
     memberCount,
-    maxMembers: MAX_PROJECT_MEMBERS,
+    maxMembers: project.maxMembers,
     createdAt: project.createdAt.toISOString(),
   };
 }
@@ -70,6 +70,8 @@ router.post("/projects", upload.single("file"), async (req, res) => {
   const userId = req.userId!;
   const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
   const file = req.file;
+  // Multipart text fields always arrive as strings, even for a numeric field.
+  const memberCount = Number(req.body.memberCount);
 
   if (!name) {
     res.status(400).json({ error: "Project name is required" });
@@ -77,6 +79,10 @@ router.post("/projects", upload.single("file"), async (req, res) => {
   }
   if (!file) {
     res.status(400).json({ error: "Ontology file is required" });
+    return;
+  }
+  if (!Number.isInteger(memberCount) || memberCount < 1 || memberCount > MAX_PROJECT_MEMBERS) {
+    res.status(400).json({ error: `Number of members must be between 1 and ${MAX_PROJECT_MEMBERS}` });
     return;
   }
 
@@ -97,7 +103,7 @@ router.post("/projects", upload.single("file"), async (req, res) => {
 
   const [project] = await db
     .insert(projectsTable)
-    .values({ name, ownerId: userId, inviteCode })
+    .values({ name, ownerId: userId, inviteCode, maxMembers: memberCount })
     .returning();
   if (!project) {
     res.status(500).json({ error: "Failed to create project" });
@@ -158,7 +164,7 @@ router.post("/projects/join", async (req, res) => {
     return;
   }
 
-  if (members.length >= MAX_PROJECT_MEMBERS) {
+  if (members.length >= project.maxMembers) {
     res.status(400).json({ error: "This project already has the maximum number of members" });
     return;
   }
@@ -221,42 +227,72 @@ router.get("/projects/:id", async (req, res) => {
     where: eq(ontologyRelationsTable.projectId, projectId),
   });
 
-  // Counted across ALL properties ever proposed for the class, regardless of
-  // who proposed them or whether the current viewer can see them yet (before
-  // everyone is ready, each member only sees their own proposals). The cap
-  // is a shared, project-wide resource — if it's already full from proposals
-  // a member can't see, they still must not be able to add a new, differently
-  // -named one, so this total (not the viewer's visible count) is what
-  // decides whether the "add" affordance shows for anyone.
+  // Each member has their own fixed property budget per class (see
+  // getPropertyQuota) — there is no shared/global cap, so "at cap" is
+  // computed against THIS viewer's own proposals only, never anyone else's.
+  // That also means this never has to peek at properties the viewer isn't
+  // allowed to see yet (private, pre-consensus proposals from other
+  // members) to answer the question.
   const { propertiesTable } = await import("@workspace/db");
-  const allProperties = await db.query.propertiesTable.findMany({
-    where: eq(propertiesTable.projectId, projectId),
+  const myProperties = await db.query.propertiesTable.findMany({
+    where: and(eq(propertiesTable.projectId, projectId), eq(propertiesTable.proposedByUserId, userId)),
   });
-  const propertyCountByClass = new Map<number, number>();
-  for (const p of allProperties) {
-    propertyCountByClass.set(p.classId, (propertyCountByClass.get(p.classId) ?? 0) + 1);
+  const myPropertyCountByClass = new Map<number, number>();
+  for (const p of myProperties) {
+    myPropertyCountByClass.set(p.classId, (myPropertyCountByClass.get(p.classId) ?? 0) + 1);
   }
+  // The budget is derived from the project's SPECIFIED member count, not
+  // however many have actually joined so far — a solo member of a
+  // 3-member project gets the 3-member first-joiner budget from the start,
+  // not the larger solo budget, since two more members are expected.
+  const myQuota = getPropertyQuota(project.maxMembers, membership.colorSlot);
 
   res.json({
     id: project.id,
     name: project.name,
     inviteCode: project.inviteCode,
     ownerId: project.ownerId,
-    maxMembers: MAX_PROJECT_MEMBERS,
+    maxMembers: project.maxMembers,
     createdAt: project.createdAt.toISOString(),
     members,
     classes: classes.map((c) => {
-      const propertyCount = propertyCountByClass.get(c.id) ?? 0;
+      const propertyCount = myPropertyCountByClass.get(c.id) ?? 0;
       return {
         id: c.id,
         uri: c.uri,
         label: c.label,
         propertyCount,
-        atPropertyCap: propertyCount >= MAX_PROPERTIES_PER_CLASS,
+        atPropertyCap: propertyCount >= myQuota,
       };
     }),
     relations: relations.map((r) => ({ childId: r.childId, parentId: r.parentId })),
   });
+});
+
+router.delete("/projects/:id", async (req, res) => {
+  const userId = req.userId!;
+  const projectId = Number(req.params.id);
+
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, projectId),
+  });
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  if (project.ownerId !== userId) {
+    res.status(403).json({ error: "Only the project owner can delete this project" });
+    return;
+  }
+
+  // Every child table (members, classes, relations, properties,
+  // agreements) references projects with onDelete: "cascade", so removing
+  // this one row cleans up everything for every member automatically.
+  await db.delete(projectsTable).where(eq(projectsTable.id, projectId));
+
+  broadcastToProject(projectId, { type: "project_deleted" });
+
+  res.status(204).end();
 });
 
 router.patch("/projects/:id/ready", async (req, res) => {
@@ -335,10 +371,9 @@ router.get("/projects/:id/export", async (req, res) => {
     return;
   }
 
-  const memberRows = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
-  const totalMembers = memberRows.length;
+  // Full agreement requires every SPECIFIED member to agree, not just
+  // however many have joined so far.
+  const totalMembers = project.maxMembers;
 
   const classes = await db.query.ontologyClassesTable.findMany({
     where: eq(ontologyClassesTable.projectId, projectId),

@@ -20,6 +20,16 @@ export const projectsTable = pgTable("projects", {
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
   inviteCode: text("invite_code").notNull().unique(),
+  // Chosen by the creator at project setup and fixed afterward — this is
+  // the exact number of members the project is FOR (1-3), not just an
+  // upper bound. Joining is capped at this number, the shared consensus
+  // space only opens once exactly this many members have all marked ready
+  // (not just however many happen to have joined), and each member's
+  // private property budget is computed from this number from the very
+  // start, not from however many members are currently in the project.
+  // Defaults to the historical global cap for rows created before this
+  // column existed.
+  maxMembers: integer("max_members").notNull().default(MAX_PROJECT_MEMBERS),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

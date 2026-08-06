@@ -1,4 +1,4 @@
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useEffect, useRef, useState } from "react";
 import { 
   useGetProject, 
@@ -8,7 +8,8 @@ import {
   useListProperties,
   getGetProjectQueryKey,
   getListPropertiesQueryKey,
-  getExportProjectQueryKey
+  getExportProjectQueryKey,
+  getListProjectsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export default function ProjectWorkspace() {
   const projectId = parseInt(idStr || "0", 10);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
 
   const { data: me } = useGetMe();
   // The WebSocket push is the primary sync mechanism, but a slow background
@@ -48,7 +50,12 @@ export default function ProjectWorkspace() {
   
   const meMember = project?.members.find(m => m.userId === me?.id);
   const isReady = meMember?.ready || false;
-  const allReady = Boolean(project && project.members.length > 0 && project.members.every(m => m.ready));
+  // The shared space only opens once exactly the project's specified member
+  // count has joined and everyone has marked ready — not just however many
+  // happen to be in the project right now.
+  const allReady = Boolean(
+    project && project.members.length === project.maxMembers && project.members.every(m => m.ready),
+  );
 
   // Reuses the same query (and cache) GraphCanvas is already fetching, just
   // to derive whether the whole workspace has reached full consensus. This
@@ -68,6 +75,17 @@ export default function ProjectWorkspace() {
     enabled: Boolean(project && meMember),
     onProjectChanged: () => queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) }),
     onPropertiesChanged: () => queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) }),
+    // The owner deleting the project removes it for everyone — every other
+    // member's socket gets this the moment it happens, so they're bounced
+    // back to the dashboard instead of being left staring at a project that
+    // no longer exists (which would otherwise only surface as confusing
+    // 404s on their next action).
+    onProjectDeleted: () => {
+      queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+      queryClient.removeQueries({ queryKey: getGetProjectQueryKey(projectId) });
+      toast({ title: "This project was deleted by its owner" });
+      navigate("/");
+    },
   });
 
   // "Live" is only meaningful as a brief confirmation right after connecting —

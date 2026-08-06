@@ -85,6 +85,13 @@ const DOCK_DIST = CIRCLE_RADIUS + PETAL_LENGTH / 2 - DOCK_OVERLAP;
 // leave a clear visual gap before the line reaches either node.
 const LINE_CLEARANCE = LABEL_DIST + 40;
 
+// The project-wide property budget (see getPropertyQuota on the backend:
+// 7 for a solo project, 4+3 for two members, 3+2+2 for three) always sums
+// to this. Used as a FIXED wedge count for every class's property ring so
+// that adding or removing a property never reshuffles the angle of any
+// other already-placed petal or the add button.
+const TOTAL_PROPERTY_SLOTS = 7;
+
 /** Square footprint big enough to fit the full ring of petals plus label
  * overhang, without clipping into neighboring nodes. */
 function computeNodeSize(): number {
@@ -362,7 +369,10 @@ export function GraphCanvas({
   // create, since that also handles the "merge into an existing property by
   // name" server behavior a client can't predict), and `onError` rolls the
   // optimistic write back if the request actually fails.
-  const totalMembers = Math.max(1, project?.members.length ?? 1);
+  // Uses the project's SPECIFIED member count, not just however many have
+  // joined so far — matches the backend's `agreedByAll` calculation, which
+  // requires every expected member (not just current joiners) to agree.
+  const totalMembers = Math.max(1, project?.maxMembers ?? 1);
 
   // A temporary property (with the proposer's own agreement already on it,
   // matching what the backend does on create) appears the moment you hit
@@ -766,8 +776,17 @@ export function GraphCanvas({
           // property surfaces as a plain error toast) — this is purely
           // about not showing an affordance that would just fail anyway.
           const atCap = cls.atPropertyCap;
-          const slotCount = classProperties.length + (atCap ? 0 : 1);
-          const angleStep = 360 / slotCount;
+          // The ring is divided into a FIXED number of wedges (the global
+          // 7-property budget every project shares, split across members),
+          // never into `classProperties.length + 1` — that would recompute
+          // angleStep on every add/remove and visibly rotate every existing
+          // petal (including the add button) around the node each time.
+          // With a fixed wedge count, property i always lands in wedge i, so
+          // adding a new one only ever fills the next wedge in place; nothing
+          // already placed ever moves, and the add button always sits in the
+          // very next wedge after the last filled one — i.e. immediately
+          // "to the right" of wherever it currently is.
+          const angleStep = 360 / TOTAL_PROPERTY_SLOTS;
           // A fixed offset keeps petals from landing on the cardinal
           // directions (which, for even slot counts, would make them look
           // like plain horizontal/vertical bars instead of tilted petals).
@@ -801,7 +820,7 @@ export function GraphCanvas({
                 // `agreements` oldest-first, indexing straight into that
                 // array (rather than a fixed per-member slot) gives exactly
                 // that "gravity" behavior for free.
-                const totalLevels = Math.max(1, project.members.length);
+                const totalLevels = Math.max(1, project.maxMembers);
                 const emptyLevels = Math.max(0, totalLevels - property.agreements.length);
                 // The box's anchor is strictly centrifugal — computed below
                 // from the raw `angle`, never from this. Only the text's
@@ -978,11 +997,12 @@ export function GraphCanvas({
                 );
               })}
 
-              {/* Add-property slot: one more petal in the same ring, dashed
-                  and neutral until clicked — hidden entirely once the node
-                  is at its 7-property cap, in both private and shared mode.
-                  The backend still owns the actual limit check; this is
-                  just the affordance disappearing so there's nothing to
+              {/* Add-property slot: one more petal in the same fixed ring,
+                  dashed and neutral until clicked — hidden entirely once
+                  this member has used their own property budget for this
+                  class (see atPropertyCap), in both private and shared
+                  mode. The backend still owns the actual limit check; this
+                  is just the affordance disappearing so there's nothing to
                   click that could only ever fail. */}
               {!atCap && (() => {
                 const angle = angleStep * classProperties.length - 90 + angleOffset;
