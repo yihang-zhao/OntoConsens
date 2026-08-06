@@ -4,7 +4,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 interface Ticket {
   userId: number;
-  projectId: number;
+  // Absent for a user-scoped (dashboard) connection, which isn't tied to
+  // any single project — see issueUserTicket.
+  projectId?: number;
   expiresAt: number;
 }
 
@@ -14,6 +16,15 @@ const TICKET_TTL_MS = 30_000;
 export function issueTicket(userId: number, projectId: number): string {
   const ticket = crypto.randomBytes(24).toString("hex");
   tickets.set(ticket, { userId, projectId, expiresAt: Date.now() + TICKET_TTL_MS });
+  return ticket;
+}
+
+// Lets a client connect without picking a specific project — used by the
+// dashboard so it can learn the instant one of the user's projects is
+// deleted by someone else, instead of waiting on the next background poll.
+export function issueUserTicket(userId: number): string {
+  const ticket = crypto.randomBytes(24).toString("hex");
+  tickets.set(ticket, { userId, expiresAt: Date.now() + TICKET_TTL_MS });
   return ticket;
 }
 
@@ -27,7 +38,8 @@ function consumeTicket(ticket: string | null): Ticket | undefined {
 
 interface ClientInfo {
   userId: number;
-  projectId: number;
+  // Absent for a dashboard (user-scoped) connection.
+  projectId?: number;
   isAlive: boolean;
 }
 
@@ -43,7 +55,8 @@ export type ServerEvent =
   | { type: "agreement_changed" }
   | { type: "member_joined" }
   | { type: "member_ready" }
-  | { type: "project_deleted" };
+  | { type: "project_deleted"; projectId?: number }
+  | { type: "member_count_changed"; projectId: number; memberCount: number };
 
 function onlineUserIds(projectId: number): number[] {
   const ids = new Set<number>();
@@ -70,6 +83,25 @@ export function broadcastToProject(
   }
 }
 
+// Pushes an event straight to specific users' dashboard connections,
+// regardless of which project (if any) they're currently viewing. Used so a
+// project's other members see it disappear from their project list the
+// instant it's deleted, instead of waiting for the next background poll.
+export function broadcastToUsers(userIds: number[], event: ServerEvent) {
+  if (userIds.length === 0) return;
+  const targets = new Set(userIds);
+  const payload = JSON.stringify(event);
+  for (const [socket, info] of clients) {
+    if (
+      info.projectId === undefined &&
+      targets.has(info.userId) &&
+      socket.readyState === socket.OPEN
+    ) {
+      socket.send(payload);
+    }
+  }
+}
+
 const HEARTBEAT_INTERVAL_MS = 20_000;
 
 export function setupWebSocketServer(): WebSocketServer {
@@ -79,6 +111,7 @@ export function setupWebSocketServer(): WebSocketServer {
     const info = clients.get(socket);
     if (!info) return;
     clients.delete(socket);
+    if (info.projectId === undefined) return; // dashboard connection, nothing to broadcast
     // Let everyone still in the project know this cursor is gone immediately,
     // instead of leaving a stale cursor on screen until it times out client-side.
     broadcastToProject(info.projectId, { type: "cursor_left", userId: info.userId });
@@ -95,9 +128,11 @@ export function setupWebSocketServer(): WebSocketServer {
     }
 
     clients.set(socket, { userId: ticket.userId, projectId: ticket.projectId, isAlive: true });
-    // Tell everyone (including this new connection) who's currently online,
-    // so avatar "in this project now" rings update live with no refresh.
-    broadcastPresence(ticket.projectId);
+    if (ticket.projectId !== undefined) {
+      // Tell everyone (including this new connection) who's currently online,
+      // so avatar "in this project now" rings update live with no refresh.
+      broadcastPresence(ticket.projectId);
+    }
 
     socket.on("pong", () => {
       const info = clients.get(socket);
@@ -105,6 +140,7 @@ export function setupWebSocketServer(): WebSocketServer {
     });
 
     socket.on("message", (raw) => {
+      if (ticket.projectId === undefined) return; // dashboard connections don't send anything
       let data: unknown;
       try {
         data = JSON.parse(raw.toString());

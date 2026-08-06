@@ -10,3 +10,4 @@
 - [Multi-service edit needs multi-workflow restart](multi-service-restart-after-edit.md) — editing backend + frontend but restarting only one workflow makes the unrestarted service's change look broken/absent.
 - [Fixed radial slot count must match visible-item count exactly](radial-slot-reserve-matches-visibility.md) — reserving a wedge for an add-button slot that isn't rendered (e.g. at cap) leaves a visible gap.
 - [api-server dev script doesn't hot-reload](api-server-dev-no-watch.md) — backend edits need an "API Server" workflow restart even to test the same service you just changed.
+- [User-scoped WebSocket channel in wsHub](ws-hub-dashboard-scoped-channel.md) — reuse this pattern to push realtime events to a user outside any project page (e.g. dashboard).

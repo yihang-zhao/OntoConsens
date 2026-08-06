@@ -14,7 +14,7 @@ import {
 import { JoinProjectBody, SetReadyBody } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth";
 import { parseOntologyFile } from "../lib/ontologyParser";
-import { issueTicket, broadcastToProject } from "../lib/wsHub";
+import { issueTicket, issueUserTicket, broadcastToProject, broadcastToUsers } from "../lib/wsHub";
 import { getPropertyQuota, mergeDuplicatePropertiesOnReady } from "./properties";
 
 const router: IRouter = Router();
@@ -186,6 +186,16 @@ router.post("/projects/join", async (req, res) => {
   });
 
   broadcastToProject(project.id, { type: "member_joined" });
+  // Existing members (the owner is already a project_members row from
+  // creation) may be looking at the dashboard rather than inside the
+  // project itself -- push the new count straight to them too, so the
+  // member count updates immediately there instead of waiting on a poll.
+  const memberUserIds = [...members.map((m) => m.userId), userId];
+  broadcastToUsers(memberUserIds, {
+    type: "member_count_changed",
+    projectId: project.id,
+    memberCount: members.length + 1,
+  });
 
   res.json(serializeProject(project, members.length + 1));
 });
@@ -294,12 +304,23 @@ router.delete("/projects/:id", async (req, res) => {
     return;
   }
 
+  // Grab who needs to be notified before the cascade wipes the membership
+  // rows out from under us.
+  const members = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+  const memberUserIds = members.map((m) => m.userId);
+
   // Every child table (members, classes, relations, properties,
   // agreements) references projects with onDelete: "cascade", so removing
   // this one row cleans up everything for every member automatically.
   await db.delete(projectsTable).where(eq(projectsTable.id, projectId));
 
   broadcastToProject(projectId, { type: "project_deleted" });
+  // Members who are sitting on the dashboard (not inside this project) only
+  // hold a project-scoped socket while viewing the project itself, so also
+  // push to their dashboard connections to drop the card immediately there.
+  broadcastToUsers(memberUserIds, { type: "project_deleted", projectId });
 
   res.status(204).end();
 });
@@ -365,6 +386,12 @@ router.patch("/projects/:id/ready", async (req, res) => {
     ready: updated?.ready ?? membership.ready,
     isOwner: project?.ownerId === userId,
   });
+});
+
+router.post("/ws-ticket", async (req, res) => {
+  const userId = req.userId!;
+  const ticket = issueUserTicket(userId);
+  res.json({ ticket });
 });
 
 router.post("/projects/:id/ws-ticket", async (req, res) => {

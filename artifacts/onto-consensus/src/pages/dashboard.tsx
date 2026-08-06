@@ -6,6 +6,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { clearAuthToken } from "@/lib/authToken";
+import { useDashboardSocket } from "@/hooks/useDashboardSocket";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,15 +71,38 @@ export default function Dashboard() {
     });
   };
 
+  // Shared by this tab's own optimistic delete and by the realtime push that
+  // arrives when a co-member deletes the project from elsewhere.
+  const removeProjectFromCache = (id: number) => {
+    queryClient.setQueryData(getListProjectsQueryKey(), (old: any) =>
+      Array.isArray(old) ? old.filter((p: any) => p.id !== id) : old,
+    );
+  };
+
+  // Other members of a shared project aren't necessarily looking at it when
+  // its owner deletes it, or when someone else joins it -- they may be
+  // sitting right here on the dashboard. This keeps a lightweight realtime
+  // connection open so both cases update immediately too, instead of only
+  // on the next full page load.
+  useDashboardSocket({
+    enabled: Boolean(me),
+    onProjectDeleted: removeProjectFromCache,
+    onMemberCountChanged: (projectId, memberCount) => {
+      queryClient.setQueryData(getListProjectsQueryKey(), (old: any) =>
+        Array.isArray(old)
+          ? old.map((p: any) => (p.id === projectId ? { ...p, memberCount } : p))
+          : old,
+      );
+    },
+  });
+
   const handleDeleteProject = (id: number) => {
     // Optimistic removal: the card must vanish the instant the button is
     // clicked, not after a round trip to the server. Strip it from the
     // cached list immediately (and remember the previous list in case the
     // request fails), then fire the actual mutation in the background.
     const previousProjects = queryClient.getQueryData(getListProjectsQueryKey());
-    queryClient.setQueryData(getListProjectsQueryKey(), (old: any) =>
-      Array.isArray(old) ? old.filter((p: any) => p.id !== id) : old,
-    );
+    removeProjectFromCache(id);
     deleteProject.mutate(
       { id },
       {

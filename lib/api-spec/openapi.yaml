@@ -264,6 +264,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/WsTicket"
 
+  /ws-ticket:
+    post:
+      operationId: createUserWsTicket
+      tags: [projects]
+      summary: Create a short-lived ticket to open a user-scoped realtime connection (not tied to a single project), used to learn immediately when any of the current user's projects is deleted
+      responses:
+        "200":
+          description: Ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WsTicket"
+
   /projects/{id}/properties:
     get:
       operationId: listProperties

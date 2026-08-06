@@ -214,6 +214,14 @@ export const CreateWsTicketResponse = zod.object({
 
 
 /**
+ * @summary Create a short-lived ticket to open a user-scoped realtime connection (not tied to a single project), used to learn immediately when any of the current user's projects is deleted
+ */
+export const CreateUserWsTicketResponse = zod.object({
+  "ticket": zod.string()
+})
+
+
+/**
  * @summary List properties visible to the current user for a project
  */
 export const ListPropertiesParams = zod.object({

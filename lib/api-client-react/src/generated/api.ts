@@ -947,6 +947,77 @@ export const useCreateWsTicket = <TError = ErrorType<unknown>,
       return useMutation(getCreateWsTicketMutationOptions(options));
     }
 
+export const getCreateUserWsTicketUrl = () => {
+
+
+
+
+  return `/api/ws-ticket`
+}
+
+/**
+ * @summary Create a short-lived ticket to open a user-scoped realtime connection (not tied to a single project), used to learn immediately when any of the current user's projects is deleted
+ */
+export const createUserWsTicket = async ( options?: Parameters<typeof customFetch>[1]): Promise<WsTicket> => {
+
+  return customFetch<WsTicket>(getCreateUserWsTicketUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCreateUserWsTicketMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createUserWsTicket>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createUserWsTicket>>, TError,void, TContext> => {
+
+const mutationKey = ['createUserWsTicket'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createUserWsTicket>>, void> = () => {
+
+
+          return  createUserWsTicket(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateUserWsTicketMutationResult = NonNullable<Awaited<ReturnType<typeof createUserWsTicket>>>
+
+    export type CreateUserWsTicketMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create a short-lived ticket to open a user-scoped realtime connection (not tied to a single project), used to learn immediately when any of the current user's projects is deleted
+ */
+export const useCreateUserWsTicket = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createUserWsTicket>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createUserWsTicket>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getCreateUserWsTicketMutationOptions(options));
+    }
+
 export const getListPropertiesUrl = (id: number,) => {
 
 
