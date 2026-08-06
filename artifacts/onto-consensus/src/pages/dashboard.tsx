@@ -25,7 +25,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText } from "lucide-react";
+import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check } from "lucide-react";
 
 const createSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Project name is too long"),
@@ -44,6 +44,15 @@ export default function Dashboard() {
   const [joinOpen, setJoinOpen] = useState(false);
   const [, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [copiedProjectId, setCopiedProjectId] = useState<number | null>(null);
+
+  const handleCopyCode = (e: React.MouseEvent, projectId: number, inviteCode: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(inviteCode);
+    setCopiedProjectId(projectId);
+    setTimeout(() => setCopiedProjectId((current) => (current === projectId ? null : current)), 1500);
+  };
 
   const createProject = useCreateProject();
   const joinProject = useJoinProject();
@@ -323,9 +332,23 @@ export default function Dashboard() {
                       </div>
                     </CardContent>
                     <CardFooter className="pt-4 border-t bg-muted/20">
-                      <div className="text-xs font-mono bg-background px-2 py-1 rounded border">
-                        Code: {project.inviteCode}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleCopyCode(e, project.id, project.inviteCode)}
+                        className="flex items-center gap-1.5 text-xs font-mono bg-background px-2 py-1 rounded border hover:bg-accent hover:text-accent-foreground transition-colors"
+                      >
+                        {copiedProjectId === project.id ? (
+                          <>
+                            <Check className="w-3 h-3" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            Code: {project.inviteCode}
+                          </>
+                        )}
+                      </button>
                     </CardFooter>
                   </Card>
                 </Link>
