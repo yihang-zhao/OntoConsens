@@ -322,7 +322,7 @@ export default function Dashboard() {
                       <AlertDialogHeader>
                         <AlertDialogTitle>Delete "{project.name}"?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This permanently deletes the project for every member, including all classes, properties, and agreements. This cannot be undone.
+                          This permanently deletes the project for every member and cannot be undone.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>

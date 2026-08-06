@@ -6,3 +6,4 @@
 - [CSS transform translate+rotate pivot trap](css-transform-rotate-pivot-trap.md) -- radial layouts must position via trig + plain rotate, never combine translate+rotate with a custom origin.
 - [React-state-drives-one-CSS-transform re-render trap](react-state-single-css-transform-perf.md) — grep all reads of a hot state var before assuming a full re-render is needed per input event.
 - [Unhandled pg Pool 'error' crashes whole process](pg-pool-idle-error-handler.md) — dropped idle Postgres connections need `pool.on('error', ...)` or an uncaught exception takes the server down.
+- [Radix composeEventHandlers preventDefault trap](radix-composeeventhandlers-preventdefault-trap.md) — a trigger's own preventDefault() silently blocks Radix from opening Dialog/AlertDialog/Popover/etc.
