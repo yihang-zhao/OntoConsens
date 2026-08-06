@@ -5,12 +5,11 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { format } from "date-fns";
 import { clearAuthToken } from "@/lib/authToken";
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -144,9 +143,6 @@ export default function Dashboard() {
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Join a Project</DialogTitle>
-                  <DialogDescription>
-                    Enter the invite code shared by the project owner.
-                  </DialogDescription>
                 </DialogHeader>
                 <Form {...joinForm}>
                   <form onSubmit={joinForm.handleSubmit(onJoinSubmit)} className="space-y-4">
@@ -303,9 +299,6 @@ export default function Dashboard() {
                   <Card className="h-full hover:border-primary/50 transition-colors cursor-pointer hover:shadow-md">
                     <CardHeader>
                       <CardTitle className="group-hover:text-primary transition-colors line-clamp-1 pr-6">{project.name}</CardTitle>
-                      <CardDescription>
-                        Created {format(new Date(project.createdAt), 'MMM d, yyyy')}
-                      </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
