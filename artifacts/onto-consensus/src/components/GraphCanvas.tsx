@@ -865,7 +865,7 @@ export function GraphCanvas({
           // that while still showing an add button — an edge case shared
           // mode newly allows before its own cap kicks in.
           const showAddButton = !atCap && !ownSpaceLocked;
-          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + (showAddButton ? 0 : 1));
+          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + (showAddButton ? 1 : 0));
           const angleStep = 360 / slotCount;
           // A fixed offset keeps petals from landing on the cardinal
           // directions (which, for even slot counts, would make them look
