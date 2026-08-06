@@ -61,11 +61,12 @@ export default function Register() {
           setLocation("/");
         },
         onError: (error: any) => {
-          if (error.error === "Username already taken") {
+          const message = error?.data?.error;
+          if (message === "Username already taken") {
             form.setError("username", { message: "This username is already taken" });
           } else {
             form.setError("root", {
-              message: error.error || "An error occurred during registration.",
+              message: message || "An error occurred during registration.",
             });
           }
         },
