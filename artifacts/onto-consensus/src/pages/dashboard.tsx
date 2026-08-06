@@ -113,8 +113,11 @@ export default function Dashboard() {
         },
         onError: (err: any) => {
           const message = err?.data?.error;
-          createForm.setError("root", { message: message || "Failed to create project." });
           if (message === "Project name already exists") {
+            createForm.setError("name", { message: "This project name already exists" });
+            setTimeout(() => createForm.clearErrors("name"), 1000);
+          } else {
+            createForm.setError("root", { message: message || "Failed to create project." });
             setTimeout(() => createForm.clearErrors("root"), 1000);
           }
         }
