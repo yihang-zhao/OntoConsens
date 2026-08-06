@@ -348,10 +348,15 @@ export const ExportProjectParams = zod.object({
 })
 
 export const ExportProjectResponse = zod.object({
+  "meta": zod.object({
+  "projectName": zod.string(),
+  "exportedAt": zod.coerce.date(),
+  "memberCount": zod.number().int().describe('The project\'s specified number of members (not just however many have joined).')
+}),
   "classes": zod.array(zod.object({
   "label": zod.string(),
-  "parentLabel": zod.string().nullable().describe('The label of this class\'s parent in the ontology hierarchy, or null for a root class.'),
-  "properties": zod.array(zod.string()).describe('Only properties every specified member has agreed on.')
+  "properties": zod.array(zod.string()).describe('Only properties every specified member has agreed on.'),
+  "children": zod.array(zod.unknown()).describe('Direct subclasses, nested recursively — represents the ontology\'s class hierarchy structurally instead of via a parent reference.')
 }))
 })
 

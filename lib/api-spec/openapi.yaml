@@ -673,24 +673,40 @@ components:
 
     ExportClass:
       type: object
-      required: [label, parentLabel, properties]
+      required: [label, properties, children]
       properties:
         label:
           type: string
-        parentLabel:
-          type: string
-          nullable: true
-          description: The label of this class's parent in the ontology hierarchy, or null for a root class.
         properties:
           type: array
           items:
             type: string
           description: Only properties every specified member has agreed on.
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportClass"
+          description: Direct subclasses, nested recursively — represents the ontology's class hierarchy structurally instead of via a parent reference.
+
+    ExportMeta:
+      type: object
+      required: [projectName, exportedAt, memberCount]
+      properties:
+        projectName:
+          type: string
+        exportedAt:
+          type: string
+          format: date-time
+        memberCount:
+          type: integer
+          description: The project's specified number of members (not just however many have joined).
 
     ExportPayload:
       type: object
-      required: [classes]
+      required: [meta, classes]
       properties:
+        meta:
+          $ref: "#/components/schemas/ExportMeta"
         classes:
           type: array
           items:

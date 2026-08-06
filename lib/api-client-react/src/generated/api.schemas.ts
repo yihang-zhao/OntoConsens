@@ -144,13 +144,21 @@ export interface Property {
 
 export interface ExportClass {
   label: string;
-  /** The label of this class's parent in the ontology hierarchy, or null for a root class. */
-  parentLabel: string | null;
   /** Only properties every specified member has agreed on. */
   properties: string[];
+  /** Direct subclasses, nested recursively — represents the ontology's class hierarchy structurally instead of via a parent reference. */
+  children: ExportClass[];
+}
+
+export interface ExportMeta {
+  projectName: string;
+  exportedAt: string;
+  /** The project's specified number of members (not just however many have joined). */
+  memberCount: number;
 }
 
 export interface ExportPayload {
+  meta: ExportMeta;
   classes: ExportClass[];
 }
 

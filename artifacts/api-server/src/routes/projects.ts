@@ -419,36 +419,61 @@ router.get("/projects/:id/export", async (req, res) => {
     }
   }
 
-  // A class's hierarchy position is its parent's label (from the
-  // uploaded ontology's rdfs:subClassOf relations), or null for a root
-  // class with no parent. A class can only have one parent relation per
-  // the ontology parser, so a direct label lookup (not a nested tree) is
-  // enough to reconstruct the full hierarchy from a flat list.
-  const labelByClassId = new Map(classes.map((c) => [c.id, c.label]));
-  const parentLabelByChildId = new Map<number, string>();
+  // The hierarchy is represented structurally (nesting), not by a
+  // parent-label field: each class's own `children` array holds its direct
+  // subclasses, recursively, exactly mirroring the uploaded ontology's
+  // rdfs:subClassOf relations. A class can only have one parent per the
+  // ontology parser, so every class appears exactly once in the tree —
+  // either nested under its parent, or at the top level if it has none.
+  const childIdsByParentId = new Map<number, number[]>();
+  const childIds = new Set<number>();
   for (const relation of relations) {
-    const parentLabel = labelByClassId.get(relation.parentId);
-    if (parentLabel) parentLabelByChildId.set(relation.childId, parentLabel);
+    const siblings = childIdsByParentId.get(relation.parentId) ?? [];
+    siblings.push(relation.childId);
+    childIdsByParentId.set(relation.parentId, siblings);
+    childIds.add(relation.childId);
+  }
+  const classById = new Map(classes.map((c) => [c.id, c]));
+
+  // Fixed, minimal schema: every class's label, only the properties every
+  // specified member has actually agreed on for it, and its subclasses
+  // nested inside `children` — no project metadata, URIs, or
+  // partially-agreed properties leak into the export.
+  function buildNode(cls: (typeof classes)[number]): {
+    label: string;
+    properties: string[];
+    children: ReturnType<typeof buildNode>[];
+  } {
+    return {
+      label: cls.label,
+      properties: properties
+        .filter(
+          (p) =>
+            p.classId === cls.id &&
+            (agreementCountByProperty.get(p.id) ?? 0) >= totalMembers,
+        )
+        .map((p) => p.name),
+      children: (childIdsByParentId.get(cls.id) ?? [])
+        .map((id) => classById.get(id))
+        .filter((c): c is (typeof classes)[number] => c !== undefined)
+        .map(buildNode),
+    };
   }
 
-  // Fixed, minimal schema: every class's label, its place in the class
-  // hierarchy (its parent's label, or null at the root), and only the
-  // properties every specified member has actually agreed on for it — no
-  // project metadata, URIs, or partially-agreed properties leak into the
-  // export.
-  const exportClasses = classes.map((cls) => ({
-    label: cls.label,
-    parentLabel: parentLabelByChildId.get(cls.id) ?? null,
-    properties: properties
-      .filter(
-        (p) =>
-          p.classId === cls.id &&
-          (agreementCountByProperty.get(p.id) ?? 0) >= totalMembers,
-      )
-      .map((p) => p.name),
-  }));
+  const exportClasses = classes.filter((c) => !childIds.has(c.id)).map(buildNode);
 
-  res.json({ classes: exportClasses });
+  // Meta sits alongside `classes`, never inside it — it describes the
+  // export file itself (which project, when, how many members it took to
+  // reach these agreements), not any individual class, so it stays out of
+  // the fixed per-class schema entirely.
+  res.json({
+    meta: {
+      projectName: project.name,
+      exportedAt: new Date().toISOString(),
+      memberCount: project.maxMembers,
+    },
+    classes: exportClasses,
+  });
 });
 
 export default router;

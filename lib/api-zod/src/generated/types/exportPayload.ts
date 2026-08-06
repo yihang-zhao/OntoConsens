@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ExportClass } from './exportClass';
+import type { ExportMeta } from './exportMeta';
 
 export interface ExportPayload {
+  meta: ExportMeta;
   classes: ExportClass[];
 }

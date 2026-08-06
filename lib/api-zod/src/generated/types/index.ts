@@ -10,6 +10,7 @@ export * from './authCredentials';
 export * from './authResponse';
 export * from './errorResponse';
 export * from './exportClass';
+export * from './exportMeta';
 export * from './exportPayload';
 export * from './healthStatus';
 export * from './joinProjectInput';
