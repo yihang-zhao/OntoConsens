@@ -256,7 +256,7 @@ export default function Dashboard() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="icon"
                   onClick={handleLogout}
                   className="text-muted-foreground hover:text-foreground"
