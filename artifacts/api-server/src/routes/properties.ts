@@ -392,19 +392,26 @@ router.post("/projects/:id/properties", async (req, res) => {
     }
   }
 
-  const myExistingCount = await db.query.propertiesTable.findMany({
-    where: and(
-      eq(propertiesTable.projectId, projectId),
-      eq(propertiesTable.classId, parsed.data.classId),
-      eq(propertiesTable.proposedByUserId, userId),
-    ),
-  });
-  const quota = getPropertyQuota(await getProjectMaxMembers(projectId), membership.colorSlot);
-  if (myExistingCount.length >= quota) {
-    res
-      .status(400)
-      .json({ error: `You've reached your limit of ${quota} propert${quota === 1 ? "y" : "ies"} for this class` });
-    return;
+  // The per-member propose quota only exists to keep the private phase fair
+  // before anyone can see anyone else's proposals. Once the shared space is
+  // open, everything is visible and cross-member duplicates merge instead of
+  // competing (see above), so there's nothing left for a quota to protect —
+  // members can add as many properties as they want per class in shared mode.
+  if (!isSharedSpaceOpen) {
+    const myExistingCount = await db.query.propertiesTable.findMany({
+      where: and(
+        eq(propertiesTable.projectId, projectId),
+        eq(propertiesTable.classId, parsed.data.classId),
+        eq(propertiesTable.proposedByUserId, userId),
+      ),
+    });
+    const quota = getPropertyQuota(await getProjectMaxMembers(projectId), membership.colorSlot);
+    if (myExistingCount.length >= quota) {
+      res
+        .status(400)
+        .json({ error: `You've reached your limit of ${quota} propert${quota === 1 ? "y" : "ies"} for this class` });
+      return;
+    }
   }
 
   const [property] = await db

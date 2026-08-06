@@ -814,9 +814,16 @@ export function GraphCanvas({
           // independently on create (a rejected property surfaces as a
           // plain error toast) — this is purely about not showing an
           // affordance that would just fail anyway.
+          // The per-member quota only protects fairness during the private
+          // phase, before anyone can see anyone else's proposals. Once the
+          // shared space is open, proposals are visible to everyone and
+          // same-name duplicates merge instead of competing (see the
+          // backend's cross-member merge-on-create), so the quota no longer
+          // applies at all in shared mode — members can add as many
+          // properties per class as they want.
           const myPropertyCountInClass = classProperties.filter((p) => p.proposedByUserId === currentUserId).length;
           const myQuota = getPropertyQuota(totalMembers, membersById.get(currentUserId)?.colorSlot ?? 0);
-          const atCap = myPropertyCountInClass >= myQuota;
+          const atCap = !sharedModeEnabled && myPropertyCountInClass >= myQuota;
           // The ring is divided into a FIXED number of wedges (the global
           // 7-property budget every project shares, split across members),
           // never into `classProperties.length + 1` — that would recompute
@@ -827,7 +834,14 @@ export function GraphCanvas({
           // already placed ever moves, and the add button always sits in the
           // very next wedge after the last filled one — i.e. immediately
           // "to the right" of wherever it currently is.
-          const angleStep = 360 / TOTAL_PROPERTY_SLOTS;
+          // In shared mode the per-member quota no longer applies, so a class
+          // can grow past the private-phase budget of 7. The wedge count
+          // stays fixed at 7 for the normal case (matches every prior
+          // private-mode layout, no rotation on add/remove there) and only
+          // grows past 7 once a class actually needs more slots than that —
+          // an edge case shared mode newly allows.
+          const slotCount = Math.max(TOTAL_PROPERTY_SLOTS, classProperties.length + 1);
+          const angleStep = 360 / slotCount;
           // A fixed offset keeps petals from landing on the cardinal
           // directions (which, for even slot counts, would make them look
           // like plain horizontal/vertical bars instead of tilted petals).
