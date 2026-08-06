@@ -259,7 +259,7 @@ export default function Dashboard() {
                   variant="outline"
                   size="icon"
                   onClick={handleLogout}
-                  className="text-muted-foreground hover:text-foreground"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
                 >
                   <LogOut className="w-4 h-4" />
                 </Button>
