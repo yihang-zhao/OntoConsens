@@ -348,8 +348,6 @@ export function GraphCanvas({
   });
 
   const createProperty = useCreateProperty();
-  const retractProperty = useRetractProperty();
-  const agreeProperty = useAgreeProperty();
 
   const invalidateProperties = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) });
@@ -362,6 +360,66 @@ export function GraphCanvas({
     }
     return map;
   }, [project]);
+
+  // Clicking a petal must repaint instantly — the fill level, docking, and
+  // gauge all read straight off the properties query cache, so the click's
+  // visual result can only be immediate if that cache itself is updated
+  // synchronously, before the request round-trips. `onMutate` writes the
+  // optimistic agreement/retraction directly into the cache (a plain
+  // `setQueryData`, no network wait); the real response then reconciles it
+  // via the existing `onSuccess` -> invalidate, and `onError` rolls the
+  // optimistic write back if the request actually fails.
+  const totalMembers = Math.max(1, project?.members.length ?? 1);
+
+  const retractProperty = useRetractProperty({
+    mutation: {
+      onMutate: async ({ propertyId }) => {
+        const queryKey = getListPropertiesQueryKey(projectId);
+        await queryClient.cancelQueries({ queryKey });
+        const previous = queryClient.getQueryData<Property[]>(queryKey);
+        queryClient.setQueryData<Property[]>(queryKey, (old) =>
+          (old ?? []).map((p) =>
+            p.id !== propertyId
+              ? p
+              : {
+                  ...p,
+                  agreements: p.agreements.filter((a) => a.userId !== currentUserId),
+                  agreedByAll: false,
+                },
+          ),
+        );
+        return { previous, queryKey };
+      },
+      onError: (_err, _vars, context) => {
+        if (context?.previous) queryClient.setQueryData(context.queryKey, context.previous);
+      },
+    },
+  });
+
+  const agreeProperty = useAgreeProperty({
+    mutation: {
+      onMutate: async ({ propertyId }) => {
+        const queryKey = getListPropertiesQueryKey(projectId);
+        await queryClient.cancelQueries({ queryKey });
+        const previous = queryClient.getQueryData<Property[]>(queryKey);
+        const me = membersById.get(currentUserId);
+        queryClient.setQueryData<Property[]>(queryKey, (old) =>
+          (old ?? []).map((p) => {
+            if (p.id !== propertyId || p.agreements.some((a) => a.userId === currentUserId)) return p;
+            const agreements = [
+              ...p.agreements,
+              { userId: currentUserId, username: me?.username ?? "", colorSlot: me?.colorSlot ?? 0 },
+            ];
+            return { ...p, agreements, agreedByAll: agreements.length >= totalMembers };
+          }),
+        );
+        return { previous, queryKey };
+      },
+      onError: (_err, _vars, context) => {
+        if (context?.previous) queryClient.setQueryData(context.queryKey, context.previous);
+      },
+    },
+  });
 
   const nodeSize = NODE_SIZE;
 
