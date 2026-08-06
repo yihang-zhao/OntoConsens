@@ -80,6 +80,23 @@ async function findMatchingOwnProperty(
   );
 }
 
+// Same idea as `findMatchingOwnProperty`, but across every proposer — only
+// safe to use once the shared space is open (allReady), since before that a
+// member must not be able to detect that someone else already proposed the
+// same name (that's exactly the private-phase leak `serializePropertyPrivate`
+// exists to prevent).
+async function findMatchingPropertyAnyProposer(
+  projectId: number,
+  classId: number,
+  name: string,
+) {
+  const normalized = normalizeName(name);
+  const candidates = await db.query.propertiesTable.findMany({
+    where: and(eq(propertiesTable.projectId, projectId), eq(propertiesTable.classId, classId)),
+  });
+  return candidates.find((p) => normalizeName(p.name) === normalized);
+}
+
 async function serializeProperty(
   property: typeof propertiesTable.$inferSelect,
   totalMembers: number,
@@ -332,6 +349,47 @@ router.post("/projects/:id/properties", async (req, res) => {
     const result = await serializePropertyForViewer(ownDuplicate, userId, projectId);
     res.status(200).json(result);
     return;
+  }
+
+  // Once the shared space is open, proposing a name someone else already
+  // proposed for this class is the exact same "already claimed" situation
+  // as the own-duplicate case above — it must merge into that existing
+  // property (just add your own agreement to it) instead of creating a
+  // second competing row, the same way `mergeDuplicatePropertiesOnReady`
+  // collapses names that collided BEFORE the space opened. This has to
+  // check every proposer, not just your own, which is only safe to do once
+  // `allReady` — before that, checking anyone else's names at all would
+  // leak who proposed what ahead of the private-phase reveal. Merging
+  // doesn't spend any of your own propose quota, since it's not a new
+  // property.
+  const membersForReadyCheck = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+  const isSharedSpaceOpen = await isProjectFullyReady(projectId, membersForReadyCheck);
+  if (isSharedSpaceOpen) {
+    const crossMemberMatch = await findMatchingPropertyAnyProposer(
+      projectId,
+      parsed.data.classId,
+      trimmedName,
+    );
+    if (crossMemberMatch) {
+      const alreadyAgreed = await db.query.propertyAgreementsTable.findFirst({
+        where: and(
+          eq(propertyAgreementsTable.propertyId, crossMemberMatch.id),
+          eq(propertyAgreementsTable.userId, userId),
+        ),
+      });
+      if (!alreadyAgreed) {
+        await db
+          .insert(propertyAgreementsTable)
+          .values({ propertyId: crossMemberMatch.id, userId })
+          .onConflictDoNothing();
+        broadcastToProject(projectId, { type: "agreement_changed" });
+      }
+      const result = await serializePropertyForViewer(crossMemberMatch, userId, projectId);
+      res.status(200).json(result);
+      return;
+    }
   }
 
   const myExistingCount = await db.query.propertiesTable.findMany({
