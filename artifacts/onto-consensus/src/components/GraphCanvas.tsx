@@ -100,6 +100,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+// A label rotated to exactly match its petal's outward angle would read
+// upside-down on the lower half of the circle (and sideways near the left
+// and right) — this folds any angle into a range that always reads
+// left-to-right while still tilting to hint at the petal's direction. This
+// only ever affects the TEXT's own tilt, never where its box is anchored —
+// the anchor point is computed elsewhere from the raw (unfolded) angle, and
+// the three-layer position/recenter/rotate split keeps that anchor fixed no
+// matter what this function returns.
+function labelRotation(petalAngle: number): number {
+  let a = ((petalAngle % 360) + 360) % 360; // 0..360
+  if (a > 180) a -= 360; // -180..180
+  if (a > 90) a -= 180;
+  else if (a < -90) a += 180;
+  return clamp(a, -55, 55);
+}
+
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.5;
 
@@ -593,11 +609,10 @@ export function GraphCanvas({
                 // that "gravity" behavior for free.
                 const totalLevels = Math.max(1, project.members.length);
                 const emptyLevels = Math.max(0, totalLevels - property.agreements.length);
-                // Strictly centrifugal: the label's rotation always matches
-                // the petal's own outward angle exactly, with no
-                // readability clamp/flip — even if that means it reads
-                // upside-down on the lower half of the ring.
-                const labelAngle = angle;
+                // The box's anchor is strictly centrifugal — computed below
+                // from the raw `angle`, never from this. Only the text's
+                // own tilt inside that box adapts for legibility.
+                const labelAngle = labelRotation(angle);
                 const labelCenter = petalCenter(angle, nodeSize / 2, nodeSize / 2, LABEL_DIST);
 
                 return (
