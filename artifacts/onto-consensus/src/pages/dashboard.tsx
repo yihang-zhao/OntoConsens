@@ -323,11 +323,20 @@ export default function Dashboard() {
       </header>
 
       <main className="flex-1 container mx-auto px-4 py-8">
-        <div className="mb-8">
+        <div className="mb-8 flex items-center gap-4">
           {me && (
-            <p className="text-sm text-muted-foreground mb-1">Hello, {me.username}</p>
+            <div className="w-12 h-12 shrink-0 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-mono text-lg font-bold text-primary">
+              {me.username.charAt(0).toUpperCase()}
+            </div>
           )}
-          <h1 className="text-3xl font-bold tracking-tight">Your Projects</h1>
+          <div>
+            {me && (
+              <p className="text-sm text-muted-foreground">
+                Hello, <span className="font-semibold text-foreground">{me.username}</span>
+              </p>
+            )}
+            <h1 className="text-3xl font-bold tracking-tight">Your Projects</h1>
+          </div>
         </div>
 
         {isLoading ? (
