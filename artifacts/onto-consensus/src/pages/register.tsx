@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { setAuthToken } from "@/lib/authToken";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Network } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -73,9 +73,6 @@ export default function Register() {
         <Card className="border-border/50 shadow-xl shadow-black/5">
           <CardHeader className="space-y-1 text-center">
             <CardTitle className="text-xl">Create an account</CardTitle>
-            <CardDescription>
-              Join your team to build ontologies together
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
@@ -87,7 +84,7 @@ export default function Register() {
                     <FormItem>
                       <FormLabel>Username</FormLabel>
                       <FormControl>
-                        <Input placeholder="Choose a username" {...field} />
+                        <Input {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -100,7 +97,7 @@ export default function Register() {
                     <FormItem>
                       <FormLabel>Password</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="••••••••" {...field} />
+                        <Input type="password" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -113,7 +110,7 @@ export default function Register() {
                     <FormItem>
                       <FormLabel>Confirm Password</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="••••••••" {...field} />
+                        <Input type="password" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
