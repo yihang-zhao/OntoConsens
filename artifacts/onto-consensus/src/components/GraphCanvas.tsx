@@ -1059,13 +1059,32 @@ export function GraphCanvas({
                     // shift every time the line count changes.
                     const growUp = labelGrowsUpward(angle, labelAngle);
                     const left = labelCenter.x - LABEL_WIDTH / 2;
+                    // Framer Motion writes each animated style key straight to
+                    // the DOM element and never clears one that simply stops
+                    // appearing in a later `animate` call — it just leaves the
+                    // last value it wrote sitting there. Since `growUp`
+                    // flipping (crossing the fold near the ring's left/right
+                    // side, as an index shift from a sibling deletion can
+                    // trigger) switches which of `top`/`bottom` is even
+                    // present in this object, the *other* one's stale pixel
+                    // value from before the flip would otherwise stay glued
+                    // to the element. With both a real `top` and a real
+                    // `bottom` simultaneously set on this height-less
+                    // `position: absolute` box, the browser stretches it to
+                    // span the distance between them instead of sizing to its
+                    // text, which collapses the visible label to nothing.
+                    // Explicitly animating the inactive side to "auto" every
+                    // render guarantees it's always present in the object (so
+                    // Framer always writes over whatever pixel value was
+                    // there before) and never fights the active side for the
+                    // box's height.
                     return (
                       <motion.div
                         initial={false}
                         animate={
                           growUp
-                            ? { left, bottom: nodeSize - labelCenter.y, rotate: labelAngle }
-                            : { left, top: labelCenter.y, rotate: labelAngle }
+                            ? { left, bottom: nodeSize - labelCenter.y, top: "auto", rotate: labelAngle }
+                            : { left, top: labelCenter.y, bottom: "auto", rotate: labelAngle }
                         }
                         transition={activeTransition}
                         className="pointer-events-none absolute flex flex-col"
