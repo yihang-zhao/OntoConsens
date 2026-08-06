@@ -143,14 +143,14 @@ export interface Property {
 }
 
 export interface ExportClass {
-  uri: string;
   label: string;
+  /** The label of this class's parent in the ontology hierarchy, or null for a root class. */
+  parentLabel: string | null;
+  /** Only properties every specified member has agreed on. */
   properties: string[];
 }
 
 export interface ExportPayload {
-  projectName: string;
-  exportedAt: string;
   classes: ExportClass[];
 }
 

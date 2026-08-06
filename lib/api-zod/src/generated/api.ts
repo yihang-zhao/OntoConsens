@@ -348,12 +348,10 @@ export const ExportProjectParams = zod.object({
 })
 
 export const ExportProjectResponse = zod.object({
-  "projectName": zod.string(),
-  "exportedAt": zod.coerce.date(),
   "classes": zod.array(zod.object({
-  "uri": zod.string(),
   "label": zod.string(),
-  "properties": zod.array(zod.string())
+  "parentLabel": zod.string().nullable().describe('The label of this class\'s parent in the ontology hierarchy, or null for a root class.'),
+  "properties": zod.array(zod.string()).describe('Only properties every specified member has agreed on.')
 }))
 })
 

@@ -396,11 +396,18 @@ router.get("/projects/:id/export", async (req, res) => {
   const classes = await db.query.ontologyClassesTable.findMany({
     where: eq(ontologyClassesTable.projectId, projectId),
   });
-  const { propertiesTable, propertyAgreementsTable } = await import("@workspace/db");
+  const {
+    propertiesTable,
+    propertyAgreementsTable,
+    ontologyRelationsTable: relationsTable,
+  } = await import("@workspace/db");
   const properties = await db.query.propertiesTable.findMany({
     where: eq(propertiesTable.projectId, projectId),
   });
   const agreements = await db.query.propertyAgreementsTable.findMany();
+  const relations = await db.query.ontologyRelationsTable.findMany({
+    where: eq(relationsTable.projectId, projectId),
+  });
 
   const agreementCountByProperty = new Map<number, number>();
   for (const agreement of agreements) {
@@ -412,9 +419,26 @@ router.get("/projects/:id/export", async (req, res) => {
     }
   }
 
+  // A class's hierarchy position is its parent's label (from the
+  // uploaded ontology's rdfs:subClassOf relations), or null for a root
+  // class with no parent. A class can only have one parent relation per
+  // the ontology parser, so a direct label lookup (not a nested tree) is
+  // enough to reconstruct the full hierarchy from a flat list.
+  const labelByClassId = new Map(classes.map((c) => [c.id, c.label]));
+  const parentLabelByChildId = new Map<number, string>();
+  for (const relation of relations) {
+    const parentLabel = labelByClassId.get(relation.parentId);
+    if (parentLabel) parentLabelByChildId.set(relation.childId, parentLabel);
+  }
+
+  // Fixed, minimal schema: every class's label, its place in the class
+  // hierarchy (its parent's label, or null at the root), and only the
+  // properties every specified member has actually agreed on for it — no
+  // project metadata, URIs, or partially-agreed properties leak into the
+  // export.
   const exportClasses = classes.map((cls) => ({
-    uri: cls.uri,
     label: cls.label,
+    parentLabel: parentLabelByChildId.get(cls.id) ?? null,
     properties: properties
       .filter(
         (p) =>
@@ -424,11 +448,7 @@ router.get("/projects/:id/export", async (req, res) => {
       .map((p) => p.name),
   }));
 
-  res.json({
-    projectName: project.name,
-    exportedAt: new Date().toISOString(),
-    classes: exportClasses,
-  });
+  res.json({ classes: exportClasses });
 });
 
 export default router;

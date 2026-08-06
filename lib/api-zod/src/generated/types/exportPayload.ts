@@ -8,7 +8,5 @@
 import type { ExportClass } from './exportClass';
 
 export interface ExportPayload {
-  projectName: string;
-  exportedAt: Date;
   classes: ExportClass[];
 }
