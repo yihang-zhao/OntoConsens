@@ -10,7 +10,7 @@ import { clearAuthToken } from "@/lib/authToken";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -178,9 +178,6 @@ export default function Dashboard() {
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Create New Project</DialogTitle>
-                  <DialogDescription>
-                    Upload your initial ontology file to start building consensus.
-                  </DialogDescription>
                 </DialogHeader>
                 <Form {...createForm}>
                   <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">

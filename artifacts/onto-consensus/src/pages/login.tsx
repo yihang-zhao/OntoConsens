@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { setAuthToken } from "@/lib/authToken";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Network } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -64,9 +64,6 @@ export default function Login() {
         <Card className="border-border/50 shadow-xl shadow-black/5">
           <CardHeader className="space-y-1 text-center">
             <CardTitle className="text-xl">Welcome back</CardTitle>
-            <CardDescription>
-              Enter your credentials to access your workspaces
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
