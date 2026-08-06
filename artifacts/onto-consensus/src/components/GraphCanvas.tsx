@@ -1050,7 +1050,13 @@ export function GraphCanvas({
                           style={{ height: Math.max(0, h - DOCK_OVERLAP) }}
                         >
                           <div style={{ transform: `rotate(${labelAngle - angle}deg)` }}>
-                            <span className="line-clamp-2 px-1 text-center text-[9px] font-semibold leading-none text-white [overflow-wrap:anywhere]">
+                            {/* `leading-none` (line-height 1) clips the second
+                                line's glyphs against `line-clamp-2`'s
+                                overflow:hidden, since real glyph height at
+                                this font size exceeds a 1x line box —
+                                `leading-tight` gives enough headroom for both
+                                lines to render fully. */}
+                            <span className="line-clamp-2 px-1 text-center text-[9px] font-semibold leading-tight text-white [overflow-wrap:anywhere]">
                               {property.name}
                             </span>
                           </div>
