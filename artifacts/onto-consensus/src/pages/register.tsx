@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -34,6 +35,22 @@ export default function Register() {
     },
   });
 
+  // Every error shown on this form -- whether a client-side validation
+  // message (too short, passwords don't match) or a server-reported one
+  // (username taken, generic failure) -- should vanish on its own after 1s,
+  // so this watches the error object as a whole rather than duplicating a
+  // setTimeout at each individual place an error can be set.
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (Object.keys(form.formState.errors).length === 0) return;
+    clearTimeout(clearTimer.current);
+    clearTimer.current = setTimeout(
+      () => form.clearErrors(["username", "password", "confirmPassword", "root" as "username"]),
+      1000
+    );
+    return () => clearTimeout(clearTimer.current);
+  }, [form.formState.errors, form]);
+
   function onSubmit(values: z.infer<typeof registerSchema>) {
     register.mutate(
       { data: { username: values.username, password: values.password } },
@@ -44,9 +61,13 @@ export default function Register() {
           setLocation("/");
         },
         onError: (error: any) => {
-          form.setError("root", {
-            message: error.error || "An error occurred during registration.",
-          });
+          if (error.error === "Username already taken") {
+            form.setError("username", { message: "This username is already taken" });
+          } else {
+            form.setError("root", {
+              message: error.error || "An error occurred during registration.",
+            });
+          }
         },
       }
     );
