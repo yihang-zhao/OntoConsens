@@ -281,7 +281,6 @@ export default function Dashboard() {
                       </p>
                     )}
                     <DialogFooter>
-                      <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
                       <Button type="submit" disabled={createProject.isPending}>Create</Button>
                     </DialogFooter>
                   </form>
