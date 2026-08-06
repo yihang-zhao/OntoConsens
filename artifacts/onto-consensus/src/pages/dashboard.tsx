@@ -119,8 +119,9 @@ export default function Dashboard() {
           setJoinOpen(false);
           joinForm.reset();
         },
-        onError: (err: any) => {
-          joinForm.setError("root", { message: err.error || "Failed to join project." });
+        onError: () => {
+          joinForm.setError("root", { message: "No project found" });
+          setTimeout(() => joinForm.clearErrors("root"), 1000);
         }
       }
     );
@@ -159,7 +160,6 @@ export default function Dashboard() {
                           <FormControl>
                             <Input {...field} />
                           </FormControl>
-                          <FormMessage />
                         </FormItem>
                       )}
                     />
