@@ -519,8 +519,19 @@ export function GraphCanvas({
     // own proposals (private, pre-ready) or the full shared list
     // (post-ready consensus mode), since both are ordered by this same
     // ascending sort.
+    // `id` breaks ties deterministically. Two properties can land on the
+    // exact same millisecond `createdAt` (e.g. two members submitting at
+    // nearly the same instant in shared mode) — without a tiebreaker,
+    // Array.sort only guarantees ties keep whatever order the array already
+    // had, which is whatever order this particular API response happened to
+    // return them in (there's no ORDER BY on the backend), and that can
+    // differ between one fetch/poll and the next. That flips which of the
+    // two tied properties lands at index i vs i+1 from render to render,
+    // which visibly looks like two petals swapping places/colors with each
+    // other for no reason. `id` is a monotonically increasing, permanently
+    // stable tiebreaker, so a tie always resolves the same way every time.
     for (const list of map.values()) {
-      list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() || a.id - b.id);
     }
     return map;
   }, [properties]);
@@ -888,6 +899,15 @@ export function GraphCanvas({
                 // own tilt inside that box adapts for legibility.
                 const labelAngle = labelRotation(angle);
                 const labelCenter = petalCenter(angle, nodeSize / 2, nodeSize / 2, LABEL_DIST);
+                // The optimistic entry written by createProperty's onMutate
+                // (see above) is given a negative temp id as a placeholder
+                // until the real row comes back from the server. If a click
+                // lands on it before that reconciliation happens, agree/
+                // retract would fire against that fake id — the backend has
+                // no row with a negative id, so the request just errors out
+                // with nothing to show for it. Petals rendered from a temp
+                // id are inert until the real id replaces them.
+                const isOptimistic = property.id < 0;
 
                 return (
                   <div key={property.id}>
@@ -900,14 +920,18 @@ export function GraphCanvas({
                   >
                     <button
                       type="button"
+                      disabled={isOptimistic}
                       title={
-                        docked
-                          ? `${property.name} — fully agreed`
-                          : hasMyAgreement
-                            ? "Click to remove your agreement"
-                            : "Click to agree"
+                        isOptimistic
+                          ? `${property.name} — saving…`
+                          : docked
+                            ? `${property.name} — fully agreed`
+                            : hasMyAgreement
+                              ? "Click to remove your agreement"
+                              : "Click to agree"
                       }
                       onClick={() => {
+                        if (isOptimistic) return;
                         if (hasMyAgreement) {
                           retractProperty.mutate(
                             { id: projectId, propertyId: property.id },
