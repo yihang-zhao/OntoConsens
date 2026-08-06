@@ -20,7 +20,7 @@ router.use(requireAuth);
 // This cap is a pure backend constraint — the client is never told about it
 // (no count badge, no disabled "+" state); it just surfaces the error below
 // if a class is already full.
-const MAX_PROPERTIES_PER_CLASS = 9;
+const MAX_PROPERTIES_PER_CLASS = 7;
 
 async function getMembership(projectId: number, userId: number) {
   return db.query.projectMembersTable.findFirst({

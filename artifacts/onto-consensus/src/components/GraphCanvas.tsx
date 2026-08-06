@@ -63,16 +63,21 @@ const LABEL_DIST = RING_OUTER_RADIUS + 14;
 // from how a browser/framer composes translate+rotate on the same element —
 // rotating a box of KNOWN width/height around its own default center origin
 // cannot move that center, full stop, no percentage-transform math involved.
-const LABEL_WIDTH = 88;
-const LABEL_HEIGHT = 28;
+// Bound to the petal's own width (not a wider arbitrary box) so a long
+// property name wraps onto extra lines instead of ever reading wider than
+// the petal it belongs to — true for both the floating label and the
+// docked in-petal text.
+const LABEL_WIDTH = PETAL_WIDTH;
+const LABEL_HEIGHT = 40;
 
 // Once every project member has agreed on a property, its petal "docks"
-// directly onto the node: it shrinks into a small upright chip that overlaps
-// the circle's edge instead of floating, tilted, out in the ring — a clear,
-// immediate visual contrast between settled and still-pending properties.
-const DOCK_DIST = CIRCLE_RADIUS - 5;
-const DOCK_WIDTH = 46;
-const DOCK_HEIGHT = 22;
+// directly onto the node: same petal shape and outward tilt as before, just
+// pulled inward so a real chunk of its base slides underneath the circle
+// (which is drawn on top, z-index 20, same as it already hides every
+// floating petal's inner pivot end) — reads as the petal being plugged
+// into the node, not just touching its edge.
+const DOCK_OVERLAP = 22;
+const DOCK_DIST = CIRCLE_RADIUS + PETAL_LENGTH / 2 - DOCK_OVERLAP;
 
 // How far past the label ring a connecting line must stop so it clears the
 // property-name badges instead of running underneath them. Comfortably
@@ -83,9 +88,9 @@ const LINE_CLEARANCE = LABEL_DIST + 40;
 // Mirrors the backend's per-class property limit purely so the "add
 // property" control can hide itself once a node is full — this is the one
 // place the frontend is allowed to know about the cap; every other rule
-// (rejecting a 10th property, the actual count check) still lives
+// (rejecting an 8th property, the actual count check) still lives
 // server-side only.
-const MAX_PROPERTIES_PER_CLASS = 9;
+const MAX_PROPERTIES_PER_CLASS = 7;
 
 /** Square footprint big enough to fit the full ring of petals plus label
  * overhang, without clipping into neighboring nodes. */
@@ -109,19 +114,23 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 // A label rotated to exactly match its petal's outward angle would read
-// upside-down on the lower half of the circle (and sideways near the left
-// and right) — this folds any angle into a range that always reads
-// left-to-right while still tilting to hint at the petal's direction. This
-// only ever affects the TEXT's own tilt, never where its box is anchored —
-// the anchor point is computed elsewhere from the raw (unfolded) angle, and
-// the three-layer position/recenter/rotate split keeps that anchor fixed no
-// matter what this function returns.
+// upside-down on the lower half of the circle — this folds any angle by
+// exactly +-180 degrees when needed so the text always reads upright,
+// landing the result in [-90, 90]. That's the ONLY adjustment: no
+// additional amplitude clamp on top of it, because a fold of exactly 180
+// degrees is visually invisible on the box itself (a rectangle has 180-
+// degree rotational symmetry), while clamping the amplitude beyond that
+// (e.g. capping to +-55) would visibly rotate the box away from the
+// petal's true outward angle for anything near horizontal -- which is
+// exactly the anchor-following-my-rule bug reported for near-horizontal
+// petals. The box's anchor point itself is computed elsewhere from the
+// raw (unfolded) angle and never depends on this function.
 function labelRotation(petalAngle: number): number {
   let a = ((petalAngle % 360) + 360) % 360; // 0..360
   if (a > 180) a -= 360; // -180..180
   if (a > 90) a -= 180;
   else if (a < -90) a += 180;
-  return clamp(a, -55, 55);
+  return a;
 }
 
 const MIN_ZOOM = 0.25;
@@ -576,8 +585,8 @@ export function GraphCanvas({
           const isAdding = addingToClass === cls.id;
           // Same name proposed by different members still counts once — the
           // list here is already deduplicated by name (server merges on
-          // proposal). The actual 9-per-class limit is still enforced only
-          // by the backend (a rejected 10th property surfaces as a plain
+          // proposal). The actual 7-per-class limit is still enforced only
+          // by the backend (a rejected 8th property surfaces as a plain
           // error toast) — `atCap` here exists purely to hide the "add"
           // affordance once a node is full, in both private and shared
           // mode, not to pre-empt or duplicate the backend's own check.
@@ -603,9 +612,11 @@ export function GraphCanvas({
                 const docked = property.agreedByAll;
                 const dist = docked ? DOCK_DIST : PETAL_CENTER_DIST;
                 const center = petalCenter(angle, nodeSize / 2, nodeSize / 2, dist);
-                const w = docked ? DOCK_WIDTH : PETAL_WIDTH;
-                const h = docked ? DOCK_HEIGHT : PETAL_LENGTH;
-                const rotate = docked ? 0 : angle;
+                // Same footprint and outward tilt whether docked or not —
+                // docking only pulls the petal inward, it never reshapes it.
+                const w = PETAL_WIDTH;
+                const h = PETAL_LENGTH;
+                const rotate = angle;
                 const hasMyAgreement = property.agreements.some((a) => a.userId === currentUserId);
                 // Fills stack from the petal's base (nearest the node) up to
                 // its tip, in the order members agreed — a new agreement
@@ -630,7 +641,7 @@ export function GraphCanvas({
                     animate={{ left: center.x - w / 2, top: center.y - h / 2, width: w, height: h, rotate }}
                     transition={activeTransition}
                     className="absolute"
-                    style={{ zIndex: docked ? 25 : 5 + i }}
+                    style={{ zIndex: 5 + i }}
                   >
                     <button
                       type="button"
@@ -658,13 +669,16 @@ export function GraphCanvas({
                       // change which levels are filled — it must never leave
                       // a black default browser focus/active outline on the
                       // petal frame.
-                      className="relative flex h-full w-full flex-col-reverse overflow-hidden border shadow-sm outline-none transition-[background-color,border-color,border-radius,box-shadow] duration-300 hover:z-30 hover:scale-105 focus:outline-none focus-visible:outline-none"
+                      className="relative flex h-full w-full flex-col-reverse overflow-hidden border shadow-sm outline-none transition-[background-color,border-color,box-shadow] duration-300 hover:z-30 hover:scale-105 focus:outline-none focus-visible:outline-none"
                       style={
                         docked
                           ? {
-                              background: "hsl(var(--primary))",
-                              borderColor: "hsl(var(--primary))",
-                              borderRadius: "999px",
+                              // Same color the node's own name label is
+                              // rendered in — a docked property visually
+                              // "belongs" to the node's identity now.
+                              background: "hsl(var(--card-foreground))",
+                              borderColor: "hsl(var(--card-foreground))",
+                              borderRadius: "16px 16px 4px 4px",
                               borderWidth: 1.5,
                               WebkitTapHighlightColor: "transparent",
                             }
@@ -677,9 +691,32 @@ export function GraphCanvas({
                       }
                     >
                       {docked ? (
-                        <span className="pointer-events-none m-auto line-clamp-1 px-1.5 text-center text-[9px] font-semibold leading-none text-primary-foreground">
-                          {property.name}
-                        </span>
+                        // The petal frame itself keeps the full true
+                        // outward `angle` (rotate, above) so its shape and
+                        // tilt stay identical to the floating state. The
+                        // text counter-rotates by the same readability
+                        // correction used for floating labels, so its
+                        // absolute on-screen angle is always `labelAngle`
+                        // (never upside-down) while still fundamentally
+                        // tied to this petal's own centrifugal direction.
+                        //
+                        // Only the top `h - DOCK_OVERLAP` px of the petal are
+                        // actually visible outside the node circle (the
+                        // bottom DOCK_OVERLAP px are the pivot end sitting
+                        // under it) — centering this box on that visible
+                        // span, not the full petal height, keeps the label
+                        // centered in what the user can actually see instead
+                        // of drifting toward the hidden half.
+                        <div
+                          className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center"
+                          style={{ height: Math.max(0, h - DOCK_OVERLAP) }}
+                        >
+                          <div style={{ transform: `rotate(${labelAngle - angle}deg)` }}>
+                            <span className="line-clamp-2 px-1 text-center text-[9px] font-semibold leading-none text-white [overflow-wrap:anywhere]">
+                              {property.name}
+                            </span>
+                          </div>
+                        </div>
                       ) : (
                         <AnimatePresence initial={false}>
                           {property.agreements.map((a) => (
@@ -742,7 +779,7 @@ export function GraphCanvas({
                       className="pointer-events-none absolute flex items-center justify-center"
                       style={{ width: LABEL_WIDTH, height: LABEL_HEIGHT, zIndex: 30 }}
                     >
-                      <span className="line-clamp-2 rounded-md bg-background/90 px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm">
+                      <span className="line-clamp-3 w-full rounded-md bg-background/90 px-1 py-0.5 text-center text-[10px] font-medium leading-tight text-foreground shadow-sm [overflow-wrap:anywhere]">
                         {property.name}
                       </span>
                     </motion.div>
@@ -753,7 +790,7 @@ export function GraphCanvas({
 
               {/* Add-property slot: one more petal in the same ring, dashed
                   and neutral until clicked — hidden entirely once the node
-                  is at its 9-property cap, in both private and shared mode.
+                  is at its 7-property cap, in both private and shared mode.
                   The backend still owns the actual limit check; this is
                   just the affordance disappearing so there's nothing to
                   click that could only ever fail. */}
