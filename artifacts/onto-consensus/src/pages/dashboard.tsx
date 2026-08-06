@@ -300,7 +300,7 @@ export default function Dashboard() {
 
       <main className="flex-1 container mx-auto px-4 py-8">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">Your Workspaces</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Your Projects</h1>
         </div>
 
         {isLoading ? (
