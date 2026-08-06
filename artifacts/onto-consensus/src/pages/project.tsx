@@ -14,7 +14,6 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GraphCanvas } from "@/components/GraphCanvas";
 import { 
   Copy, 
@@ -213,32 +212,23 @@ export default function ProjectWorkspace() {
               // be ready but not currently present, or present but not ready.
               const isOnline = onlineUserIds.has(member.userId);
               return (
-                <Tooltip key={member.userId}>
-                  <TooltipTrigger asChild>
-                    <div className="relative group">
-                      <Avatar 
-                        className={`w-8 h-8 border-2 transition-transform duration-200 ${isOnline ? 'scale-105 border-green-500 ring-2 ring-green-500/20' : 'border-transparent'}`}
-                      >
-                        <AvatarFallback 
-                          className="text-white text-xs font-semibold shadow-inner"
-                          style={{ backgroundColor: `hsl(var(--member-${member.colorSlot}))` }}
-                        >
-                          {member.username.substring(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      {member.ready && (
-                        <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-card">
-                          <Check className="w-2.5 h-2.5" />
-                        </div>
-                      )}
+                <div key={member.userId} className="relative">
+                  <Avatar 
+                    className={`w-8 h-8 border-2 transition-transform duration-200 ${isOnline ? 'scale-105 border-green-500 ring-2 ring-green-500/20' : 'border-transparent'}`}
+                  >
+                    <AvatarFallback 
+                      className="text-white text-xs font-semibold shadow-inner"
+                      style={{ backgroundColor: `hsl(var(--member-${member.colorSlot}))` }}
+                    >
+                      {member.username.substring(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {member.ready && (
+                    <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-card">
+                      <Check className="w-2.5 h-2.5" />
                     </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="font-medium text-xs">
-                    {member.username} {member.userId === me?.id ? "(You)" : ""}
-                    {" · "}{isOnline ? "In project" : "Not in project"}
-                    {member.ready ? " · Ready" : " · Not ready"}
-                  </TooltipContent>
-                </Tooltip>
+                  )}
+                </div>
               );
             })}
             

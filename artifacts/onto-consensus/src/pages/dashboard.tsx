@@ -8,7 +8,6 @@ import * as z from "zod";
 import { clearAuthToken } from "@/lib/authToken";
 
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
@@ -246,19 +245,14 @@ export default function Dashboard() {
               </DialogContent>
             </Dialog>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handleLogout}
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                >
-                  <LogOut className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Sign out</TooltipContent>
-            </Tooltip>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleLogout}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="w-4 h-4" />
+            </Button>
           </div>
         </div>
       </header>
