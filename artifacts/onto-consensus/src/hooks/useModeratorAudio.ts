@@ -23,6 +23,29 @@ const SPEECH_STOP_DEBOUNCE_MS = 800;
 // fire mid-sentence on a very long speaker).
 const MAX_CHUNK_DURATION_MS = 15_000;
 
+// Whisper only accepts a fixed set of file extensions and infers the format
+// from the filename, not the Content-Type header — so the extension we hand
+// it must actually match what MediaRecorder produced.
+function extensionForMimeType(mimeType: string): string {
+  const base = mimeType.split(";")[0]?.trim().toLowerCase();
+  switch (base) {
+    case "audio/webm":
+      return "webm";
+    case "audio/ogg":
+      return "ogg";
+    case "audio/mp4":
+      return "mp4";
+    case "audio/mpeg":
+      return "mp3";
+    case "audio/wav":
+    case "audio/wave":
+    case "audio/x-wav":
+      return "wav";
+    default:
+      return "webm";
+  }
+}
+
 // Handles the two audio jobs the AI moderator needs, both driven off one
 // mic stream: (1) a continuous volume level for the pulsing border, sent to
 // everyone regardless of content, and (2) speech-triggered recording
@@ -71,8 +94,16 @@ export function useModeratorAudio({ projectId, active, onVolume }: UseModeratorA
       };
       rec.onstop = () => {
         if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-          uploadAudio.mutate({ id: projectId, data: { audio: blob } });
+          const mimeType = rec.mimeType || "audio/webm";
+          // The upload client appends this as a bare Blob with no filename
+          // argument, so FormData falls back to the literal name "blob"
+          // (no extension) unless we hand it a File instead — and Whisper's
+          // transcription API rejects files whose name doesn't carry a
+          // recognized extension, regardless of the actual Content-Type.
+          const file = new File([new Blob(chunks, { type: mimeType })], `chunk.${extensionForMimeType(mimeType)}`, {
+            type: mimeType,
+          });
+          uploadAudio.mutate({ id: projectId, data: { audio: file } });
         }
         if (activeRecorder === rec) activeRecorder = null;
         if (rotatePending && !stopped) {
