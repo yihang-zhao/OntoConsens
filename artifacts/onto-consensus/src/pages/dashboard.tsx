@@ -375,7 +375,7 @@ export default function Dashboard() {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Your OpenAI API key</DialogTitle>
+                  <DialogTitle>Update your OpenAI API key</DialogTitle>
                 </DialogHeader>
                 <Form {...apiKeyForm}>
                   <form onSubmit={apiKeyForm.handleSubmit(onApiKeySubmit)} className="space-y-4">
