@@ -377,11 +377,11 @@ export default function Dashboard() {
                 <DialogHeader>
                   <DialogTitle>Your OpenAI API key</DialogTitle>
                 </DialogHeader>
-                <p className="text-sm text-muted-foreground">
-                  {me?.apiKeyConfigured
-                    ? "A key is saved on your account. Every project you create uses it for its AI moderator."
-                    : "No key saved yet -- projects you create won't be able to turn on the AI moderator until you add one."}
-                </p>
+                {me?.apiKeyConfigured && (
+                  <p className="text-sm text-muted-foreground">
+                    A key is saved on your account. Every project you create uses it for its AI moderator.
+                  </p>
+                )}
                 <Form {...apiKeyForm}>
                   <form onSubmit={apiKeyForm.handleSubmit(onApiKeySubmit)} className="space-y-4">
                     <FormField
