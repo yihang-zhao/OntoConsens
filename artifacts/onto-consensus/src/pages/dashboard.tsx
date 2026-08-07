@@ -370,7 +370,6 @@ export default function Dashboard() {
                 <Button variant="outline" size="sm" className="gap-2">
                   <KeyRound className="w-4 h-4" />
                   API Key
-                  <span className={`w-1.5 h-1.5 rounded-full ${me?.apiKeyConfigured ? "bg-emerald-500" : "bg-destructive"}`} />
                 </Button>
               </DialogTrigger>
               <DialogContent>
