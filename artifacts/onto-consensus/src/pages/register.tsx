@@ -147,9 +147,6 @@ export default function Register() {
                       <FormControl>
                         <Input type="password" placeholder="sk-..." autoComplete="off" {...field} />
                       </FormControl>
-                      <p className="text-xs text-muted-foreground">
-                        Powers the AI moderator in projects you create. You can change it anytime from the dashboard.
-                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
