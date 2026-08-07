@@ -8,6 +8,6 @@
 
 export interface ModeratorStatus {
   enabled: boolean;
-  /** True once an API key has been saved for this project. */
+  /** True once the project creator's account has an OpenAI API key saved -- this is what actually lets the moderator run. */
   configured: boolean;
 }

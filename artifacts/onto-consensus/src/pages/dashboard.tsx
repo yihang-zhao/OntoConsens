@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { useListProjects, useCreateProject, useJoinProject, useDeleteProject, useGetMe, useLogout, getListProjectsQueryKey } from "@workspace/api-client-react";
+import { useListProjects, useCreateProject, useJoinProject, useDeleteProject, useGetMe, useLogout, useUpdateApiKey, getListProjectsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -26,7 +26,11 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check } from "lucide-react";
+import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check, KeyRound, Loader2 } from "lucide-react";
+
+const apiKeySchema = z.object({
+  apiKey: z.string().min(1, "An OpenAI API key is required"),
+});
 
 const createSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Project name is too long"),
@@ -43,6 +47,7 @@ export default function Dashboard() {
   const { data: me } = useGetMe();
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
+  const [apiKeyOpen, setApiKeyOpen] = useState(false);
   const [, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [copiedProjectId, setCopiedProjectId] = useState<number | null>(null);
@@ -59,7 +64,33 @@ export default function Dashboard() {
   const joinProject = useJoinProject();
   const deleteProject = useDeleteProject();
   const logout = useLogout();
+  const updateApiKey = useUpdateApiKey();
   const queryClient = useQueryClient();
+
+  const apiKeyForm = useForm<z.infer<typeof apiKeySchema>>({
+    resolver: zodResolver(apiKeySchema),
+    defaultValues: { apiKey: "" },
+  });
+
+  const onApiKeySubmit = (values: z.infer<typeof apiKeySchema>) => {
+    updateApiKey.mutate(
+      { data: { apiKey: values.apiKey } },
+      {
+        onSuccess: (data) => {
+          queryClient.setQueryData(getGetMeQueryKey(), (old: any) => ({
+            ...old,
+            apiKeyConfigured: data.apiKeyConfigured,
+          }));
+          setApiKeyOpen(false);
+          apiKeyForm.reset();
+        },
+        onError: (err: any) => {
+          apiKeyForm.setError("root", { message: err?.data?.error || "Could not save that key." });
+          setTimeout(() => apiKeyForm.clearErrors("root"), 1500);
+        },
+      },
+    );
+  };
 
   const handleLogout = () => {
     logout.mutate(undefined, {
@@ -328,6 +359,54 @@ export default function Dashboard() {
                     )}
                     <DialogFooter>
                       <Button type="submit" disabled={createProject.isPending}>Create</Button>
+                    </DialogFooter>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={apiKeyOpen} onOpenChange={setApiKeyOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <KeyRound className="w-4 h-4" />
+                  API Key
+                  <span className={`w-1.5 h-1.5 rounded-full ${me?.apiKeyConfigured ? "bg-emerald-500" : "bg-destructive"}`} />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Your OpenAI API key</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  {me?.apiKeyConfigured
+                    ? "A key is saved on your account. Every project you create uses it for its AI moderator."
+                    : "No key saved yet -- projects you create won't be able to turn on the AI moderator until you add one."}
+                </p>
+                <Form {...apiKeyForm}>
+                  <form onSubmit={apiKeyForm.handleSubmit(onApiKeySubmit)} className="space-y-4">
+                    <FormField
+                      control={apiKeyForm.control}
+                      name="apiKey"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{me?.apiKeyConfigured ? "Replace key" : "OpenAI API key"}</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="sk-..." autoComplete="off" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {apiKeyForm.formState.errors.root && (
+                      <p className="text-sm font-medium text-destructive">
+                        {apiKeyForm.formState.errors.root.message}
+                      </p>
+                    )}
+                    <DialogFooter>
+                      <Button type="submit" disabled={updateApiKey.isPending} className="gap-2">
+                        {updateApiKey.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Save
+                      </Button>
                     </DialogFooter>
                   </form>
                 </Form>

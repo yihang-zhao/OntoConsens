@@ -5,6 +5,7 @@ import {
   moderatorSummariesTable,
   moderatorTranscriptChunksTable,
   projectModeratorTable,
+  projectsTable,
   usersTable,
 } from "@workspace/db";
 import { decryptApiKey } from "./moderatorCrypto";
@@ -84,6 +85,76 @@ export async function ensureActiveSession(
   return { session, activationId: config.activationId };
 }
 
+// The moderator always runs on the project CREATOR's saved API key, not
+// anything stored on the project itself -- looked up fresh every time
+// (transcription, summary generation) rather than cached, so a key update
+// from the creator's account takes effect on the very next request.
+//
+// Projects created before API keys moved to the account level may still
+// have a key on their own `project_moderator` row (now deprecated). Rather
+// than a schema push silently dropping that data, we lazily migrate it the
+// first time it's needed: if the owner has no account key yet but their
+// project still has a legacy key, adopt it onto the owner's account (the
+// ciphertext is portable as-is -- same AES-256-GCM scheme, same
+// SESSION_SECRET-derived key, just relocated to a different row) and clear
+// the legacy columns so this only ever runs once per project. If the owner
+// already has an account key, or has already adopted a different project's
+// legacy key, that key wins and the newer legacy key is left untouched --
+// first-migrated-wins, since there is no way to know which of an owner's
+// several old per-project keys should take priority.
+async function migrateLegacyProjectKeyToOwner(projectId: number, ownerId: number): Promise<void> {
+  const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, ownerId) });
+  if (owner?.openaiApiKeyEncrypted) return; // Owner already has an account key -- nothing to migrate.
+
+  const legacy = await db.query.projectModeratorTable.findFirst({
+    where: eq(projectModeratorTable.projectId, projectId),
+  });
+  if (!legacy?.encryptedApiKey || !legacy.apiKeyIv || !legacy.apiKeyAuthTag) return;
+
+  await db
+    .update(usersTable)
+    .set({
+      openaiApiKeyEncrypted: legacy.encryptedApiKey,
+      openaiApiKeyIv: legacy.apiKeyIv,
+      openaiApiKeyAuthTag: legacy.apiKeyAuthTag,
+    })
+    .where(eq(usersTable.id, ownerId));
+  await db
+    .update(projectModeratorTable)
+    .set({ encryptedApiKey: null, apiKeyIv: null, apiKeyAuthTag: null })
+    .where(eq(projectModeratorTable.projectId, projectId));
+  logger.info({ projectId, ownerId }, "Migrated legacy project-level API key onto owner's account");
+}
+
+// Used by the moderator status/enable checks. Takes projectId (not just
+// ownerId) so it can also trigger the legacy-key migration above -- a
+// project whose creator never visited the new account-key field, but whose
+// project still has last migrated key, is treated as configured.
+export async function projectOwnerHasApiKey(projectId: number, ownerId: number): Promise<boolean> {
+  await migrateLegacyProjectKeyToOwner(projectId, ownerId);
+  const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, ownerId) });
+  return Boolean(owner?.openaiApiKeyEncrypted);
+}
+
+export async function getProjectOwnerApiKey(projectId: number): Promise<string | null> {
+  const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+  if (!project) return null;
+
+  await migrateLegacyProjectKeyToOwner(projectId, project.ownerId);
+
+  const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, project.ownerId) });
+  if (!owner?.openaiApiKeyEncrypted || !owner.openaiApiKeyIv || !owner.openaiApiKeyAuthTag) return null;
+  try {
+    return decryptApiKey({
+      encryptedApiKey: owner.openaiApiKeyEncrypted,
+      apiKeyIv: owner.openaiApiKeyIv,
+      apiKeyAuthTag: owner.openaiApiKeyAuthTag,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function recordMicOptIn(session: ModeratorSession, userId: number) {
   session.micOptedInUserIds.add(userId);
 }
@@ -160,16 +231,12 @@ async function generateSummary(projectId: number, activationId: string) {
   const config = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
-  if (
-    !config ||
-    !config.enabled ||
-    config.activationId !== activationId ||
-    !config.encryptedApiKey ||
-    !config.apiKeyIv ||
-    !config.apiKeyAuthTag
-  ) {
+  if (!config || !config.enabled || config.activationId !== activationId) {
     return;
   }
+
+  const apiKey = await getProjectOwnerApiKey(projectId);
+  if (!apiKey) return;
 
   // lastSummarizedAt is a DB column (not in-memory), so this checkpoint
   // survives a restart — chunks already folded into an earlier summary in
@@ -194,12 +261,6 @@ async function generateSummary(projectId: number, activationId: string) {
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((chunk) => `${usernameById.get(chunk.userId) ?? `User ${chunk.userId}`}: ${chunk.text}`)
     .join("\n");
-
-  const apiKey = decryptApiKey({
-    encryptedApiKey: config.encryptedApiKey,
-    apiKeyIv: config.apiKeyIv,
-    apiKeyAuthTag: config.apiKeyAuthTag,
-  });
 
   const maxCreatedAt = newChunks.reduce(
     (max, c) => (c.createdAt > max ? c.createdAt : max),

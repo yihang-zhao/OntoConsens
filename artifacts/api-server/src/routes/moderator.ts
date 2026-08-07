@@ -8,15 +8,16 @@ import {
   projectMembersTable,
 } from "@workspace/db";
 import { requireAuth } from "../lib/auth";
-import { encryptApiKey, decryptApiKey } from "../lib/moderatorCrypto";
 import { broadcastToProject } from "../lib/wsHub";
 import {
   activateModeratorSession,
   clearModeratorSession,
   ensureActiveSession,
   generateActivationId,
+  getProjectOwnerApiKey,
   hasMicOptIn,
   noteSpeechActivity,
+  projectOwnerHasApiKey,
   recordMicOptIn,
   recordTranscriptChunk,
   transcribeAudioChunk,
@@ -46,36 +47,39 @@ router.get("/projects/:id/moderator", async (req, res) => {
     return;
   }
 
+  const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
   const config = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
   res.json({
     enabled: config?.enabled ?? false,
-    configured: Boolean(config?.encryptedApiKey),
+    configured: project ? await projectOwnerHasApiKey(projectId, project.ownerId) : false,
   });
 });
 
 router.put("/projects/:id/moderator", async (req, res) => {
   const userId = req.userId!;
   const projectId = Number(req.params.id);
-  const apiKey = typeof req.body.apiKey === "string" ? req.body.apiKey.trim() : "";
-  const model = typeof req.body.model === "string" && req.body.model.trim() ? req.body.model.trim() : undefined;
+  const model = typeof req.body?.model === "string" && req.body.model.trim() ? req.body.model.trim() : undefined;
+
+  const membership = await getMembership(projectId, userId);
+  if (!membership) {
+    res.status(403).json({ error: "You are not a member of this project" });
+    return;
+  }
 
   const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  if (project.ownerId !== userId) {
-    res.status(403).json({ error: "Only the project creator can configure the AI moderator" });
-    return;
-  }
-  if (!apiKey) {
-    res.status(400).json({ error: "An OpenAI API key is required" });
+  if (!(await projectOwnerHasApiKey(projectId, project.ownerId))) {
+    res.status(400).json({
+      error: "The project creator hasn't saved an OpenAI API key yet. Ask them to add one from the dashboard.",
+    });
     return;
   }
 
-  const encrypted = encryptApiKey(apiKey);
   const existing = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
@@ -92,7 +96,6 @@ router.put("/projects/:id/moderator", async (req, res) => {
       .update(projectModeratorTable)
       .set({
         enabled: true,
-        ...encrypted,
         ...(model ? { model } : {}),
         activationId,
         lastSummarizedAt: null,
@@ -103,7 +106,6 @@ router.put("/projects/:id/moderator", async (req, res) => {
     await db.insert(projectModeratorTable).values({
       projectId,
       enabled: true,
-      ...encrypted,
       ...(model ? { model } : {}),
       activationId,
       updatedAt: activatedAt,
@@ -123,27 +125,22 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
   const userId = req.userId!;
   const projectId = Number(req.params.id);
 
+  const membership = await getMembership(projectId, userId);
+  if (!membership) {
+    res.status(403).json({ error: "You are not a member of this project" });
+    return;
+  }
+
   const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
   if (!project) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  if (project.ownerId !== userId) {
-    res.status(403).json({ error: "Only the project creator can configure the AI moderator" });
-    return;
-  }
 
-  // Clearing the stored key (not just flipping enabled off) means re-enabling
-  // always asks for the key again — there's no separate "rotate key" screen,
-  // so this is the one point where a stale/no-longer-wanted key stops being
-  // retained at all.
   await db
     .update(projectModeratorTable)
     .set({
       enabled: false,
-      encryptedApiKey: null,
-      apiKeyIv: null,
-      apiKeyAuthTag: null,
       activationId: null,
       lastSummarizedAt: null,
       updatedAt: new Date(),
@@ -152,7 +149,7 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
 
   clearModeratorSession(projectId);
   broadcastToProject(projectId, { type: "moderator_deactivated" });
-  res.json({ enabled: false, configured: false });
+  res.json({ enabled: false, configured: await projectOwnerHasApiKey(projectId, project.ownerId) });
 });
 
 router.post("/projects/:id/moderator/mic-opt-in", async (req, res) => {
@@ -207,27 +204,14 @@ router.post("/projects/:id/moderator/audio", upload.single("audio"), async (req,
   const config = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
-  if (
-    !config ||
-    !config.enabled ||
-    config.activationId !== activationId ||
-    !config.encryptedApiKey ||
-    !config.apiKeyIv ||
-    !config.apiKeyAuthTag
-  ) {
+  if (!config || !config.enabled || config.activationId !== activationId) {
     res.status(400).json({ error: "The AI moderator is not active for this project" });
     return;
   }
 
-  let apiKey: string;
-  try {
-    apiKey = decryptApiKey({
-      encryptedApiKey: config.encryptedApiKey,
-      apiKeyIv: config.apiKeyIv,
-      apiKeyAuthTag: config.apiKeyAuthTag,
-    });
-  } catch {
-    res.status(500).json({ error: "Could not read the stored API key" });
+  const apiKey = await getProjectOwnerApiKey(projectId);
+  if (!apiKey) {
+    res.status(400).json({ error: "The project creator hasn't saved an OpenAI API key" });
     return;
   }
 

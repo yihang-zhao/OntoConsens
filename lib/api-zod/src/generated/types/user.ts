@@ -9,4 +9,6 @@
 export interface User {
   id: number;
   username: string;
+  /** True once this account has an OpenAI API key saved. */
+  apiKeyConfigured: boolean;
 }

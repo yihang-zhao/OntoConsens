@@ -41,7 +41,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthCredentials"
+              $ref: "#/components/schemas/RegisterInput"
       responses:
         "201":
           description: Registered
@@ -106,6 +106,37 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/api-key:
+    put:
+      operationId: updateApiKey
+      tags: [auth]
+      summary: Save or replace the OpenAI API key on the current account
+      description: >-
+        Every project this user creates uses this key for its AI moderator.
+        Never returned by any endpoint once saved -- only whether one is
+        configured.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateApiKeyInput"
+      responses:
+        "200":
+          description: API key saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid input
           content:
             application/json:
               schema:
@@ -399,11 +430,13 @@ paths:
     put:
       operationId: configureModerator
       tags: [moderator]
-      summary: "Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on"
+      summary: >-
+        Any member: turn the AI moderator on, using the project creator's
+        saved OpenAI API key
       parameters:
         - $ref: "#/components/parameters/ProjectId"
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
@@ -420,7 +453,7 @@ paths:
     post:
       operationId: disableModerator
       tags: [moderator]
-      summary: "Creator-only: turn the AI moderator off and discard the stored key"
+      summary: "Any member: turn the AI moderator off"
       parameters:
         - $ref: "#/components/parameters/ProjectId"
       responses:
@@ -512,18 +545,50 @@ components:
           minLength: 6
           maxLength: 128
 
+    RegisterInput:
+      type: object
+      required: [username, password, apiKey]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+        apiKey:
+          type: string
+          minLength: 1
+          description: >-
+            OpenAI API key for this account. Required at registration;
+            stored encrypted, never returned by any endpoint once saved.
+            Every project this user creates uses this key for its AI
+            moderator. Can be changed later from the dashboard.
+
+    UpdateApiKeyInput:
+      type: object
+      required: [apiKey]
+      properties:
+        apiKey:
+          type: string
+          minLength: 1
+
     User:
       type: object
-      required: [id, username]
+      required: [id, username, apiKeyConfigured]
       properties:
         id:
           type: integer
         username:
           type: string
+        apiKeyConfigured:
+          type: boolean
+          description: True once this account has an OpenAI API key saved.
 
     AuthResponse:
       type: object
-      required: [id, username, token]
+      required: [id, username, token, apiKeyConfigured]
       properties:
         id:
           type: integer
@@ -536,6 +601,9 @@ components:
             subsequent requests. Stored client-side per browser tab (not a
             shared cookie), so multiple accounts can be signed in
             simultaneously in different tabs of the same browser.
+        apiKeyConfigured:
+          type: boolean
+          description: True once this account has an OpenAI API key saved.
 
     ProjectInput:
       type: object
@@ -607,18 +675,13 @@ components:
           type: boolean
         configured:
           type: boolean
-          description: True once an API key has been saved for this project.
+          description: >-
+            True once the project creator's account has an OpenAI API key
+            saved -- this is what actually lets the moderator run.
 
     ModeratorConfigInput:
       type: object
-      required: [apiKey]
       properties:
-        apiKey:
-          type: string
-          minLength: 1
-          description: >-
-            OpenAI API key, scoped to this project only. Stored encrypted;
-            never returned by any endpoint once saved.
         model:
           type: string
           description: >-

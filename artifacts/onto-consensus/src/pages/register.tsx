@@ -14,7 +14,8 @@ import { Network } from "lucide-react";
 const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(32, "Username too long"),
   password: z.string().min(6, "Password must be at least 6 characters").max(128, "Password too long"),
-  confirmPassword: z.string()
+  confirmPassword: z.string(),
+  apiKey: z.string().min(1, "An OpenAI API key is required"),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -39,6 +40,7 @@ export default function Register() {
       username: "",
       password: "",
       confirmPassword: "",
+      apiKey: "",
     },
   });
 
@@ -48,16 +50,20 @@ export default function Register() {
   // one place to schedule their auto-dismiss, mirroring the explicit
   // setTimeout used for the server-reported errors below.
   function onInvalid() {
-    setTimeout(() => form.clearErrors(["username", "password", "confirmPassword"]), 1000);
+    setTimeout(() => form.clearErrors(["username", "password", "confirmPassword", "apiKey"]), 1000);
   }
 
   function onSubmit(values: z.infer<typeof registerSchema>) {
     register.mutate(
-      { data: { username: values.username, password: values.password } },
+      { data: { username: values.username, password: values.password, apiKey: values.apiKey } },
       {
         onSuccess: (data) => {
           setAuthToken(data.token);
-          queryClient.setQueryData(getGetMeQueryKey(), { id: data.id, username: data.username });
+          queryClient.setQueryData(getGetMeQueryKey(), {
+            id: data.id,
+            username: data.username,
+            apiKeyConfigured: data.apiKeyConfigured,
+          });
           setLocation("/");
         },
         onError: (error: any) => {
@@ -128,6 +134,22 @@ export default function Register() {
                       <FormControl>
                         <Input type="password" {...field} />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="apiKey"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>OpenAI API Key</FormLabel>
+                      <FormControl>
+                        <Input type="password" placeholder="sk-..." autoComplete="off" {...field} />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Powers the AI moderator in projects you create. You can change it anytime from the dashboard.
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}

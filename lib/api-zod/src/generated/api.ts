@@ -28,15 +28,18 @@ export const registerBodyPasswordMax = 128;
 
 
 
+
 export const RegisterBody = zod.object({
   "username": zod.string().min(registerBodyUsernameMin).max(registerBodyUsernameMax),
-  "password": zod.string().min(registerBodyPasswordMin).max(registerBodyPasswordMax)
+  "password": zod.string().min(registerBodyPasswordMin).max(registerBodyPasswordMax),
+  "apiKey": zod.string().min(1).describe('OpenAI API key for this account. Required at registration; stored encrypted, never returned by any endpoint once saved. Every project this user creates uses this key for its AI moderator. Can be changed later from the dashboard.')
 })
 
 export const RegisterResponse = zod.object({
   "id": zod.number().int(),
   "username": zod.string(),
-  "token": zod.string().describe('Bearer token to send as `Authorization: Bearer <token>` on subsequent requests. Stored client-side per browser tab (not a shared cookie), so multiple accounts can be signed in simultaneously in different tabs of the same browser.')
+  "token": zod.string().describe('Bearer token to send as `Authorization: Bearer <token>` on subsequent requests. Stored client-side per browser tab (not a shared cookie), so multiple accounts can be signed in simultaneously in different tabs of the same browser.'),
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.')
 })
 
 
@@ -59,7 +62,8 @@ export const LoginBody = zod.object({
 export const LoginResponse = zod.object({
   "id": zod.number().int(),
   "username": zod.string(),
-  "token": zod.string().describe('Bearer token to send as `Authorization: Bearer <token>` on subsequent requests. Stored client-side per browser tab (not a shared cookie), so multiple accounts can be signed in simultaneously in different tabs of the same browser.')
+  "token": zod.string().describe('Bearer token to send as `Authorization: Bearer <token>` on subsequent requests. Stored client-side per browser tab (not a shared cookie), so multiple accounts can be signed in simultaneously in different tabs of the same browser.'),
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.')
 })
 
 
@@ -74,7 +78,26 @@ export const LogoutResponse = zod.void()
  */
 export const GetMeResponse = zod.object({
   "id": zod.number().int(),
-  "username": zod.string()
+  "username": zod.string(),
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.')
+})
+
+
+/**
+ * Every project this user creates uses this key for its AI moderator. Never returned by any endpoint once saved -- only whether one is configured.
+ * @summary Save or replace the OpenAI API key on the current account
+ */
+
+
+
+export const UpdateApiKeyBody = zod.object({
+  "apiKey": zod.string().min(1)
+})
+
+export const UpdateApiKeyResponse = zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.')
 })
 
 
@@ -378,33 +401,29 @@ export const GetModeratorStatusParams = zod.object({
 
 export const GetModeratorStatusResponse = zod.object({
   "enabled": zod.boolean(),
-  "configured": zod.boolean().describe('True once an API key has been saved for this project.')
+  "configured": zod.boolean().describe('True once the project creator\'s account has an OpenAI API key saved -- this is what actually lets the moderator run.')
 })
 
 
 /**
- * @summary Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on
+ * @summary Any member: turn the AI moderator on, using the project creator's saved OpenAI API key
  */
 export const ConfigureModeratorParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
-
-
-
 export const ConfigureModeratorBody = zod.object({
-  "apiKey": zod.string().min(1).describe('OpenAI API key, scoped to this project only. Stored encrypted; never returned by any endpoint once saved.'),
   "model": zod.string().optional().describe('Exact OpenAI model id to use for AI-generated summaries. Defaults to the project\'s already-configured model, or \"gpt-5.6-luna\" the first time a project is configured.')
 })
 
 export const ConfigureModeratorResponse = zod.object({
   "enabled": zod.boolean(),
-  "configured": zod.boolean().describe('True once an API key has been saved for this project.')
+  "configured": zod.boolean().describe('True once the project creator\'s account has an OpenAI API key saved -- this is what actually lets the moderator run.')
 })
 
 
 /**
- * @summary Creator-only: turn the AI moderator off and discard the stored key
+ * @summary Any member: turn the AI moderator off
  */
 export const DisableModeratorParams = zod.object({
   "id": zod.coerce.number().int()
@@ -412,7 +431,7 @@ export const DisableModeratorParams = zod.object({
 
 export const DisableModeratorResponse = zod.object({
   "enabled": zod.boolean(),
-  "configured": zod.boolean().describe('True once an API key has been saved for this project.')
+  "configured": zod.boolean().describe('True once the project creator\'s account has an OpenAI API key saved -- this is what actually lets the moderator run.')
 })
 
 

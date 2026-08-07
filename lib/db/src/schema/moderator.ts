@@ -9,10 +9,11 @@ import {
 import { projectsTable } from "./projects";
 import { usersTable } from "./users";
 
-// One row per project, created lazily the first time the owner configures
-// the moderator. The API key is stored encrypted (see lib/moderatorCrypto.ts
-// in the api-server) — this table never holds the key in plaintext, and no
-// route ever returns it once saved.
+// One row per project, created lazily the first time the moderator is
+// turned on. The OpenAI API key used to run it belongs to the project's
+// CREATOR account (see users.ts / lib/moderatorCrypto.ts in the api-server),
+// not this table — any member can flip `enabled` on/off, but the key used is
+// always whatever the creator has saved on their account.
 export const projectModeratorTable = pgTable("project_moderator", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id")
@@ -24,6 +25,13 @@ export const projectModeratorTable = pgTable("project_moderator", {
   // project rather than hardcoded, since it's the creator's own key/account
   // and they may not have access to every model id.
   model: text("model").notNull().default("gpt-5.6-luna"),
+  // DEPRECATED — legacy per-project key, from before API keys moved to the
+  // account level. No longer written by new code. Kept only so existing
+  // rows created before this migration keep working: the api-server reads
+  // this as a one-time fallback and copies it onto the project owner's
+  // account (users.openaiApiKey*) the first time it's needed, so production
+  // data is never silently dropped by a schema push. Safe to remove in a
+  // future migration once no rows have these columns populated.
   encryptedApiKey: text("encrypted_api_key"),
   apiKeyIv: text("api_key_iv"),
   apiKeyAuthTag: text("api_key_auth_tag"),

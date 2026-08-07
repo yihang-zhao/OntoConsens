@@ -37,6 +37,8 @@ import type {
   PropertyInput,
   PropertyUpdate,
   ReadyInput,
+  RegisterInput,
+  UpdateApiKeyInput,
   User,
   WsTicket
 } from './api.schemas';
@@ -157,14 +159,14 @@ export const getRegisterUrl = () => {
 /**
  * @summary Register a new account
  */
-export const register = async (authCredentials: AuthCredentials, options?: Parameters<typeof customFetch>[1]): Promise<AuthResponse> => {
+export const register = async (registerInput: RegisterInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthResponse> => {
 
   return customFetch<AuthResponse>(getRegisterUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(authCredentials)
+    body: JSON.stringify(registerInput)
   }
 );}
 
@@ -173,8 +175,8 @@ export const register = async (authCredentials: AuthCredentials, options?: Param
 
 
 export const getRegisterMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof register>>, TError,{data: BodyType<AuthCredentials>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof register>>, TError,{data: BodyType<AuthCredentials>}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof register>>, TError,{data: BodyType<RegisterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof register>>, TError,{data: BodyType<RegisterInput>}, TContext> => {
 
 const mutationKey = ['register'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -186,7 +188,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof register>>, {data: BodyType<AuthCredentials>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof register>>, {data: BodyType<RegisterInput>}> = (props) => {
           const {data} = props ?? {};
 
           return  register(data,requestOptions)
@@ -200,18 +202,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type RegisterMutationResult = NonNullable<Awaited<ReturnType<typeof register>>>
-    export type RegisterMutationBody = BodyType<AuthCredentials>
+    export type RegisterMutationBody = BodyType<RegisterInput>
     export type RegisterMutationError = ErrorType<ErrorResponse>
 
     /**
  * @summary Register a new account
  */
 export const useRegister = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof register>>, TError,{data: BodyType<AuthCredentials>}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof register>>, TError,{data: BodyType<RegisterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof register>>,
         TError,
-        {data: BodyType<AuthCredentials>},
+        {data: BodyType<RegisterInput>},
         TContext
       > => {
       return useMutation(getRegisterMutationOptions(options));
@@ -435,6 +437,78 @@ export function useGetMe<TData = Awaited<ReturnType<typeof getMe>>, TError = Err
 
 
 
+
+export const getUpdateApiKeyUrl = () => {
+
+
+
+
+  return `/api/auth/api-key`
+}
+
+/**
+ * Every project this user creates uses this key for its AI moderator. Never returned by any endpoint once saved -- only whether one is configured.
+ * @summary Save or replace the OpenAI API key on the current account
+ */
+export const updateApiKey = async (updateApiKeyInput: UpdateApiKeyInput, options?: Parameters<typeof customFetch>[1]): Promise<User> => {
+
+  return customFetch<User>(getUpdateApiKeyUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updateApiKeyInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateApiKeyMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateApiKey>>, TError,{data: BodyType<UpdateApiKeyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateApiKey>>, TError,{data: BodyType<UpdateApiKeyInput>}, TContext> => {
+
+const mutationKey = ['updateApiKey'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateApiKey>>, {data: BodyType<UpdateApiKeyInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateApiKey(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateApiKeyMutationResult = NonNullable<Awaited<ReturnType<typeof updateApiKey>>>
+    export type UpdateApiKeyMutationBody = BodyType<UpdateApiKeyInput>
+    export type UpdateApiKeyMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Save or replace the OpenAI API key on the current account
+ */
+export const useUpdateApiKey = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateApiKey>>, TError,{data: BodyType<UpdateApiKeyInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateApiKey>>,
+        TError,
+        {data: BodyType<UpdateApiKeyInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateApiKeyMutationOptions(options));
+    }
 
 export const getListProjectsUrl = () => {
 
@@ -1553,10 +1627,10 @@ export const getConfigureModeratorUrl = (id: number,) => {
 }
 
 /**
- * @summary Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on
+ * @summary Any member: turn the AI moderator on, using the project creator's saved OpenAI API key
  */
 export const configureModerator = async (id: number,
-    moderatorConfigInput: ModeratorConfigInput, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
+    moderatorConfigInput?: ModeratorConfigInput, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
 
   return customFetch<ModeratorStatus>(getConfigureModeratorUrl(id),
   {
@@ -1572,8 +1646,8 @@ export const configureModerator = async (id: number,
 
 
 export const getConfigureModeratorMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data: BodyType<ModeratorConfigInput>}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data?: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data?: BodyType<ModeratorConfigInput>}, TContext> => {
 
 const mutationKey = ['configureModerator'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -1585,7 +1659,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof configureModerator>>, {id: number;data: BodyType<ModeratorConfigInput>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof configureModerator>>, {id: number;data?: BodyType<ModeratorConfigInput>}> = (props) => {
           const {id,data} = props ?? {};
 
           return  configureModerator(id,data,requestOptions)
@@ -1599,18 +1673,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ConfigureModeratorMutationResult = NonNullable<Awaited<ReturnType<typeof configureModerator>>>
-    export type ConfigureModeratorMutationBody = BodyType<ModeratorConfigInput>
+    export type ConfigureModeratorMutationBody = BodyType<ModeratorConfigInput> | undefined
     export type ConfigureModeratorMutationError = ErrorType<unknown>
 
     /**
- * @summary Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on
+ * @summary Any member: turn the AI moderator on, using the project creator's saved OpenAI API key
  */
 export const useConfigureModerator = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data?: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof configureModerator>>,
         TError,
-        {id: number;data: BodyType<ModeratorConfigInput>},
+        {id: number;data?: BodyType<ModeratorConfigInput>},
         TContext
       > => {
       return useMutation(getConfigureModeratorMutationOptions(options));
@@ -1625,7 +1699,7 @@ export const getDisableModeratorUrl = (id: number,) => {
 }
 
 /**
- * @summary Creator-only: turn the AI moderator off and discard the stored key
+ * @summary Any member: turn the AI moderator off
  */
 export const disableModerator = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
 
@@ -1674,7 +1748,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DisableModeratorMutationError = ErrorType<unknown>
 
     /**
- * @summary Creator-only: turn the AI moderator off and discard the stored key
+ * @summary Any member: turn the AI moderator off
  */
 export const useDisableModerator = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableModerator>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}

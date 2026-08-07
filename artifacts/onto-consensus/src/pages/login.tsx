@@ -35,7 +35,11 @@ export default function Login() {
       {
         onSuccess: (data) => {
           setAuthToken(data.token);
-          queryClient.setQueryData(getGetMeQueryKey(), { id: data.id, username: data.username });
+          queryClient.setQueryData(getGetMeQueryKey(), {
+            id: data.id,
+            username: data.username,
+            apiKeyConfigured: data.apiKeyConfigured,
+          });
           setLocation("/");
         },
         onError: () => {

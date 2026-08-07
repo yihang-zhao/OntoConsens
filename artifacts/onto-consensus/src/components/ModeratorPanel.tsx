@@ -7,15 +7,6 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { Sparkles, Mic, MicOff, AlertTriangle, X, Loader2 } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
@@ -28,13 +19,15 @@ interface ModeratorMember {
 
 interface ModeratorPanelProps {
   projectId: number;
-  isOwner: boolean;
   /** The AI moderator only ever appears once the shared consensus space is open. */
   sharedModeEnabled: boolean;
   members: ModeratorMember[];
   speakerVolumes: Map<number, SpeakerVolume>;
   sendVolume: (level: number) => void;
   moderatorEnabled: boolean;
+  /** True once the project creator's account has an OpenAI API key saved --
+   *  without one, nobody can turn the moderator on. */
+  moderatorConfigured: boolean;
   /** Bumped on every activate/deactivate; resets local mic opt-in state. */
   moderatorSessionKey: number;
   justActivated: boolean;
@@ -46,12 +39,12 @@ interface ModeratorPanelProps {
 
 export function ModeratorPanel({
   projectId,
-  isOwner,
   sharedModeEnabled,
   members,
   speakerVolumes,
   sendVolume,
   moderatorEnabled,
+  moderatorConfigured,
   moderatorSessionKey,
   justActivated,
   onDismissActivation,
@@ -60,9 +53,6 @@ export function ModeratorPanel({
   onDismissError,
 }: ModeratorPanelProps) {
   const queryClient = useQueryClient();
-  const [configOpen, setConfigOpen] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-5.6-luna");
   const [micOptedIn, setMicOptedIn] = useState(false);
   const [summariesOpen, setSummariesOpen] = useState(false);
 
@@ -86,34 +76,18 @@ export function ModeratorPanel({
 
   if (!sharedModeEnabled) return null;
 
+  // Any member can flip the moderator on/off with a single click -- it
+  // always runs on the project creator's saved API key, so there's nothing
+  // left to configure here beyond the toggle itself.
   const handleToggleClick = () => {
+    const onSuccess = () => {
+      queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
+    };
     if (moderatorEnabled) {
-      disable.mutate(
-        { id: projectId },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
-          },
-        },
-      );
+      disable.mutate({ id: projectId }, { onSuccess });
     } else {
-      setApiKey("");
-      setConfigOpen(true);
+      configure.mutate({ id: projectId }, { onSuccess });
     }
-  };
-
-  const handleSave = () => {
-    if (!apiKey.trim()) return;
-    configure.mutate(
-      { id: projectId, data: { apiKey: apiKey.trim(), model: model.trim() || undefined } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
-          setConfigOpen(false);
-          setApiKey("");
-        },
-      },
-    );
   };
 
   const handleOptIn = () => {
@@ -250,63 +224,35 @@ export function ModeratorPanel({
         </div>
       )}
 
-      {/* Owner-only toggle */}
-      {isOwner && (
-        <div className="absolute bottom-4 right-4 z-40">
-          <Button
-            size="icon"
-            variant={moderatorEnabled ? "default" : "outline"}
-            className="rounded-full w-11 h-11 shadow-md"
-            onClick={handleToggleClick}
-            disabled={disable.isPending}
-            title={moderatorEnabled ? "Turn off AI moderator" : "Turn on AI moderator"}
-          >
-            {disable.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-          </Button>
-        </div>
-      )}
-
-      <Dialog open={configOpen} onOpenChange={setConfigOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Turn on the AI moderator</DialogTitle>
-            <DialogDescription>
-              Paste an OpenAI API key. It's encrypted and used only for this project — members
-              who opt in will be prompted to share their mic, and the moderator will post a
-              speaker-by-speaker summary after quiet moments in the conversation.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">OpenAI API key</label>
-              <Input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-                autoComplete="off"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Summary model</label>
-              <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gpt-5.6-luna" />
-            </div>
-            {configure.isError && (
-              <p className="text-xs text-destructive">
-                {(configure.error as any)?.data?.error || "Could not save that key."}
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfigOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={!apiKey.trim() || configure.isPending}>
-              {configure.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Turn on"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Available to any member -- always runs on the project creator's
+          saved API key, so there's nothing left to configure here. */}
+      <div className="absolute bottom-4 right-4 z-40 flex flex-col items-end gap-1.5">
+        {configure.isError && !moderatorEnabled && (
+          <p className="max-w-56 text-right text-[11px] font-medium text-destructive bg-card border border-destructive/30 rounded-lg px-2 py-1 shadow-sm">
+            {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
+          </p>
+        )}
+        <Button
+          size="icon"
+          variant={moderatorEnabled ? "default" : "outline"}
+          className="rounded-full w-11 h-11 shadow-md"
+          onClick={handleToggleClick}
+          disabled={disable.isPending || configure.isPending || (!moderatorEnabled && !moderatorConfigured)}
+          title={
+            moderatorEnabled
+              ? "Turn off AI moderator"
+              : moderatorConfigured
+                ? "Turn on AI moderator"
+                : "The project creator hasn't saved an OpenAI API key yet"
+          }
+        >
+          {disable.isPending || configure.isPending ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Sparkles className="w-5 h-5" />
+          )}
+        </Button>
+      </div>
     </>
   );
 }

@@ -28,5 +28,7 @@ export * from './propertyAgreement';
 export * from './propertyInput';
 export * from './propertyUpdate';
 export * from './readyInput';
+export * from './registerInput';
+export * from './updateApiKeyInput';
 export * from './user';
 export * from './wsTicket';

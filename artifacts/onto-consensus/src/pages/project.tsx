@@ -304,12 +304,12 @@ export default function ProjectWorkspace() {
           {me && allReady && (
             <ModeratorPanel
               projectId={projectId}
-              isOwner={isOwner}
               sharedModeEnabled={allReady}
               members={project.members}
               speakerVolumes={speakerVolumes}
               sendVolume={sendVolume}
               moderatorEnabled={moderatorStatus?.enabled ?? false}
+              moderatorConfigured={moderatorStatus?.configured ?? false}
               moderatorSessionKey={moderatorSessionKey}
               justActivated={justActivated}
               onDismissActivation={() => setJustActivated(false)}

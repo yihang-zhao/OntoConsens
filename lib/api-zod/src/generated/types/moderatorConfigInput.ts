@@ -7,11 +7,6 @@
  */
 
 export interface ModeratorConfigInput {
-  /**
-     * OpenAI API key, scoped to this project only. Stored encrypted; never returned by any endpoint once saved.
-     * @minLength 1
-     */
-  apiKey: string;
   /** Exact OpenAI model id to use for AI-generated summaries. Defaults to the project's already-configured model, or "gpt-5.6-luna" the first time a project is configured. */
   model?: string;
 }
