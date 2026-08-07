@@ -384,7 +384,6 @@ export default function Dashboard() {
                       name="apiKey"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>{me?.apiKeyConfigured ? "Replace key" : "OpenAI API key"}</FormLabel>
                           <FormControl>
                             <Input type="password" placeholder="sk-..." autoComplete="off" {...field} />
                           </FormControl>
