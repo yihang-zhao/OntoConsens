@@ -369,3 +369,74 @@ export const ExportProjectResponse = zod.object({
 })
 
 
+/**
+ * @summary Get whether the AI moderator is on/configured for this project
+ */
+export const GetModeratorStatusParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const GetModeratorStatusResponse = zod.object({
+  "enabled": zod.boolean(),
+  "configured": zod.boolean().describe('True once an API key has been saved for this project.')
+})
+
+
+/**
+ * @summary Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on
+ */
+export const ConfigureModeratorParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+
+
+
+export const ConfigureModeratorBody = zod.object({
+  "apiKey": zod.string().min(1).describe('OpenAI API key, scoped to this project only. Stored encrypted; never returned by any endpoint once saved.'),
+  "model": zod.string().optional().describe('Exact OpenAI model id to use for AI-generated summaries. Defaults to the project\'s already-configured model, or \"gpt-5.6-luna\" the first time a project is configured.')
+})
+
+export const ConfigureModeratorResponse = zod.object({
+  "enabled": zod.boolean(),
+  "configured": zod.boolean().describe('True once an API key has been saved for this project.')
+})
+
+
+/**
+ * @summary Creator-only: turn the AI moderator off and discard the stored key
+ */
+export const DisableModeratorParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DisableModeratorResponse = zod.object({
+  "enabled": zod.boolean(),
+  "configured": zod.boolean().describe('True once an API key has been saved for this project.')
+})
+
+
+/**
+ * @summary Record that the current member agreed to share their mic with the moderator
+ */
+export const ModeratorMicOptInParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const ModeratorMicOptInResponse = zod.void()
+
+
+/**
+ * @summary Upload a recorded speech chunk for transcription by the moderator
+ */
+export const UploadModeratorAudioParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const UploadModeratorAudioBody = zod.object({
+  "audio": zod.instanceof(File)
+})
+
+export const UploadModeratorAudioResponse = zod.void()
+
+

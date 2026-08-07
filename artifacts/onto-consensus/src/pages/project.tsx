@@ -6,10 +6,12 @@ import {
   useExportProject, 
   useGetMe,
   useListProperties,
+  useGetModeratorStatus,
   getGetProjectQueryKey,
   getListPropertiesQueryKey,
   getExportProjectQueryKey,
   getListProjectsQueryKey,
+  getGetModeratorStatusQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,7 @@ import {
   Network, 
 } from "lucide-react";
 import { useProjectSocket } from "@/hooks/useProjectSocket";
+import { ModeratorPanel } from "@/components/ModeratorPanel";
 
 export default function ProjectWorkspace() {
   const { id: idStr } = useParams();
@@ -66,7 +69,34 @@ export default function ProjectWorkspace() {
   // a member is in the workspace (not just once they're ready) so that ready
   // status, joins, and property changes all show up live for everyone without
   // needing a page refresh.
-  const { cursors, sendCursor, status: syncStatus, onlineUserIds } = useProjectSocket({
+  const isOwner = Boolean(project && me && project.ownerId === me.id);
+  // Fetched only once the shared space is open (the moderator only exists
+  // there) — this is the single source of truth for on/off state; socket
+  // events below just invalidate it so all members converge immediately
+  // instead of waiting on the 10s poll below.
+  const { data: moderatorStatus } = useGetModeratorStatus(projectId, {
+    query: {
+      queryKey: getGetModeratorStatusQueryKey(projectId),
+      enabled: Boolean(project && meMember && allReady),
+      refetchInterval: 10_000,
+    },
+  });
+  const [justActivated, setJustActivated] = useState(false);
+  const [summaries, setSummaries] = useState<{ text: string; createdAt: string }[]>([]);
+  const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
+  // Bumped on every activate/deactivate so ModeratorPanel can reset its local
+  // "have I opted in" state at each session boundary — opting in only ever
+  // applies to the session that was live at the moment of the request.
+  const [moderatorSessionKey, setModeratorSessionKey] = useState(0);
+
+  const {
+    cursors,
+    sendCursor,
+    status: syncStatus,
+    onlineUserIds,
+    speakerVolumes,
+    sendVolume,
+  } = useProjectSocket({
     projectId,
     enabled: Boolean(project && meMember),
     onProjectChanged: () => queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) }),
@@ -80,6 +110,22 @@ export default function ProjectWorkspace() {
       queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
       queryClient.removeQueries({ queryKey: getGetProjectQueryKey(projectId) });
       navigate("/");
+    },
+    onModeratorActivated: () => {
+      queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
+      setJustActivated(true);
+      setModeratorSessionKey((k) => k + 1);
+    },
+    onModeratorDeactivated: () => {
+      queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
+      setJustActivated(false);
+      setModeratorSessionKey((k) => k + 1);
+    },
+    onModeratorSummary: (text, createdAt) => {
+      setSummaries((prev) => [...prev, { text, createdAt }]);
+    },
+    onModeratorError: (message) => {
+      setModeratorErrorMessage(message);
     },
   });
 
@@ -252,6 +298,24 @@ export default function ProjectWorkspace() {
               sendCursor={sendCursor}
               sharedModeEnabled={allReady}
               ownSpaceLocked={isReady && !allReady}
+            />
+          )}
+
+          {me && allReady && (
+            <ModeratorPanel
+              projectId={projectId}
+              isOwner={isOwner}
+              sharedModeEnabled={allReady}
+              members={project.members}
+              speakerVolumes={speakerVolumes}
+              sendVolume={sendVolume}
+              moderatorEnabled={moderatorStatus?.enabled ?? false}
+              moderatorSessionKey={moderatorSessionKey}
+              justActivated={justActivated}
+              onDismissActivation={() => setJustActivated(false)}
+              summaries={summaries}
+              moderatorErrorMessage={moderatorErrorMessage}
+              onDismissError={() => setModeratorErrorMessage(null)}
             />
           )}
 

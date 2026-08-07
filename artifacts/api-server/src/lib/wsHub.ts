@@ -56,7 +56,12 @@ export type ServerEvent =
   | { type: "member_joined" }
   | { type: "member_ready" }
   | { type: "project_deleted"; projectId?: number }
-  | { type: "member_count_changed"; projectId: number; memberCount: number };
+  | { type: "member_count_changed"; projectId: number; memberCount: number }
+  | { type: "moderator_activated" }
+  | { type: "moderator_deactivated" }
+  | { type: "speaker_volume"; userId: number; level: number }
+  | { type: "moderator_summary"; text: string; createdAt: string }
+  | { type: "moderator_error"; message: string };
 
 function onlineUserIds(projectId: number): number[] {
   const ids = new Set<number>();
@@ -159,6 +164,20 @@ export function setupWebSocketServer(): WebSocketServer {
         broadcastToProject(
           ticket.projectId,
           { type: "cursor", userId: ticket.userId, x, y },
+          socket,
+        );
+      } else if (
+        data &&
+        typeof data === "object" &&
+        "type" in data &&
+        (data as { type: unknown }).type === "volume" &&
+        "level" in data &&
+        typeof (data as { level: unknown }).level === "number"
+      ) {
+        const { level } = data as { level: number };
+        broadcastToProject(
+          ticket.projectId,
+          { type: "speaker_volume", userId: ticket.userId, level },
           socket,
         );
       }

@@ -382,6 +382,89 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExportPayload"
 
+  /projects/{id}/moderator:
+    get:
+      operationId: getModeratorStatus
+      tags: [moderator]
+      summary: Get whether the AI moderator is on/configured for this project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Moderator status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModeratorStatus"
+    put:
+      operationId: configureModerator
+      tags: [moderator]
+      summary: "Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on"
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModeratorConfigInput"
+      responses:
+        "200":
+          description: Moderator enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModeratorStatus"
+
+  /projects/{id}/moderator/disable:
+    post:
+      operationId: disableModerator
+      tags: [moderator]
+      summary: "Creator-only: turn the AI moderator off and discard the stored key"
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Moderator disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModeratorStatus"
+
+  /projects/{id}/moderator/mic-opt-in:
+    post:
+      operationId: moderatorMicOptIn
+      tags: [moderator]
+      summary: Record that the current member agreed to share their mic with the moderator
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "204":
+          description: Recorded
+
+  /projects/{id}/moderator/audio:
+    post:
+      operationId: uploadModeratorAudio
+      tags: [moderator]
+      summary: Upload a recorded speech chunk for transcription by the moderator
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ModeratorAudioInput"
+      responses:
+        "204":
+          description: Transcribed and appended
+        "400":
+          description: Moderator not active or no file provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -515,6 +598,41 @@ components:
       properties:
         ticket:
           type: string
+
+    ModeratorStatus:
+      type: object
+      required: [enabled, configured]
+      properties:
+        enabled:
+          type: boolean
+        configured:
+          type: boolean
+          description: True once an API key has been saved for this project.
+
+    ModeratorConfigInput:
+      type: object
+      required: [apiKey]
+      properties:
+        apiKey:
+          type: string
+          minLength: 1
+          description: >-
+            OpenAI API key, scoped to this project only. Stored encrypted;
+            never returned by any endpoint once saved.
+        model:
+          type: string
+          description: >-
+            Exact OpenAI model id to use for AI-generated summaries. Defaults
+            to the project's already-configured model, or "gpt-5.6-luna" the
+            first time a project is configured.
+
+    ModeratorAudioInput:
+      type: object
+      required: [audio]
+      properties:
+        audio:
+          type: string
+          format: binary
 
     Member:
       type: object

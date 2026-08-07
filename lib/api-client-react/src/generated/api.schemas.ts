@@ -79,6 +79,26 @@ export interface WsTicket {
   ticket: string;
 }
 
+export interface ModeratorStatus {
+  enabled: boolean;
+  /** True once an API key has been saved for this project. */
+  configured: boolean;
+}
+
+export interface ModeratorConfigInput {
+  /**
+     * OpenAI API key, scoped to this project only. Stored encrypted; never returned by any endpoint once saved.
+     * @minLength 1
+     */
+  apiKey: string;
+  /** Exact OpenAI model id to use for AI-generated summaries. Defaults to the project's already-configured model, or "gpt-5.6-luna" the first time a project is configured. */
+  model?: string;
+}
+
+export interface ModeratorAudioInput {
+  audio: Blob;
+}
+
 export interface Member {
   userId: number;
   username: string;

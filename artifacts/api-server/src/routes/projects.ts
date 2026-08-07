@@ -16,6 +16,7 @@ import { requireAuth } from "../lib/auth";
 import { parseOntologyFile } from "../lib/ontologyParser";
 import { issueTicket, issueUserTicket, broadcastToProject, broadcastToUsers } from "../lib/wsHub";
 import { getPropertyQuota, mergeDuplicatePropertiesOnReady } from "./properties";
+import { clearModeratorSession } from "../lib/moderatorEngine";
 
 const router: IRouter = Router();
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
@@ -315,6 +316,7 @@ router.delete("/projects/:id", async (req, res) => {
   // agreements) references projects with onDelete: "cascade", so removing
   // this one row cleans up everything for every member automatically.
   await db.delete(projectsTable).where(eq(projectsTable.id, projectId));
+  clearModeratorSession(projectId);
 
   broadcastToProject(projectId, { type: "project_deleted" });
   // Members who are sitting on the dashboard (not inside this project) only

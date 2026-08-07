@@ -27,6 +27,9 @@ import type {
   HealthStatus,
   JoinProjectInput,
   Member,
+  ModeratorAudioInput,
+  ModeratorConfigInput,
+  ModeratorStatus,
   ProjectDetail,
   ProjectInput,
   ProjectSummary,
@@ -1463,4 +1466,369 @@ export function useExportProject<TData = Awaited<ReturnType<typeof exportProject
 
 
 
+
+export const getGetModeratorStatusUrl = (id: number,) => {
+
+
+
+
+  return `/api/projects/${id}/moderator`
+}
+
+/**
+ * @summary Get whether the AI moderator is on/configured for this project
+ */
+export const getModeratorStatus = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
+
+  return customFetch<ModeratorStatus>(getGetModeratorStatusUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetModeratorStatusQueryKey = (id: number,) => {
+    return [
+    `/api/projects/${id}/moderator`
+    ] as const;
+    }
+
+
+export const getGetModeratorStatusQueryOptions = <TData = Awaited<ReturnType<typeof getModeratorStatus>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getModeratorStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetModeratorStatusQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getModeratorStatus>>> = ({ signal }) => getModeratorStatus(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getModeratorStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetModeratorStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getModeratorStatus>>>
+export type GetModeratorStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get whether the AI moderator is on/configured for this project
+ */
+
+export function useGetModeratorStatus<TData = Awaited<ReturnType<typeof getModeratorStatus>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getModeratorStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetModeratorStatusQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getConfigureModeratorUrl = (id: number,) => {
+
+
+
+
+  return `/api/projects/${id}/moderator`
+}
+
+/**
+ * @summary Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on
+ */
+export const configureModerator = async (id: number,
+    moderatorConfigInput: ModeratorConfigInput, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
+
+  return customFetch<ModeratorStatus>(getConfigureModeratorUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(moderatorConfigInput)
+  }
+);}
+
+
+
+
+
+export const getConfigureModeratorMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data: BodyType<ModeratorConfigInput>}, TContext> => {
+
+const mutationKey = ['configureModerator'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof configureModerator>>, {id: number;data: BodyType<ModeratorConfigInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  configureModerator(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfigureModeratorMutationResult = NonNullable<Awaited<ReturnType<typeof configureModerator>>>
+    export type ConfigureModeratorMutationBody = BodyType<ModeratorConfigInput>
+    export type ConfigureModeratorMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Creator-only: save an OpenAI API key scoped to this project and turn the AI moderator on
+ */
+export const useConfigureModerator = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof configureModerator>>,
+        TError,
+        {id: number;data: BodyType<ModeratorConfigInput>},
+        TContext
+      > => {
+      return useMutation(getConfigureModeratorMutationOptions(options));
+    }
+
+export const getDisableModeratorUrl = (id: number,) => {
+
+
+
+
+  return `/api/projects/${id}/moderator/disable`
+}
+
+/**
+ * @summary Creator-only: turn the AI moderator off and discard the stored key
+ */
+export const disableModerator = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
+
+  return customFetch<ModeratorStatus>(getDisableModeratorUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisableModeratorMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableModerator>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disableModerator>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['disableModerator'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disableModerator>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  disableModerator(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisableModeratorMutationResult = NonNullable<Awaited<ReturnType<typeof disableModerator>>>
+
+    export type DisableModeratorMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Creator-only: turn the AI moderator off and discard the stored key
+ */
+export const useDisableModerator = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableModerator>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof disableModerator>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDisableModeratorMutationOptions(options));
+    }
+
+export const getModeratorMicOptInUrl = (id: number,) => {
+
+
+
+
+  return `/api/projects/${id}/moderator/mic-opt-in`
+}
+
+/**
+ * @summary Record that the current member agreed to share their mic with the moderator
+ */
+export const moderatorMicOptIn = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getModeratorMicOptInUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getModeratorMicOptInMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moderatorMicOptIn>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof moderatorMicOptIn>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['moderatorMicOptIn'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof moderatorMicOptIn>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  moderatorMicOptIn(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ModeratorMicOptInMutationResult = NonNullable<Awaited<ReturnType<typeof moderatorMicOptIn>>>
+
+    export type ModeratorMicOptInMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Record that the current member agreed to share their mic with the moderator
+ */
+export const useModeratorMicOptIn = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moderatorMicOptIn>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof moderatorMicOptIn>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getModeratorMicOptInMutationOptions(options));
+    }
+
+export const getUploadModeratorAudioUrl = (id: number,) => {
+
+
+
+
+  return `/api/projects/${id}/moderator/audio`
+}
+
+/**
+ * @summary Upload a recorded speech chunk for transcription by the moderator
+ */
+export const uploadModeratorAudio = async (id: number,
+    moderatorAudioInput: ModeratorAudioInput, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+    const formData = new FormData();
+formData.append(`audio`, moderatorAudioInput.audio);
+
+  return customFetch<void>(getUploadModeratorAudioUrl(id),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+
+
+export const getUploadModeratorAudioMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadModeratorAudio>>, TError,{id: number;data: BodyType<ModeratorAudioInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof uploadModeratorAudio>>, TError,{id: number;data: BodyType<ModeratorAudioInput>}, TContext> => {
+
+const mutationKey = ['uploadModeratorAudio'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadModeratorAudio>>, {id: number;data: BodyType<ModeratorAudioInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  uploadModeratorAudio(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UploadModeratorAudioMutationResult = NonNullable<Awaited<ReturnType<typeof uploadModeratorAudio>>>
+    export type UploadModeratorAudioMutationBody = BodyType<ModeratorAudioInput>
+    export type UploadModeratorAudioMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Upload a recorded speech chunk for transcription by the moderator
+ */
+export const useUploadModeratorAudio = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadModeratorAudio>>, TError,{id: number;data: BodyType<ModeratorAudioInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof uploadModeratorAudio>>,
+        TError,
+        {id: number;data: BodyType<ModeratorAudioInput>},
+        TContext
+      > => {
+      return useMutation(getUploadModeratorAudioMutationOptions(options));
+    }
 

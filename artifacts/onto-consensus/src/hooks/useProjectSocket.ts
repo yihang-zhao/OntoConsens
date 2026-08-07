@@ -8,6 +8,12 @@ export interface RemoteCursor {
   updatedAt: number;
 }
 
+export interface SpeakerVolume {
+  userId: number;
+  level: number;
+  updatedAt: number;
+}
+
 type ServerEvent =
   | { type: "cursor"; userId: number; x: number; y: number }
   | { type: "cursor_left"; userId: number }
@@ -18,7 +24,12 @@ type ServerEvent =
   | { type: "agreement_changed" }
   | { type: "member_joined" }
   | { type: "member_ready" }
-  | { type: "project_deleted" };
+  | { type: "project_deleted" }
+  | { type: "moderator_activated" }
+  | { type: "moderator_deactivated" }
+  | { type: "speaker_volume"; userId: number; level: number }
+  | { type: "moderator_summary"; text: string; createdAt: string }
+  | { type: "moderator_error"; message: string };
 
 interface UseProjectSocketOptions {
   projectId: number;
@@ -26,7 +37,17 @@ interface UseProjectSocketOptions {
   onProjectChanged?: () => void;
   onPropertiesChanged?: () => void;
   onProjectDeleted?: () => void;
+  onModeratorActivated?: () => void;
+  onModeratorDeactivated?: () => void;
+  onModeratorSummary?: (text: string, createdAt: string) => void;
+  onModeratorError?: (message: string) => void;
 }
+
+// Speaker volume readings older than this are dropped even if no new
+// message arrives to trigger a re-render — e.g. someone's tab crashed
+// mid-sentence and no further "speaking stopped" signal ever comes in.
+const SPEAKER_VOLUME_TTL_MS = 1_200;
+const SPEAKER_VOLUME_PRUNE_INTERVAL_MS = 500;
 
 // Cursors older than this are considered stale and pruned even if no new
 // socket message ever arrives to trigger a re-render.
@@ -48,20 +69,42 @@ export function useProjectSocket({
   onProjectChanged,
   onPropertiesChanged,
   onProjectDeleted,
+  onModeratorActivated,
+  onModeratorDeactivated,
+  onModeratorSummary,
+  onModeratorError,
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
   const socketRef = useRef<WebSocket | null>(null);
   const [cursors, setCursors] = useState<Map<number, RemoteCursor>>(new Map());
   const [status, setStatus] = useState<SocketStatus>("reconnecting");
   const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(new Set());
-  const callbacksRef = useRef({ onProjectChanged, onPropertiesChanged, onProjectDeleted });
-  callbacksRef.current = { onProjectChanged, onPropertiesChanged, onProjectDeleted };
+  const [speakerVolumes, setSpeakerVolumes] = useState<Map<number, SpeakerVolume>>(new Map());
+  const callbacksRef = useRef({
+    onProjectChanged,
+    onPropertiesChanged,
+    onProjectDeleted,
+    onModeratorActivated,
+    onModeratorDeactivated,
+    onModeratorSummary,
+    onModeratorError,
+  });
+  callbacksRef.current = {
+    onProjectChanged,
+    onPropertiesChanged,
+    onProjectDeleted,
+    onModeratorActivated,
+    onModeratorDeactivated,
+    onModeratorSummary,
+    onModeratorError,
+  };
 
   useEffect(() => {
     if (!enabled) {
       setCursors(new Map());
       setStatus("reconnecting");
       setOnlineUserIds(new Set());
+      setSpeakerVolumes(new Map());
       return;
     }
 
@@ -157,6 +200,26 @@ export function useProjectSocket({
           case "project_deleted":
             callbacksRef.current.onProjectDeleted?.();
             break;
+          case "moderator_activated":
+            callbacksRef.current.onModeratorActivated?.();
+            break;
+          case "moderator_deactivated":
+            setSpeakerVolumes(new Map());
+            callbacksRef.current.onModeratorDeactivated?.();
+            break;
+          case "speaker_volume":
+            setSpeakerVolumes((prev) => {
+              const next = new Map(prev);
+              next.set(data.userId, { userId: data.userId, level: data.level, updatedAt: Date.now() });
+              return next;
+            });
+            break;
+          case "moderator_summary":
+            callbacksRef.current.onModeratorSummary?.(data.text, data.createdAt);
+            break;
+          case "moderator_error":
+            callbacksRef.current.onModeratorError?.(data.message);
+            break;
         }
       });
 
@@ -204,6 +267,29 @@ export function useProjectSocket({
     return () => clearInterval(interval);
   }, [enabled]);
 
+  // Mirrors the cursor-pruning effect above: a speaker's tab can vanish
+  // mid-word (crash, lost connectivity) with no final "stopped speaking"
+  // message ever arriving, so the pulsing border needs its own timeout
+  // rather than waiting on the next volume update to clear it.
+  useEffect(() => {
+    if (!enabled) return;
+    const interval = setInterval(() => {
+      setSpeakerVolumes((prev) => {
+        const cutoff = Date.now() - SPEAKER_VOLUME_TTL_MS;
+        let changed = false;
+        const next = new Map(prev);
+        for (const [userId, volume] of prev) {
+          if (volume.updatedAt < cutoff) {
+            next.delete(userId);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, SPEAKER_VOLUME_PRUNE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [enabled]);
+
   const sendCursor = useCallback((x: number, y: number) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -211,5 +297,12 @@ export function useProjectSocket({
     }
   }, []);
 
-  return { cursors, sendCursor, status, onlineUserIds };
+  const sendVolume = useCallback((level: number) => {
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "volume", level }));
+    }
+  }, []);
+
+  return { cursors, sendCursor, status, onlineUserIds, speakerVolumes, sendVolume };
 }
