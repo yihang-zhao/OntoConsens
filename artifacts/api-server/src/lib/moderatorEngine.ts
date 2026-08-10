@@ -32,6 +32,19 @@ const MAX_PROJECT_MEMBERS = 3;
 const INTERVENTION_COOLDOWN_MS = 15_000;
 const lastInterventionAt = new Map<number, number>();
 
+// Running, per-property record of the most recent stance/opinion the
+// moderator has ever extracted for each user, keyed by
+// "<classId>:<propertyId>". A user who weighed in on a property two rounds
+// ago but stayed quiet this round should still show their real stance
+// (not "unknown") every time that same property comes back up -- this is
+// what lets a single intervention reflect everyone's position on the
+// property, not just whoever happened to speak in the last few seconds.
+type PropertyOpinion = { stance: "retain" | "remove"; opinion: string };
+const propertyOpinionsByKey = new Map<string, Map<number, PropertyOpinion>>();
+function propertyOpinionKey(classId: number, propertyId: number): string {
+  return `${classId}:${propertyId}`;
+}
+
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
 // timestamp -- is the durable source of truth for "which of this member's
@@ -462,6 +475,19 @@ async function generateSummary(projectId: number) {
       opinionByUserId.set(userId, { stance, opinion });
     }
 
+    // Merge this round's freshly-extracted opinions into the running
+    // per-property record, then read segments back from THAT (not from
+    // opinionByUserId alone) so a member who already stated a stance in an
+    // earlier round keeps showing it here even if they said nothing new
+    // this round.
+    let persistedOpinions: Map<number, PropertyOpinion> | undefined;
+    if (matched && classId !== null && propertyId !== null) {
+      const key = propertyOpinionKey(classId, propertyId);
+      persistedOpinions = propertyOpinionsByKey.get(key) ?? new Map();
+      for (const [userId, value] of opinionByUserId) persistedOpinions.set(userId, value);
+      propertyOpinionsByKey.set(key, persistedOpinions);
+    }
+
     // Every current member gets exactly one segment: a real stance if the
     // model identified one for them, otherwise "unknown" -- rendered gray
     // and to the right of the needle regardless of whether that's because
@@ -471,7 +497,7 @@ async function generateSummary(projectId: number) {
     // visualize a retain/remove split for otherwise.
     const segments: ModeratorSummarySegment[] = matched
       ? members.map((member) => {
-          const opinion = opinionByUserId.get(member.userId);
+          const opinion = persistedOpinions?.get(member.userId);
           return {
             userId: member.userId,
             username: usernameById.get(member.userId) ?? `User ${member.userId}`,
