@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useConfigureModerator,
   useDisableModerator,
@@ -33,14 +33,19 @@ interface ModeratorPanelProps {
   summaries: ModeratorSummaryEvent[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
+  /** Called once the summary popup actually disappears (whether the user
+   *  closed it or it timed out from not being hovered) -- null when that
+   *  round never resolved to a real class/property, in which case there's
+   *  nothing to highlight. */
+  onSummaryDismissed?: (target: { classId: number; propertyId: number } | null) => void;
 }
 
-// How long a summary toast stays fully visible before it starts fading, and
-// the total lifetime after which it's removed from the DOM. Long enough to
-// read a few sentences, short enough that it never feels like something
-// waiting to be dismissed.
-const SUMMARY_TOAST_VISIBLE_MS = 9_000;
-const SUMMARY_TOAST_FADE_MS = 700;
+// The summary popup stays up indefinitely while the user is hovering it, and
+// disappears either when they explicitly close it, or after this many ms of
+// NOT being hovered -- so it reads as something to linger on and read, not a
+// timed toast that might vanish mid-sentence.
+const SUMMARY_TOAST_HOVER_GRACE_MS = 3_000;
+const SUMMARY_TOAST_FADE_MS = 300;
 
 export function ModeratorPanel({
   projectId,
@@ -53,6 +58,7 @@ export function ModeratorPanel({
   summaries,
   moderatorErrorMessage,
   onDismissError,
+  onSummaryDismissed,
 }: ModeratorPanelProps) {
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
@@ -92,25 +98,63 @@ export function ModeratorPanel({
   };
 
   // A fluent, floating summary notification: appears centered over the
-  // canvas, fades in and back out on its own, and never demands a click to
-  // go away -- so it reads as commentary rather than an interruption.
+  // canvas and stays up as long as the user is reading it. It only goes away
+  // when they explicitly close it, or once they've stopped hovering it for
+  // SUMMARY_TOAST_HOVER_GRACE_MS -- so it never vanishes out from under
+  // someone mid-read, but also never lingers forever once they've moved on.
   const [toastSummary, setToastSummary] = useState<ModeratorSummaryEvent | null>(null);
   const [toastShown, setToastShown] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastSummaryRef = useRef<ModeratorSummaryEvent | null>(null);
+  toastSummaryRef.current = toastSummary;
+
+  const cancelHide = () => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
+  };
+
+  const dismissToast = () => {
+    cancelHide();
+    setToastShown(false);
+    if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    clearTimerRef.current = setTimeout(() => {
+      const dismissed = toastSummaryRef.current;
+      setToastSummary(null);
+      onSummaryDismissed?.(
+        dismissed?.matched && dismissed.classId !== null && dismissed.propertyId !== null
+          ? { classId: dismissed.classId, propertyId: dismissed.propertyId }
+          : null,
+      );
+    }, SUMMARY_TOAST_FADE_MS);
+  };
+
+  const scheduleHide = () => {
+    cancelHide();
+    hideTimerRef.current = setTimeout(dismissToast, SUMMARY_TOAST_HOVER_GRACE_MS);
+  };
+
   useEffect(() => {
     if (summaries.length === 0) return;
     const latest = summaries[summaries.length - 1]!;
+    if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
     setToastSummary(latest);
     setToastShown(false);
     const showTimer = setTimeout(() => setToastShown(true), 20);
-    const hideTimer = setTimeout(() => setToastShown(false), SUMMARY_TOAST_VISIBLE_MS);
-    const clearTimer = setTimeout(() => setToastSummary(null), SUMMARY_TOAST_VISIBLE_MS + SUMMARY_TOAST_FADE_MS);
-    return () => {
-      clearTimeout(showTimer);
-      clearTimeout(hideTimer);
-      clearTimeout(clearTimer);
-    };
+    // Not hovered yet -- start the auto-hide grace period immediately.
+    scheduleHide();
+    return () => clearTimeout(showTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summaries.length]);
+
+  // Cancel any pending timers on unmount so they never fire against a
+  // detached component.
+  useEffect(() => {
+    return () => {
+      cancelHide();
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    };
+  }, []);
 
   if (!sharedModeEnabled) return null;
 
@@ -145,24 +189,43 @@ export function ModeratorPanel({
           </button>
         </div>
       )}
-      {/* Floating AI summary toast, centered over the canvas -- fades in,
-          lingers briefly, fades out on its own. Only the card itself
-          captures clicks, so it never blocks interaction with the canvas
-          underneath. */}
+      {/* Floating AI summary popup, centered over the canvas. It stays open
+          while hovered, and otherwise fades out on its own a few seconds
+          after the mouse leaves it (or immediately on close). Only the card
+          itself captures clicks/hover, so it never blocks interaction with
+          the canvas underneath. */}
       {toastSummary && (
         <div
           className={`pointer-events-none absolute inset-0 z-50 flex items-center justify-center transition-opacity ease-out ${
-            toastShown ? "opacity-100 duration-500" : "opacity-0 duration-700"
+            toastShown ? "opacity-100 duration-300" : "opacity-0 duration-300"
           }`}
         >
-          <div className="pointer-events-auto relative max-w-lg w-[92%] bg-card/95 backdrop-blur-sm border shadow-xl rounded-2xl pt-9 pb-3 px-3">
+          <div
+            className="pointer-events-auto relative max-w-lg w-[92%] bg-card/95 backdrop-blur-sm border shadow-xl rounded-2xl pt-9 pb-3 px-3"
+            onMouseEnter={cancelHide}
+            onMouseLeave={scheduleHide}
+          >
             <div className="absolute top-3 left-4 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
               <Sparkles className="w-3.5 h-3.5 text-primary" />
-              {toastSummary.className && toastSummary.propertyName
+              {toastSummary.matched && toastSummary.className && toastSummary.propertyName
                 ? `${toastSummary.className}.${toastSummary.propertyName}`
                 : "AI moderator"}
             </div>
-            <ModeratorGauge segments={toastSummary.segments} />
+            <button
+              onClick={dismissToast}
+              className="absolute top-2.5 right-2.5 text-muted-foreground/70 hover:text-muted-foreground"
+              aria-label="Close"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+            {toastSummary.matched ? (
+              <ModeratorGauge segments={toastSummary.segments} />
+            ) : (
+              <p className="px-2 pb-1 pt-1 text-sm text-muted-foreground">
+                Couldn't tell which class or property this was about. Try focusing the discussion on
+                properties that are already in this shared workspace.
+              </p>
+            )}
           </div>
         </div>
       )}

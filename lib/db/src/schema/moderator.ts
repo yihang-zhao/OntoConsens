@@ -8,6 +8,8 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+import { ontologyClassesTable } from "./ontology";
+import { propertiesTable } from "./properties";
 import { projectsTable } from "./projects";
 import { usersTable } from "./users";
 
@@ -137,10 +139,22 @@ export const moderatorSummariesTable = pgTable("moderator_summaries", {
   // fields below rather than this string.
   summary: text("summary").notNull(),
   // The class and property the AI determined the transcript was actually
-  // discussing this round, in terms of whether to retain or remove it. Null
-  // if the model couldn't identify a clear subject.
+  // discussing this round, in terms of whether to retain or remove it.
+  // These are always the CANONICAL label/name of a class/property that
+  // genuinely exists in this project's shared workspace right now -- never
+  // raw, unverified model output. Null (with `matched` false) whenever the
+  // model couldn't confidently tie the discussion to one specific
+  // class+property actually present in the workspace; in that case the UI
+  // shows a text reminder instead of a visualization.
   className: text("class_name"),
   propertyName: text("property_name"),
+  classId: integer("class_id").references(() => ontologyClassesTable.id, {
+    onDelete: "set null",
+  }),
+  propertyId: integer("property_id").references(() => propertiesTable.id, {
+    onDelete: "set null",
+  }),
+  matched: boolean("matched").notNull().default(false),
   segments: jsonb("segments").$type<ModeratorSummarySegment[]>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

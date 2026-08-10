@@ -83,6 +83,28 @@ export default function ProjectWorkspace() {
   });
   const [summaries, setSummaries] = useState<ModeratorSummaryEvent[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
+  // Once the AI moderator's summary popup disappears, briefly highlight the
+  // class/property it was actually about in the shared graph -- gives the
+  // popup's takeaway somewhere to land instead of just fading away.
+  const [highlightedProperty, setHighlightedProperty] = useState<{ classId: number; propertyId: number } | null>(
+    null,
+  );
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const HIGHLIGHT_DURATION_MS = 4_000;
+  const handleSummaryDismissed = (target: { classId: number; propertyId: number } | null) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    if (!target) {
+      setHighlightedProperty(null);
+      return;
+    }
+    setHighlightedProperty(target);
+    highlightTimerRef.current = setTimeout(() => setHighlightedProperty(null), HIGHLIGHT_DURATION_MS);
+  };
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
 
   const {
     cursors,
@@ -283,6 +305,7 @@ export default function ProjectWorkspace() {
               sendCursor={sendCursor}
               sharedModeEnabled={allReady}
               ownSpaceLocked={isReady && !allReady}
+              highlightedProperty={highlightedProperty}
             />
           )}
 
@@ -298,6 +321,7 @@ export default function ProjectWorkspace() {
               summaries={summaries}
               moderatorErrorMessage={moderatorErrorMessage}
               onDismissError={() => setModeratorErrorMessage(null)}
+              onSummaryDismissed={handleSummaryDismissed}
             />
           )}
 

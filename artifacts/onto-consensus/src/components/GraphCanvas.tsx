@@ -35,6 +35,10 @@ interface GraphCanvasProps {
    * own proposals must be disabled client-side too (the server also
    * rejects them, but this avoids a round-trip error). */
   ownSpaceLocked: boolean;
+  /** The class/property the AI moderator's last summary popup was about,
+   * briefly highlighted here right after that popup disappears — gives its
+   * takeaway somewhere to land. Null the rest of the time. */
+  highlightedProperty?: { classId: number; propertyId: number } | null;
 }
 
 interface LaidOutClass extends OntologyClass {
@@ -310,6 +314,7 @@ export function GraphCanvas({
   sendCursor,
   sharedModeEnabled,
   ownSpaceLocked,
+  highlightedProperty,
 }: GraphCanvasProps) {
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -923,6 +928,7 @@ export function GraphCanvas({
 
           const agreedCount = classProperties.filter((p) => p.agreedByAll).length;
           const consensusFraction = classProperties.length > 0 ? agreedCount / classProperties.length : 0;
+          const isClassHighlighted = highlightedProperty?.classId === cls.id;
 
           return (
             <div
@@ -965,6 +971,7 @@ export function GraphCanvas({
                 // with nothing to show for it. Petals rendered from a temp
                 // id are inert until the real id replaces them.
                 const isOptimistic = property.id < 0;
+                const isHighlighted = highlightedProperty?.propertyId === property.id;
 
                 return (
                   <div key={property.id}>
@@ -1007,9 +1014,11 @@ export function GraphCanvas({
                       // change which levels are filled — it must never leave
                       // a black default browser focus/active outline on the
                       // petal frame.
-                      className="relative flex h-full w-full flex-col-reverse overflow-hidden border shadow-sm outline-none transition-[background-color,border-color,box-shadow] duration-300 hover:z-30 hover:scale-105 focus:outline-none focus-visible:outline-none"
-                      style={
-                        docked
+                      className={`relative flex h-full w-full flex-col-reverse overflow-hidden border shadow-sm outline-none transition-[background-color,border-color,box-shadow] duration-300 hover:z-30 hover:scale-105 focus:outline-none focus-visible:outline-none ${
+                        isHighlighted ? "animate-pulse" : ""
+                      }`}
+                      style={{
+                        ...(docked
                           ? {
                               // Same color the node's own name label is
                               // rendered in — a docked property visually
@@ -1025,8 +1034,18 @@ export function GraphCanvas({
                               borderRadius: "16px 16px 4px 4px",
                               borderWidth: 1.5,
                               WebkitTapHighlightColor: "transparent",
+                            }),
+                        // Ontology-discussion highlight: the AI moderator's
+                        // last summary was about this exact property.
+                        // Layered on top of (not replacing) the
+                        // docked/floating styling above.
+                        ...(isHighlighted
+                          ? {
+                              boxShadow: "0 0 0 3px hsl(var(--primary)), 0 0 16px 2px hsl(var(--primary) / 0.6)",
+                              zIndex: 40,
                             }
-                      }
+                          : {}),
+                      }}
                     >
                       {docked ? (
                         // The petal frame itself keeps the full true
@@ -1217,7 +1236,9 @@ export function GraphCanvas({
               {/* The class badge sits on top, hiding the inner (pivot) end
                   of every petal so they read as radiating from its edge. */}
               <div
-                className="absolute overflow-hidden rounded-full border-4 bg-card text-center shadow-md"
+                className={`absolute overflow-hidden rounded-full border-4 bg-card text-center shadow-md transition-shadow duration-300 ${
+                  isClassHighlighted ? "animate-pulse" : ""
+                }`}
                 style={{
                   width: CIRCLE_SIZE,
                   height: CIRCLE_SIZE,
@@ -1226,6 +1247,9 @@ export function GraphCanvas({
                   transform: "translate(-50%, -50%)",
                   borderColor: "hsl(var(--muted-foreground) / 0.5)",
                   zIndex: 20,
+                  ...(isClassHighlighted
+                    ? { boxShadow: "0 0 0 4px hsl(var(--primary)), 0 0 24px 4px hsl(var(--primary) / 0.6)" }
+                    : {}),
                 }}
               >
                 {/* Consensus gauge: a bottom-anchored fill that grows with

@@ -12,3 +12,4 @@
 - [api-server dev script doesn't hot-reload](api-server-dev-no-watch.md) — backend edits need an "API Server" workflow restart even to test the same service you just changed.
 - [User-scoped WebSocket channel in wsHub](ws-hub-dashboard-scoped-channel.md) — reuse this pattern to push realtime events to a user outside any project page (e.g. dashboard).
 - [Retain/remove gauge needle orientation](moderator-gauge-needle-orientation.md) — needle position (not segment side) encodes the 0-100% value in an agree/disagree gauge.
+- [Stale prebuilt .d.ts shadows live TS source](stale-dist-dts-shadows-source.md) — composite lib packages can feed tsc stale dist/*.d.ts types after a source edit; rebuild with `tsc --build --force`.

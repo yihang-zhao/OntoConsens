@@ -60,8 +60,16 @@ export type ServerEvent =
   | { type: "speaker_volume"; userId: number; level: number }
   | {
       type: "moderator_summary";
+      // Canonical class/property that genuinely exists in the project's
+      // shared workspace right now, or null when the discussion couldn't be
+      // confidently tied to one -- `matched` distinguishes the two cases
+      // (rather than the client having to infer it from nulls alone) so it
+      // can show a gauge only when there's something real to visualize.
       className: string | null;
       propertyName: string | null;
+      classId: number | null;
+      propertyId: number | null;
+      matched: boolean;
       segments: {
         userId: number;
         username: string;

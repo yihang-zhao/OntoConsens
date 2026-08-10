@@ -1,13 +1,16 @@
 import crypto from "node:crypto";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import {
   db,
   moderatorSummariesTable,
   moderatorTranscriptChunksTable,
   moderatorParticipantsTable,
+  ontologyClassesTable,
   projectMembersTable,
   projectModeratorTable,
   projectsTable,
+  propertiesTable,
+  propertyAgreementsTable,
   usersTable,
   type ModeratorSummarySegment,
 } from "@workspace/db";
@@ -16,6 +19,18 @@ import { broadcastToProject } from "./wsHub";
 import { logger } from "./logger";
 
 const SILENCE_TIMEOUT_MS = 5_000;
+
+// Falls back to this if a project's own `maxMembers` is somehow unset --
+// mirrors the same fallback used by the properties routes' agreement check.
+const MAX_PROJECT_MEMBERS = 3;
+
+// Minimum spacing between two AI moderator interventions (i.e. two summary
+// popups actually shown to the group, whether they resolved to a real
+// class/property or just a "focus on the workspace" reminder) -- keeps the
+// moderator from interrupting back-to-back even if the group keeps pausing
+// and resuming within a few seconds of each other.
+const INTERVENTION_COOLDOWN_MS = 15_000;
+const lastInterventionAt = new Map<number, number>();
 
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
@@ -197,6 +212,22 @@ export async function recordTranscriptChunk(
   });
 }
 
+// Fires an intervention attempt after the usual silence timeout, but never
+// sooner than INTERVENTION_COOLDOWN_MS after the last one actually shown to
+// the group -- if the cooldown hasn't elapsed yet, it reschedules itself for
+// the remainder rather than firing immediately or dropping the attempt.
+// Content isn't lost either way: generateSummary always summarizes
+// everything accumulated since the last checkpoint, whenever it does run.
+function fireWhenCooldownElapsed(projectId: number): void {
+  const last = lastInterventionAt.get(projectId) ?? 0;
+  const remaining = INTERVENTION_COOLDOWN_MS - (Date.now() - last);
+  if (remaining <= 0) {
+    enqueueSummary(projectId);
+    return;
+  }
+  setTimeout(() => fireWhenCooldownElapsed(projectId), remaining);
+}
+
 // Called only after recordTranscriptChunk has confirmed a durable write for
 // some active participant -- so a stale timer is never armed on the
 // strength of content that was actually rejected.
@@ -204,7 +235,7 @@ export function noteSpeechActivity(projectId: number): void {
   clearModeratorSilenceTimer(projectId);
   const timer = setTimeout(() => {
     silenceTimers.delete(projectId);
-    enqueueSummary(projectId);
+    fireWhenCooldownElapsed(projectId);
   }, SILENCE_TIMEOUT_MS);
   silenceTimers.set(projectId, timer);
 }
@@ -267,6 +298,47 @@ async function generateSummary(projectId: number) {
     where: eq(projectMembersTable.projectId, projectId),
   });
 
+  // The model must only ever report a class/property that genuinely exists
+  // in THIS project's shared workspace right now, using the exact same
+  // spelling shown here -- never invent or paraphrase a name. This catalog
+  // is also used below to verify/resolve the model's answer against real
+  // rows (classId/propertyId), rather than trusting its free-form text.
+  //
+  // Properties that have ALREADY reached full agreement (agreedByAll, same
+  // definition the properties routes use: agreement count >= the project's
+  // configured maxMembers) are excluded entirely -- once the group has
+  // settled a property, it's no longer "under discussion" and the moderator
+  // should never re-litigate it, even if someone mentions it in passing.
+  const [classes, properties, project] = await Promise.all([
+    db.query.ontologyClassesTable.findMany({ where: eq(ontologyClassesTable.projectId, projectId) }),
+    db.query.propertiesTable.findMany({ where: eq(propertiesTable.projectId, projectId) }),
+    db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) }),
+  ]);
+  const propertyIds = properties.map((p) => p.id);
+  const agreements =
+    propertyIds.length > 0
+      ? await db.query.propertyAgreementsTable.findMany({
+          where: inArray(propertyAgreementsTable.propertyId, propertyIds),
+        })
+      : [];
+  const maxMembers = project?.maxMembers ?? MAX_PROJECT_MEMBERS;
+  const agreementCountByPropertyId = new Map<number, number>();
+  for (const a of agreements) {
+    agreementCountByPropertyId.set(a.propertyId, (agreementCountByPropertyId.get(a.propertyId) ?? 0) + 1);
+  }
+  const classLabelById = new Map(classes.map((c) => [c.id, c.label]));
+  const catalog = properties
+    .filter((p) => (agreementCountByPropertyId.get(p.id) ?? 0) < maxMembers)
+    .map((p) => ({
+      classId: p.classId,
+      propertyId: p.id,
+      className: classLabelById.get(p.classId) ?? null,
+      propertyName: p.name,
+    }))
+    .filter((entry): entry is { classId: number; propertyId: number; className: string; propertyName: string } =>
+      entry.className !== null,
+    );
+
   const transcriptText = newChunks
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((chunk) => `${usernameById.get(chunk.userId) ?? `User ${chunk.userId}`}: ${chunk.text}`)
@@ -276,6 +348,11 @@ async function generateSummary(projectId: number) {
     (max, c) => (c.createdAt > max ? c.createdAt : max),
     config.lastSummarizedAt ?? new Date(0),
   );
+
+  const catalogText =
+    catalog.length > 0
+      ? catalog.map((entry) => `- ${entry.className}.${entry.propertyName}`).join("\n")
+      : "(the workspace has no classes/properties yet)";
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -290,8 +367,12 @@ async function generateSummary(projectId: number) {
           {
             role: "system",
             content:
-              "You are an AI moderator for a group ontology-design conversation. Look at the transcript below and identify the SINGLE class and property the speakers are currently discussing in terms of whether it should be retained or removed from the ontology. For every person who spoke, decide whether their stated position argues to RETAIN or to REMOVE that property, and write a short paraphrase (12 words or fewer) of their opinion in their own voice. " +
-              'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: {"className": string, "propertyName": string, "opinions": [{"username": string, "stance": "retain" | "remove", "opinion": string}]}. ' +
+              "You are an AI moderator for a group ontology-design conversation. Look at the transcript below and identify the SINGLE class and property the speakers are currently discussing in terms of whether it should be retained or removed from the ontology. " +
+              "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
+              catalogText +
+              "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the list. If the discussion doesn't clearly and specifically match one of these listed pairs, set both className and propertyName to null. " +
+              "For every person who spoke, decide whether their stated position argues to RETAIN or to REMOVE that property, and write a short paraphrase (12 words or fewer) of their opinion in their own voice. " +
+              'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: {"className": string | null, "propertyName": string | null, "opinions": [{"username": string, "stance": "retain" | "remove", "opinion": string}]}. ' +
               "Use the exact usernames as they appear as speaker labels in the transcript. Omit anyone whose stance genuinely isn't clear from what they said.",
           },
           { role: "user", content: transcriptText },
@@ -338,9 +419,32 @@ async function generateSummary(projectId: number) {
       return;
     }
 
-    const className = typeof parsed.className === "string" ? parsed.className : null;
-    const propertyName = typeof parsed.propertyName === "string" ? parsed.propertyName : null;
+    const rawClassName = typeof parsed.className === "string" ? parsed.className : null;
+    const rawPropertyName = typeof parsed.propertyName === "string" ? parsed.propertyName : null;
     const rawOpinions = Array.isArray(parsed.opinions) ? parsed.opinions : [];
+
+    // Never trust the model's className/propertyName as-is -- resolve it
+    // against the real catalog of classes/properties that exist in this
+    // project's shared workspace right now (case/whitespace-insensitive, in
+    // case the model normalizes casing slightly). Only a genuine match
+    // produces a visualization; anything else is treated the same as the
+    // model reporting "no clear subject" -- the UI shows a reminder to
+    // discuss properties already in the workspace instead of a gauge.
+    const normalize = (s: string) => s.trim().toLowerCase();
+    const matchedEntry =
+      rawClassName && rawPropertyName
+        ? catalog.find(
+            (entry) =>
+              normalize(entry.className) === normalize(rawClassName) &&
+              normalize(entry.propertyName) === normalize(rawPropertyName),
+          )
+        : undefined;
+
+    const matched = matchedEntry !== undefined;
+    const className = matchedEntry?.className ?? null;
+    const propertyName = matchedEntry?.propertyName ?? null;
+    const classId = matchedEntry?.classId ?? null;
+    const propertyId = matchedEntry?.propertyId ?? null;
 
     // One entry per opted-in opinion, keyed by userId so it can be merged
     // against the full member list below.
@@ -362,18 +466,23 @@ async function generateSummary(projectId: number) {
     // model identified one for them, otherwise "unknown" -- rendered gray
     // and to the right of the needle regardless of whether that's because
     // they stayed silent this round or never turned the moderator on.
-    const segments: ModeratorSummarySegment[] = members.map((member) => {
-      const opinion = opinionByUserId.get(member.userId);
-      return {
-        userId: member.userId,
-        username: usernameById.get(member.userId) ?? `User ${member.userId}`,
-        colorSlot: member.colorSlot,
-        stance: opinion?.stance ?? "unknown",
-        opinion: opinion?.opinion ?? null,
-      };
-    });
+    // Only built when the discussion actually resolved to a real
+    // class+property in the workspace -- there's nothing meaningful to
+    // visualize a retain/remove split for otherwise.
+    const segments: ModeratorSummarySegment[] = matched
+      ? members.map((member) => {
+          const opinion = opinionByUserId.get(member.userId);
+          return {
+            userId: member.userId,
+            username: usernameById.get(member.userId) ?? `User ${member.userId}`,
+            colorSlot: member.colorSlot,
+            stance: opinion?.stance ?? "unknown",
+            opinion: opinion?.opinion ?? null,
+          };
+        })
+      : [];
 
-    const summaryLabel = className && propertyName ? `${className}.${propertyName}` : "Ontology discussion";
+    const summaryLabel = matched ? `${className}.${propertyName}` : "Ontology discussion (no clear workspace match)";
 
     // Commit the summary and advance the durable checkpoint atomically, and
     // only if the project's moderator config row is still the one we
@@ -390,6 +499,9 @@ async function generateSummary(projectId: number) {
         summary: summaryLabel,
         className,
         propertyName,
+        classId,
+        propertyId,
+        matched,
         segments,
       });
       await tx
@@ -401,10 +513,19 @@ async function generateSummary(projectId: number) {
 
     if (!committed) return;
 
+    // Marks this as the most recent intervention shown to the group --
+    // gates fireWhenCooldownElapsed for the NEXT one, whether or not this
+    // round matched a real class/property (a "focus on the workspace"
+    // reminder is still an intervention the group just saw).
+    lastInterventionAt.set(projectId, Date.now());
+
     broadcastToProject(projectId, {
       type: "moderator_summary",
       className,
       propertyName,
+      classId,
+      propertyId,
+      matched,
       segments,
       createdAt: new Date().toISOString(),
     });

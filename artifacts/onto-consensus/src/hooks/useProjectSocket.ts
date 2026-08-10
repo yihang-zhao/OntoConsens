@@ -28,8 +28,15 @@ export interface ModeratorSummarySegment {
 }
 
 export interface ModeratorSummaryEvent {
+  // Canonical class/property that genuinely exists in the shared workspace
+  // right now, or null when the discussion couldn't be confidently tied to
+  // one -- `matched` tells the UI whether to render the gauge (true) or a
+  // text reminder to discuss something already in the workspace (false).
   className: string | null;
   propertyName: string | null;
+  classId: number | null;
+  propertyId: number | null;
+  matched: boolean;
   segments: ModeratorSummarySegment[];
   createdAt: string;
 }
@@ -221,6 +228,9 @@ export function useProjectSocket({
             callbacksRef.current.onModeratorSummary?.({
               className: data.className,
               propertyName: data.propertyName,
+              classId: data.classId,
+              propertyId: data.propertyId,
+              matched: data.matched,
               segments: data.segments,
               createdAt: data.createdAt,
             });
