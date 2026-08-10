@@ -6,7 +6,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
-import { Sparkles, AlertTriangle, X, Loader2 } from "lucide-react";
+import { Sparkles, AlertTriangle, X } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
 import type { SpeakerVolume } from "@/hooks/useProjectSocket";
@@ -176,21 +176,8 @@ export function ModeratorPanel({
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
           </p>
         )}
-        <div
-          className="flex items-center gap-2 bg-card border shadow-md rounded-full pl-3 pr-2.5 py-2"
-          title={
-            moderatorActive
-              ? "Turn off AI moderator for me"
-              : moderatorConfigured
-                ? "Turn on AI moderator for me"
-                : "The project creator hasn't saved an OpenAI API key yet"
-          }
-        >
-          {disable.isPending || configure.isPending ? (
-            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-          ) : (
-            <Sparkles className={`w-4 h-4 ${moderatorActive ? "text-primary" : "text-muted-foreground"}`} />
-          )}
+        <div className="flex items-center gap-2 bg-card border shadow-md rounded-full pl-3 pr-2.5 py-2">
+          <Sparkles className={`w-4 h-4 ${moderatorActive ? "text-primary" : "text-muted-foreground"}`} />
           <span className="text-xs font-medium text-muted-foreground">AI moderator</span>
           <Switch
             checked={moderatorActive}
