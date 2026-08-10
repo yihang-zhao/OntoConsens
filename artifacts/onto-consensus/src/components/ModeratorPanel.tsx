@@ -5,7 +5,7 @@ import {
   getGetModeratorStatusQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Sparkles, AlertTriangle, X, Loader2 } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
@@ -167,19 +167,17 @@ export function ModeratorPanel({
       )}
 
       {/* Single toggle, per-person: turns the moderator (mic + transcript)
-          on or off for whoever clicks it, with no effect on anyone else. */}
+          on or off for whoever flips it, with no effect on anyone else. A
+          slide switch reads unambiguously as an on/off state rather than a
+          momentary action button. */}
       <div className="absolute bottom-4 right-4 z-40 flex flex-col items-end gap-1.5">
         {configure.isError && !moderatorActive && (
           <p className="max-w-56 text-right text-[11px] font-medium text-destructive bg-card border border-destructive/30 rounded-lg px-2 py-1 shadow-sm">
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
           </p>
         )}
-        <Button
-          size="icon"
-          variant={moderatorActive ? "default" : "outline"}
-          className="rounded-full w-11 h-11 shadow-md"
-          onClick={handleToggleClick}
-          disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
+        <div
+          className="flex items-center gap-2 bg-card border shadow-md rounded-full pl-3 pr-2.5 py-2"
           title={
             moderatorActive
               ? "Turn off AI moderator for me"
@@ -189,11 +187,17 @@ export function ModeratorPanel({
           }
         >
           {disable.isPending || configure.isPending ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
           ) : (
-            <Sparkles className="w-5 h-5" />
+            <Sparkles className={`w-4 h-4 ${moderatorActive ? "text-primary" : "text-muted-foreground"}`} />
           )}
-        </Button>
+          <span className="text-xs font-medium text-muted-foreground">AI moderator</span>
+          <Switch
+            checked={moderatorActive}
+            onCheckedChange={handleToggleClick}
+            disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
+          />
+        </div>
       </div>
     </>
   );
