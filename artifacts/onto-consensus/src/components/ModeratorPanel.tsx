@@ -135,7 +135,6 @@ export function ModeratorPanel({
           }}
         />
       )}
-
       {moderatorErrorMessage && (
         <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium rounded-full px-4 py-1.5">
           <AlertTriangle className="w-3.5 h-3.5" />
@@ -145,7 +144,6 @@ export function ModeratorPanel({
           </button>
         </div>
       )}
-
       {/* Floating AI summary toast, centered over the canvas -- fades in,
           lingers briefly, fades out on its own. Only the card itself
           captures clicks, so it never blocks interaction with the canvas
@@ -165,7 +163,6 @@ export function ModeratorPanel({
           </div>
         </div>
       )}
-
       {/* Single toggle, per-person: turns the moderator (mic + transcript)
           on or off for whoever flips it, with no effect on anyone else. A
           slide switch reads unambiguously as an on/off state rather than a
@@ -178,7 +175,7 @@ export function ModeratorPanel({
         )}
         <div className="flex items-center gap-2 bg-card border shadow-md rounded-full pl-3 pr-2.5 py-2">
           <Sparkles className={`w-4 h-4 ${moderatorActive ? "text-primary" : "text-muted-foreground"}`} />
-          <span className="text-xs font-medium text-muted-foreground">AI moderator</span>
+          <span className="text-xs font-medium text-muted-foreground">AI Moderator</span>
           <Switch
             checked={moderatorActive}
             onCheckedChange={handleToggleClick}
