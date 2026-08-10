@@ -7,7 +7,8 @@
  */
 
 export interface ModeratorStatus {
-  enabled: boolean;
+  /** Whether the AI moderator is currently on for the CURRENT member (their own mic + transcript). Independent of every other member. */
+  active: boolean;
   /** True once the project creator's account has an OpenAI API key saved -- this is what actually lets the moderator run. */
   configured: boolean;
 }

@@ -417,7 +417,9 @@ paths:
     get:
       operationId: getModeratorStatus
       tags: [moderator]
-      summary: Get whether the AI moderator is on/configured for this project
+      summary: >-
+        Get whether the AI moderator is on for the CURRENT member, and
+        whether it's usable at all for this project
       parameters:
         - $ref: "#/components/parameters/ProjectId"
       responses:
@@ -431,8 +433,9 @@ paths:
       operationId: configureModerator
       tags: [moderator]
       summary: >-
-        Any member: turn the AI moderator on, using the project creator's
-        saved OpenAI API key
+        Turn the AI moderator on for the CURRENT member only (their own mic
+        and transcript), using the project creator's saved OpenAI API key.
+        Does not affect any other member.
       parameters:
         - $ref: "#/components/parameters/ProjectId"
       requestBody:
@@ -443,7 +446,7 @@ paths:
               $ref: "#/components/schemas/ModeratorConfigInput"
       responses:
         "200":
-          description: Moderator enabled
+          description: Moderator enabled for this member
           content:
             application/json:
               schema:
@@ -453,27 +456,16 @@ paths:
     post:
       operationId: disableModerator
       tags: [moderator]
-      summary: "Any member: turn the AI moderator off"
+      summary: Turn the AI moderator off for the CURRENT member only
       parameters:
         - $ref: "#/components/parameters/ProjectId"
       responses:
         "200":
-          description: Moderator disabled
+          description: Moderator disabled for this member
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ModeratorStatus"
-
-  /projects/{id}/moderator/mic-opt-in:
-    post:
-      operationId: moderatorMicOptIn
-      tags: [moderator]
-      summary: Record that the current member agreed to share their mic with the moderator
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      responses:
-        "204":
-          description: Recorded
 
   /projects/{id}/moderator/audio:
     post:
@@ -669,10 +661,13 @@ components:
 
     ModeratorStatus:
       type: object
-      required: [enabled, configured]
+      required: [active, configured]
       properties:
-        enabled:
+        active:
           type: boolean
+          description: >-
+            Whether the AI moderator is currently on for the CURRENT member
+            (their own mic + transcript). Independent of every other member.
         configured:
           type: boolean
           description: >-

@@ -4,6 +4,7 @@ import {
   db,
   moderatorSummariesTable,
   moderatorTranscriptChunksTable,
+  moderatorParticipantsTable,
   projectModeratorTable,
   projectsTable,
   usersTable,
@@ -14,75 +15,77 @@ import { logger } from "./logger";
 
 const SILENCE_TIMEOUT_MS = 5_000;
 
-// A fresh, unguessable id minted every time the moderator is (re)enabled.
-// This — not any in-memory object identity, and not a timestamp — is the
-// durable source of truth for "which session does this content belong to".
-// It's written to project_moderator.activation_id and stamped onto every
-// transcript chunk, so it survives a server restart and lets writes be made
-// conditional on it directly in the database (see recordTranscriptChunk /
-// commitSummary below), closing the check-then-act race a purely in-memory
-// or pre-await check can't close.
+// A fresh, unguessable id minted every time a member turns their OWN
+// participation on. This -- not any in-memory object identity, and not a
+// timestamp -- is the durable source of truth for "which of this member's
+// on-periods does this transcript chunk belong to". It's written to
+// moderator_participants.activation_id and stamped onto every transcript
+// chunk, so it survives a server restart and lets writes be made
+// conditional on it directly in the database (see recordTranscriptChunk
+// below), closing the check-then-act race a purely in-memory or pre-await
+// check can't close.
 export function generateActivationId(): string {
   return crypto.randomUUID();
 }
 
-// Local mirror of the mic opt-ins for the CURRENT activation, kept in memory
-// purely as a fast pre-check (avoids a DB round trip on every opt-in check).
-// It is never itself the authority for whether content gets persisted —
-// every write that matters re-validates against project_moderator.activation_id
-// in the database at write time.
-interface ModeratorSession {
-  activationId: string;
-  silenceTimer: ReturnType<typeof setTimeout> | null;
-  micOptedInUserIds: Set<number>;
+// One silence timer per project, shared across every active participant --
+// the AI moderator produces one running summary per project (not one per
+// person), so "5 seconds since the last chunk from ANYONE currently on"
+// is what triggers the next summary attempt.
+const silenceTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+export function clearModeratorSilenceTimer(projectId: number) {
+  const timer = silenceTimers.get(projectId);
+  if (timer) clearTimeout(timer);
+  silenceTimers.delete(projectId);
 }
 
-const sessions = new Map<number, ModeratorSession>();
-
-function createSession(activationId: string): ModeratorSession {
-  return { activationId, silenceTimer: null, micOptedInUserIds: new Set() };
-}
-
-// Called synchronously (no `await` in between) right after the DB write that
-// turns the moderator on with a fresh activationId, replacing any prior
-// session outright.
-export function activateModeratorSession(projectId: number, activationId: string) {
-  const prev = sessions.get(projectId);
-  if (prev?.silenceTimer) clearTimeout(prev.silenceTimer);
-  sessions.set(projectId, createSession(activationId));
-}
-
-// Called when the moderator is turned off (or the project is deleted) so a
-// stale timer doesn't fire a summary for a session nobody is in anymore.
-export function clearModeratorSession(projectId: number) {
-  const session = sessions.get(projectId);
-  if (session?.silenceTimer) clearTimeout(session.silenceTimer);
-  sessions.delete(projectId);
-}
-
-// Every request that needs "the active session" goes through here. It always
-// reads the DB's activationId and treats that as ground truth: if there's no
-// in-memory session yet (first request since a restart) or the in-memory one
-// is for a stale activationId (a disable/re-enable happened since we last
-// looked), it (re)creates the in-memory mirror with an EMPTY opt-in set —
-// consent never carries across an activation boundary, whether that boundary
-// was crossed by an explicit reconfigure or by a restart.
-export async function ensureActiveSession(
-  projectId: number,
-): Promise<{ session: ModeratorSession; activationId: string } | null> {
-  const config = await db.query.projectModeratorTable.findFirst({
-    where: eq(projectModeratorTable.projectId, projectId),
+export async function getParticipant(projectId: number, userId: number) {
+  return db.query.moderatorParticipantsTable.findFirst({
+    where: and(
+      eq(moderatorParticipantsTable.projectId, projectId),
+      eq(moderatorParticipantsTable.userId, userId),
+    ),
   });
-  if (!config?.enabled || !config.activationId) return null;
+}
 
-  const existing = sessions.get(projectId);
-  if (existing && existing.activationId === config.activationId) {
-    return { session: existing, activationId: config.activationId };
+// Turns the AI moderator on for exactly this member -- never touches any
+// other member's row. Upserts since the very first activation for a given
+// (project, user) pair has no existing row yet.
+export async function activateParticipant(projectId: number, userId: number, activationId: string): Promise<void> {
+  const existing = await getParticipant(projectId, userId);
+  if (existing) {
+    await db
+      .update(moderatorParticipantsTable)
+      .set({ active: true, activationId, updatedAt: new Date() })
+      .where(eq(moderatorParticipantsTable.id, existing.id));
+  } else {
+    await db.insert(moderatorParticipantsTable).values({ projectId, userId, active: true, activationId });
   }
+}
 
-  const session = createSession(config.activationId);
-  sessions.set(projectId, session);
-  return { session, activationId: config.activationId };
+export async function deactivateParticipant(projectId: number, userId: number): Promise<void> {
+  await db
+    .update(moderatorParticipantsTable)
+    .set({ active: false, activationId: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(moderatorParticipantsTable.projectId, projectId),
+        eq(moderatorParticipantsTable.userId, userId),
+      ),
+    );
+}
+
+// Every audio upload re-validates against this member's own DB row as
+// ground truth (never a cached in-memory flag) -- so a disable that
+// happened moments ago, or a server restart, is always caught.
+export async function ensureActiveParticipant(
+  projectId: number,
+  userId: number,
+): Promise<{ activationId: string } | null> {
+  const participant = await getParticipant(projectId, userId);
+  if (!participant?.active || !participant.activationId) return null;
+  return { activationId: participant.activationId };
 }
 
 // The moderator always runs on the project CREATOR's saved API key, not
@@ -129,7 +132,7 @@ async function migrateLegacyProjectKeyToOwner(projectId: number, ownerId: number
 // Used by the moderator status/enable checks. Takes projectId (not just
 // ownerId) so it can also trigger the legacy-key migration above -- a
 // project whose creator never visited the new account-key field, but whose
-// project still has last migrated key, is treated as configured.
+// project still has a legacy migrated key, is treated as configured.
 export async function projectOwnerHasApiKey(projectId: number, ownerId: number): Promise<boolean> {
   await migrateLegacyProjectKeyToOwner(projectId, ownerId);
   const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, ownerId) });
@@ -155,22 +158,18 @@ export async function getProjectOwnerApiKey(projectId: number): Promise<string |
   }
 }
 
-export function recordMicOptIn(session: ModeratorSession, userId: number) {
-  session.micOptedInUserIds.add(userId);
-}
-
-export function hasMicOptIn(session: ModeratorSession, userId: number): boolean {
-  return session.micOptedInUserIds.has(userId);
-}
-
-// Persists a transcribed chunk IFF the moderator is still enabled under the
-// same activationId the caller captured before starting the (slow)
-// transcription request. This runs as a single transaction with a row lock
-// on the config row, so a concurrent disable/re-enable either fully commits
-// before this check (and we correctly see the new activationId and reject)
-// or fully commits after (and blocks on the lock until we're done) — there
-// is no interleaving where a write can land under a stale activationId.
-// Returns true only if the chunk was actually committed.
+// Persists a transcribed chunk IFF this member is still an active
+// participant under the same activationId the caller captured before
+// starting the (slow) transcription request. Runs as a single transaction
+// with a row lock on this member's participant row, so a concurrent
+// disable/re-enable either fully commits before this check (and we
+// correctly see the new activationId and reject) or fully commits after
+// (and blocks on the lock until we're done) -- there is no interleaving
+// where a write can land under a stale activationId. Returns true only if
+// the chunk was actually committed. Chunks from members who never turned
+// their own participation on are never recorded in the first place (the
+// route rejects those uploads before this is ever called), so summaries
+// naturally only ever draw on speech from opted-in members.
 export async function recordTranscriptChunk(
   projectId: number,
   userId: number,
@@ -180,10 +179,15 @@ export async function recordTranscriptChunk(
   return db.transaction(async (tx) => {
     const [current] = await tx
       .select()
-      .from(projectModeratorTable)
-      .where(eq(projectModeratorTable.projectId, projectId))
+      .from(moderatorParticipantsTable)
+      .where(
+        and(
+          eq(moderatorParticipantsTable.projectId, projectId),
+          eq(moderatorParticipantsTable.userId, userId),
+        ),
+      )
       .for("update");
-    if (!current || !current.enabled || current.activationId !== activationId) {
+    if (!current || !current.active || current.activationId !== activationId) {
       return false;
     }
     await tx.insert(moderatorTranscriptChunksTable).values({ projectId, userId, text, activationId });
@@ -191,31 +195,32 @@ export async function recordTranscriptChunk(
   });
 }
 
-// Called only after recordTranscriptChunk has confirmed a durable write
-// under the still-current activation — so a stale session's timer is never
-// armed on the strength of content that was actually rejected.
-export function noteSpeechActivity(projectId: number, session: ModeratorSession) {
-  if (session.silenceTimer) clearTimeout(session.silenceTimer);
-  session.silenceTimer = setTimeout(() => {
-    session.silenceTimer = null;
-    enqueueSummary(projectId, session.activationId);
+// Called only after recordTranscriptChunk has confirmed a durable write for
+// some active participant -- so a stale timer is never armed on the
+// strength of content that was actually rejected.
+export function noteSpeechActivity(projectId: number): void {
+  clearModeratorSilenceTimer(projectId);
+  const timer = setTimeout(() => {
+    silenceTimers.delete(projectId);
+    enqueueSummary(projectId);
   }, SILENCE_TIMEOUT_MS);
+  silenceTimers.set(projectId, timer);
 }
 
-// Two silence periods can legitimately occur close together — someone speaks
-// again just as a summary request is still in flight, then goes quiet again
-// before the first one finishes. Without serialization, both invocations
-// would read the same `lastSummarizedAt` checkpoint, generate overlapping
-// summaries, and race to advance it — whichever commits last can even move
-// it backwards, causing duplicated or dropped content. Chaining every
-// summary attempt for a project onto a single promise tail guarantees they
-// run one at a time, in order, so each one always reads the checkpoint left
-// by the one before it.
+// Two silence periods can legitimately occur close together -- someone
+// speaks again just as a summary request is still in flight, then goes
+// quiet again before the first one finishes. Without serialization, both
+// invocations would read the same `lastSummarizedAt` checkpoint, generate
+// overlapping summaries, and race to advance it -- whichever commits last
+// can even move it backwards, causing duplicated or dropped content.
+// Chaining every summary attempt for a project onto a single promise tail
+// guarantees they run one at a time, in order, so each one always reads the
+// checkpoint left by the one before it.
 const summaryQueues = new Map<number, Promise<void>>();
 
-function enqueueSummary(projectId: number, activationId: string): void {
+function enqueueSummary(projectId: number): void {
   const previous = summaryQueues.get(projectId) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(() => generateSummary(projectId, activationId));
+  const next = previous.catch(() => {}).then(() => generateSummary(projectId));
   summaryQueues.set(projectId, next);
   next
     .catch((err) => {
@@ -227,30 +232,25 @@ function enqueueSummary(projectId: number, activationId: string): void {
     });
 }
 
-async function generateSummary(projectId: number, activationId: string) {
+async function generateSummary(projectId: number) {
   const config = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
-  if (!config || !config.enabled || config.activationId !== activationId) {
-    return;
-  }
+  if (!config) return;
 
   const apiKey = await getProjectOwnerApiKey(projectId);
   if (!apiKey) return;
 
   // lastSummarizedAt is a DB column (not in-memory), so this checkpoint
-  // survives a restart — chunks already folded into an earlier summary in
-  // this same activation are never re-sent.
+  // survives a restart -- chunks already folded into an earlier summary are
+  // never re-sent. It's shared across every participant's chunks: one
+  // running summary per project, not per person.
   const sinceClause = config.lastSummarizedAt
     ? gt(moderatorTranscriptChunksTable.createdAt, config.lastSummarizedAt)
     : undefined;
 
   const newChunks = await db.query.moderatorTranscriptChunksTable.findMany({
-    where: and(
-      eq(moderatorTranscriptChunksTable.projectId, projectId),
-      eq(moderatorTranscriptChunksTable.activationId, activationId),
-      sinceClause,
-    ),
+    where: and(eq(moderatorTranscriptChunksTable.projectId, projectId), sinceClause),
   });
   if (newChunks.length === 0) return; // Silence with nothing new to say — nothing to summarize.
 
@@ -309,19 +309,15 @@ async function generateSummary(projectId: number, activationId: string) {
     }
 
     // Commit the summary and advance the durable checkpoint atomically, and
-    // only if the activation is still the one we generated this summary
-    // for — a disable/re-enable that happened while we were waiting on
-    // OpenAI must not let this summary (or its checkpoint advance) apply to
-    // a different session.
+    // only if the project's moderator config row is still the one we
+    // generated this summary for.
     const committed = await db.transaction(async (tx) => {
       const [current] = await tx
         .select()
         .from(projectModeratorTable)
         .where(eq(projectModeratorTable.projectId, projectId))
         .for("update");
-      if (!current || !current.enabled || current.activationId !== activationId) {
-        return false;
-      }
+      if (!current) return false;
       await tx.insert(moderatorSummariesTable).values({ projectId, summary: summaryText });
       await tx
         .update(projectModeratorTable)

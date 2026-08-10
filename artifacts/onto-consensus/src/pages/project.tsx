@@ -81,13 +81,8 @@ export default function ProjectWorkspace() {
       refetchInterval: 10_000,
     },
   });
-  const [justActivated, setJustActivated] = useState(false);
   const [summaries, setSummaries] = useState<{ text: string; createdAt: string }[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
-  // Bumped on every activate/deactivate so ModeratorPanel can reset its local
-  // "have I opted in" state at each session boundary — opting in only ever
-  // applies to the session that was live at the moment of the request.
-  const [moderatorSessionKey, setModeratorSessionKey] = useState(0);
 
   const {
     cursors,
@@ -110,16 +105,6 @@ export default function ProjectWorkspace() {
       queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
       queryClient.removeQueries({ queryKey: getGetProjectQueryKey(projectId) });
       navigate("/");
-    },
-    onModeratorActivated: () => {
-      queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
-      setJustActivated(true);
-      setModeratorSessionKey((k) => k + 1);
-    },
-    onModeratorDeactivated: () => {
-      queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
-      setJustActivated(false);
-      setModeratorSessionKey((k) => k + 1);
     },
     onModeratorSummary: (text, createdAt) => {
       setSummaries((prev) => [...prev, { text, createdAt }]);
@@ -308,11 +293,8 @@ export default function ProjectWorkspace() {
               members={project.members}
               speakerVolumes={speakerVolumes}
               sendVolume={sendVolume}
-              moderatorEnabled={moderatorStatus?.enabled ?? false}
+              moderatorActive={moderatorStatus?.active ?? false}
               moderatorConfigured={moderatorStatus?.configured ?? false}
-              moderatorSessionKey={moderatorSessionKey}
-              justActivated={justActivated}
-              onDismissActivation={() => setJustActivated(false)}
               summaries={summaries}
               moderatorErrorMessage={moderatorErrorMessage}
               onDismissError={() => setModeratorErrorMessage(null)}

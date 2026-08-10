@@ -1550,7 +1550,7 @@ export const getGetModeratorStatusUrl = (id: number,) => {
 }
 
 /**
- * @summary Get whether the AI moderator is on/configured for this project
+ * @summary Get whether the AI moderator is on for the CURRENT member, and whether it's usable at all for this project
  */
 export const getModeratorStatus = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
 
@@ -1597,7 +1597,7 @@ export type GetModeratorStatusQueryError = ErrorType<unknown>
 
 
 /**
- * @summary Get whether the AI moderator is on/configured for this project
+ * @summary Get whether the AI moderator is on for the CURRENT member, and whether it's usable at all for this project
  */
 
 export function useGetModeratorStatus<TData = Awaited<ReturnType<typeof getModeratorStatus>>, TError = ErrorType<unknown>>(
@@ -1627,7 +1627,7 @@ export const getConfigureModeratorUrl = (id: number,) => {
 }
 
 /**
- * @summary Any member: turn the AI moderator on, using the project creator's saved OpenAI API key
+ * @summary Turn the AI moderator on for the CURRENT member only (their own mic and transcript), using the project creator's saved OpenAI API key. Does not affect any other member.
  */
 export const configureModerator = async (id: number,
     moderatorConfigInput?: ModeratorConfigInput, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
@@ -1677,7 +1677,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ConfigureModeratorMutationError = ErrorType<unknown>
 
     /**
- * @summary Any member: turn the AI moderator on, using the project creator's saved OpenAI API key
+ * @summary Turn the AI moderator on for the CURRENT member only (their own mic and transcript), using the project creator's saved OpenAI API key. Does not affect any other member.
  */
 export const useConfigureModerator = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof configureModerator>>, TError,{id: number;data?: BodyType<ModeratorConfigInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -1699,7 +1699,7 @@ export const getDisableModeratorUrl = (id: number,) => {
 }
 
 /**
- * @summary Any member: turn the AI moderator off
+ * @summary Turn the AI moderator off for the CURRENT member only
  */
 export const disableModerator = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ModeratorStatus> => {
 
@@ -1748,7 +1748,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DisableModeratorMutationError = ErrorType<unknown>
 
     /**
- * @summary Any member: turn the AI moderator off
+ * @summary Turn the AI moderator off for the CURRENT member only
  */
 export const useDisableModerator = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableModerator>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -1759,77 +1759,6 @@ export const useDisableModerator = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDisableModeratorMutationOptions(options));
-    }
-
-export const getModeratorMicOptInUrl = (id: number,) => {
-
-
-
-
-  return `/api/projects/${id}/moderator/mic-opt-in`
-}
-
-/**
- * @summary Record that the current member agreed to share their mic with the moderator
- */
-export const moderatorMicOptIn = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
-
-  return customFetch<void>(getModeratorMicOptInUrl(id),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-
-
-
-
-export const getModeratorMicOptInMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moderatorMicOptIn>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof moderatorMicOptIn>>, TError,{id: number}, TContext> => {
-
-const mutationKey = ['moderatorMicOptIn'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof moderatorMicOptIn>>, {id: number}> = (props) => {
-          const {id} = props ?? {};
-
-          return  moderatorMicOptIn(id,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ModeratorMicOptInMutationResult = NonNullable<Awaited<ReturnType<typeof moderatorMicOptIn>>>
-
-    export type ModeratorMicOptInMutationError = ErrorType<unknown>
-
-    /**
- * @summary Record that the current member agreed to share their mic with the moderator
- */
-export const useModeratorMicOptIn = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moderatorMicOptIn>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof moderatorMicOptIn>>,
-        TError,
-        {id: number},
-        TContext
-      > => {
-      return useMutation(getModeratorMicOptInMutationOptions(options));
     }
 
 export const getUploadModeratorAudioUrl = (id: number,) => {

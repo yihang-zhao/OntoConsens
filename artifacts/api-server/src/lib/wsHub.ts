@@ -57,8 +57,6 @@ export type ServerEvent =
   | { type: "member_ready" }
   | { type: "project_deleted"; projectId?: number }
   | { type: "member_count_changed"; projectId: number; memberCount: number }
-  | { type: "moderator_activated" }
-  | { type: "moderator_deactivated" }
   | { type: "speaker_volume"; userId: number; level: number }
   | { type: "moderator_summary"; text: string; createdAt: string }
   | { type: "moderator_error"; message: string };

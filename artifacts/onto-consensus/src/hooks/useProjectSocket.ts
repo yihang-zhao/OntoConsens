@@ -25,8 +25,6 @@ type ServerEvent =
   | { type: "member_joined" }
   | { type: "member_ready" }
   | { type: "project_deleted" }
-  | { type: "moderator_activated" }
-  | { type: "moderator_deactivated" }
   | { type: "speaker_volume"; userId: number; level: number }
   | { type: "moderator_summary"; text: string; createdAt: string }
   | { type: "moderator_error"; message: string };
@@ -37,8 +35,6 @@ interface UseProjectSocketOptions {
   onProjectChanged?: () => void;
   onPropertiesChanged?: () => void;
   onProjectDeleted?: () => void;
-  onModeratorActivated?: () => void;
-  onModeratorDeactivated?: () => void;
   onModeratorSummary?: (text: string, createdAt: string) => void;
   onModeratorError?: (message: string) => void;
 }
@@ -69,8 +65,6 @@ export function useProjectSocket({
   onProjectChanged,
   onPropertiesChanged,
   onProjectDeleted,
-  onModeratorActivated,
-  onModeratorDeactivated,
   onModeratorSummary,
   onModeratorError,
 }: UseProjectSocketOptions) {
@@ -84,8 +78,6 @@ export function useProjectSocket({
     onProjectChanged,
     onPropertiesChanged,
     onProjectDeleted,
-    onModeratorActivated,
-    onModeratorDeactivated,
     onModeratorSummary,
     onModeratorError,
   });
@@ -93,8 +85,6 @@ export function useProjectSocket({
     onProjectChanged,
     onPropertiesChanged,
     onProjectDeleted,
-    onModeratorActivated,
-    onModeratorDeactivated,
     onModeratorSummary,
     onModeratorError,
   };
@@ -199,13 +189,6 @@ export function useProjectSocket({
             break;
           case "project_deleted":
             callbacksRef.current.onProjectDeleted?.();
-            break;
-          case "moderator_activated":
-            callbacksRef.current.onModeratorActivated?.();
-            break;
-          case "moderator_deactivated":
-            setSpeakerVolumes(new Map());
-            callbacksRef.current.onModeratorDeactivated?.();
             break;
           case "speaker_volume":
             setSpeakerVolumes((prev) => {

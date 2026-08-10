@@ -2,12 +2,11 @@ import { useEffect, useState } from "react";
 import {
   useConfigureModerator,
   useDisableModerator,
-  useModeratorMicOptIn,
   getGetModeratorStatusQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Mic, MicOff, AlertTriangle, X, Loader2 } from "lucide-react";
+import { Sparkles, AlertTriangle, X, Loader2 } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
 import type { SpeakerVolume } from "@/hooks/useProjectSocket";
@@ -24,18 +23,23 @@ interface ModeratorPanelProps {
   members: ModeratorMember[];
   speakerVolumes: Map<number, SpeakerVolume>;
   sendVolume: (level: number) => void;
-  moderatorEnabled: boolean;
+  /** Whether the CURRENT user has turned the moderator on for themselves --
+   *  purely per-person, independent of every other member. */
+  moderatorActive: boolean;
   /** True once the project creator's account has an OpenAI API key saved --
    *  without one, nobody can turn the moderator on. */
   moderatorConfigured: boolean;
-  /** Bumped on every activate/deactivate; resets local mic opt-in state. */
-  moderatorSessionKey: number;
-  justActivated: boolean;
-  onDismissActivation: () => void;
   summaries: { text: string; createdAt: string }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
 }
+
+// How long a summary toast stays fully visible before it starts fading, and
+// the total lifetime after which it's removed from the DOM. Long enough to
+// read a few sentences, short enough that it never feels like something
+// waiting to be dismissed.
+const SUMMARY_TOAST_VISIBLE_MS = 9_000;
+const SUMMARY_TOAST_FADE_MS = 700;
 
 export function ModeratorPanel({
   projectId,
@@ -43,66 +47,71 @@ export function ModeratorPanel({
   members,
   speakerVolumes,
   sendVolume,
-  moderatorEnabled,
+  moderatorActive,
   moderatorConfigured,
-  moderatorSessionKey,
-  justActivated,
-  onDismissActivation,
   summaries,
   moderatorErrorMessage,
   onDismissError,
 }: ModeratorPanelProps) {
   const queryClient = useQueryClient();
-  const [micOptedIn, setMicOptedIn] = useState(false);
-  const [summariesOpen, setSummariesOpen] = useState(false);
-
-  // Consent never survives a session boundary: every activate or deactivate
-  // means any prior "yes" no longer applies, so mic capture must stop and the
-  // opt-in affordance must reappear until the user says yes again for the
-  // session that's actually live now.
-  useEffect(() => {
-    setMicOptedIn(false);
-  }, [moderatorSessionKey]);
-
   const configure = useConfigureModerator();
   const disable = useDisableModerator();
-  const micOptIn = useModeratorMicOptIn();
 
+  const invalidateStatus = () =>
+    queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
+
+  // Turning the moderator on for yourself is the same click that starts
+  // capturing your mic -- there's no separate consent step in this app. The
+  // browser's own permission prompt is the only thing the user sees the
+  // first time; if they've already granted it, the mic just opens.
   const { micError } = useModeratorAudio({
     projectId,
-    active: moderatorEnabled && micOptedIn,
+    active: moderatorActive,
     onVolume: sendVolume,
   });
 
-  if (!sharedModeEnabled) return null;
+  // "If the user at any point closes the mic, the AI moderator is closed as
+  // well" -- so losing mic access (denied/revoked permission, device
+  // disappearing mid-session) always turns the moderator back off for this
+  // user, rather than leaving it in a state that claims to be on but isn't
+  // actually capturing anything.
+  useEffect(() => {
+    if (moderatorActive && micError) {
+      disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moderatorActive, micError]);
 
-  // Any member can flip the moderator on/off with a single click -- it
-  // always runs on the project creator's saved API key, so there's nothing
-  // left to configure here beyond the toggle itself.
   const handleToggleClick = () => {
-    const onSuccess = () => {
-      queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
-    };
-    if (moderatorEnabled) {
-      disable.mutate({ id: projectId }, { onSuccess });
+    if (moderatorActive) {
+      disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
     } else {
-      configure.mutate({ id: projectId }, { onSuccess });
+      configure.mutate({ id: projectId }, { onSuccess: invalidateStatus });
     }
   };
 
-  const handleOptIn = () => {
-    // Capture is gated on `micOptedIn`, so it must not flip true until the
-    // server has actually recorded consent for the live session — an
-    // optimistic flip here would start the mic even if the request lands
-    // just after a deactivate/reconfigure rejects it.
-    micOptIn.mutate(
-      { id: projectId },
-      {
-        onSuccess: () => setMicOptedIn(true),
-      },
-    );
-    onDismissActivation();
-  };
+  // A fluent, floating summary notification: appears centered over the
+  // canvas, fades in and back out on its own, and never demands a click to
+  // go away -- so it reads as commentary rather than an interruption.
+  const [toastSummary, setToastSummary] = useState<{ text: string; createdAt: string } | null>(null);
+  const [toastShown, setToastShown] = useState(false);
+  useEffect(() => {
+    if (summaries.length === 0) return;
+    const latest = summaries[summaries.length - 1]!;
+    setToastSummary(latest);
+    setToastShown(false);
+    const showTimer = setTimeout(() => setToastShown(true), 20);
+    const hideTimer = setTimeout(() => setToastShown(false), SUMMARY_TOAST_VISIBLE_MS);
+    const clearTimer = setTimeout(() => setToastSummary(null), SUMMARY_TOAST_VISIBLE_MS + SUMMARY_TOAST_FADE_MS);
+    return () => {
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
+      clearTimeout(clearTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaries.length]);
+
+  if (!sharedModeEnabled) return null;
 
   // The pulsing border reflects whoever is currently speaking loudest, using
   // their member color — a stand-in "who has the floor" indicator without
@@ -127,49 +136,6 @@ export function ModeratorPanel({
         />
       )}
 
-      {/* Mic opt-in affordance: shown as a one-time celebratory toast right
-          after activation, but the underlying condition (moderator on, this
-          user hasn't opted in) also drives a persistent pill below — so a
-          member who reloads or joins after activation can still opt in. */}
-      {justActivated && !micOptedIn && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-card border shadow-lg rounded-full pl-4 pr-2 py-2">
-          <Sparkles className="w-4 h-4 text-primary shrink-0" />
-          <span className="text-sm">The AI moderator was turned on. Share your mic so it can follow along?</span>
-          <Button size="sm" className="gap-1.5 rounded-full" onClick={handleOptIn}>
-            <Mic className="w-3.5 h-3.5" />
-            Enable mic
-          </Button>
-          <Button size="icon" variant="ghost" className="rounded-full w-7 h-7" onClick={onDismissActivation}>
-            <X className="w-3.5 h-3.5" />
-          </Button>
-        </div>
-      )}
-
-      {/* Persistent opt-in pill: visible any time the moderator is on and
-          this user hasn't shared their mic yet, independent of the
-          transient activation event above (covers reload / late join). */}
-      {moderatorEnabled && !micOptedIn && !justActivated && (
-        <div className="absolute bottom-4 right-36 z-40">
-          <Button
-            size="sm"
-            variant="secondary"
-            className="gap-1.5 rounded-full shadow-md"
-            onClick={handleOptIn}
-            title="Share your mic with the AI moderator"
-          >
-            <Mic className="w-3.5 h-3.5" />
-            Enable mic
-          </Button>
-        </div>
-      )}
-
-      {micError && micOptedIn && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium rounded-full px-4 py-1.5">
-          <MicOff className="w-3.5 h-3.5" />
-          {micError}
-        </div>
-      )}
-
       {moderatorErrorMessage && (
         <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium rounded-full px-4 py-1.5">
           <AlertTriangle className="w-3.5 h-3.5" />
@@ -180,69 +146,45 @@ export function ModeratorPanel({
         </div>
       )}
 
-      {/* Summary feed toggle, visible to everyone once the moderator is on */}
-      {moderatorEnabled && (
-        <div className="absolute bottom-4 right-20 z-40">
-          {summariesOpen && (
-            <div className="absolute bottom-12 right-0 w-80 max-h-96 overflow-y-auto bg-card border shadow-xl rounded-xl p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">AI summaries</span>
-                <button onClick={() => setSummariesOpen(false)} className="opacity-60 hover:opacity-100">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              {summaries.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  No summary yet — one appears after 5 seconds of silence following some discussion.
-                </p>
-              ) : (
-                [...summaries].reverse().map((s, i) => (
-                  <div key={i} className="text-xs border-l-2 border-primary/40 pl-2">
-                    <div className="text-[10px] text-muted-foreground mb-0.5">
-                      {new Date(s.createdAt).toLocaleTimeString()}
-                    </div>
-                    <p className="whitespace-pre-wrap leading-relaxed">{s.text}</p>
-                  </div>
-                ))
-              )}
+      {/* Floating AI summary toast, centered over the canvas -- fades in,
+          lingers briefly, fades out on its own. Only the card itself
+          captures clicks, so it never blocks interaction with the canvas
+          underneath. */}
+      {toastSummary && (
+        <div
+          className={`pointer-events-none absolute inset-0 z-50 flex items-center justify-center transition-opacity ease-out ${
+            toastShown ? "opacity-100 duration-500" : "opacity-0 duration-700"
+          }`}
+        >
+          <div className="pointer-events-auto max-w-md w-[90%] bg-card/95 backdrop-blur-sm border shadow-xl rounded-2xl p-4 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Sparkles className="w-3.5 h-3.5 text-primary" />
+              AI moderator
             </div>
-          )}
-          <Button
-            size="icon"
-            variant="secondary"
-            className="rounded-full w-11 h-11 shadow-md relative"
-            onClick={() => setSummariesOpen((v) => !v)}
-            title="AI moderator summaries"
-          >
-            <Sparkles className="w-5 h-5" />
-            {summaries.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                {summaries.length}
-              </span>
-            )}
-          </Button>
+            <p className="text-sm whitespace-pre-wrap leading-relaxed">{toastSummary.text}</p>
+          </div>
         </div>
       )}
 
-      {/* Available to any member -- always runs on the project creator's
-          saved API key, so there's nothing left to configure here. */}
+      {/* Single toggle, per-person: turns the moderator (mic + transcript)
+          on or off for whoever clicks it, with no effect on anyone else. */}
       <div className="absolute bottom-4 right-4 z-40 flex flex-col items-end gap-1.5">
-        {configure.isError && !moderatorEnabled && (
+        {configure.isError && !moderatorActive && (
           <p className="max-w-56 text-right text-[11px] font-medium text-destructive bg-card border border-destructive/30 rounded-lg px-2 py-1 shadow-sm">
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
           </p>
         )}
         <Button
           size="icon"
-          variant={moderatorEnabled ? "default" : "outline"}
+          variant={moderatorActive ? "default" : "outline"}
           className="rounded-full w-11 h-11 shadow-md"
           onClick={handleToggleClick}
-          disabled={disable.isPending || configure.isPending || (!moderatorEnabled && !moderatorConfigured)}
+          disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
           title={
-            moderatorEnabled
-              ? "Turn off AI moderator"
+            moderatorActive
+              ? "Turn off AI moderator for me"
               : moderatorConfigured
-                ? "Turn on AI moderator"
+                ? "Turn on AI moderator for me"
                 : "The project creator hasn't saved an OpenAI API key yet"
           }
         >

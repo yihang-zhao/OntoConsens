@@ -393,20 +393,20 @@ export const ExportProjectResponse = zod.object({
 
 
 /**
- * @summary Get whether the AI moderator is on/configured for this project
+ * @summary Get whether the AI moderator is on for the CURRENT member, and whether it's usable at all for this project
  */
 export const GetModeratorStatusParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
 export const GetModeratorStatusResponse = zod.object({
-  "enabled": zod.boolean(),
+  "active": zod.boolean().describe('Whether the AI moderator is currently on for the CURRENT member (their own mic + transcript). Independent of every other member.'),
   "configured": zod.boolean().describe('True once the project creator\'s account has an OpenAI API key saved -- this is what actually lets the moderator run.')
 })
 
 
 /**
- * @summary Any member: turn the AI moderator on, using the project creator's saved OpenAI API key
+ * @summary Turn the AI moderator on for the CURRENT member only (their own mic and transcript), using the project creator's saved OpenAI API key. Does not affect any other member.
  */
 export const ConfigureModeratorParams = zod.object({
   "id": zod.coerce.number().int()
@@ -417,32 +417,22 @@ export const ConfigureModeratorBody = zod.object({
 })
 
 export const ConfigureModeratorResponse = zod.object({
-  "enabled": zod.boolean(),
+  "active": zod.boolean().describe('Whether the AI moderator is currently on for the CURRENT member (their own mic + transcript). Independent of every other member.'),
   "configured": zod.boolean().describe('True once the project creator\'s account has an OpenAI API key saved -- this is what actually lets the moderator run.')
 })
 
 
 /**
- * @summary Any member: turn the AI moderator off
+ * @summary Turn the AI moderator off for the CURRENT member only
  */
 export const DisableModeratorParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
 export const DisableModeratorResponse = zod.object({
-  "enabled": zod.boolean(),
+  "active": zod.boolean().describe('Whether the AI moderator is currently on for the CURRENT member (their own mic + transcript). Independent of every other member.'),
   "configured": zod.boolean().describe('True once the project creator\'s account has an OpenAI API key saved -- this is what actually lets the moderator run.')
 })
-
-
-/**
- * @summary Record that the current member agreed to share their mic with the moderator
- */
-export const ModeratorMicOptInParams = zod.object({
-  "id": zod.coerce.number().int()
-})
-
-export const ModeratorMicOptInResponse = zod.void()
 
 
 /**
