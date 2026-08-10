@@ -19,9 +19,13 @@ const INNER_R = 88;
 const LABEL_R = 178;
 const GRAY_FILL = "hsl(var(--muted-foreground) / 0.3)";
 
+// Angle convention: 0deg = straight up (12 o'clock), increasing clockwise.
+// The gauge's 0% (leftmost) sits at -90deg and 100% (rightmost) at +90deg,
+// so sweeping from -90 to +90 traces the dome over the top -- exactly the
+// semicircle shape of a classic speedometer gauge.
 function polarToXY(cx: number, cy: number, r: number, angleDeg: number) {
   const rad = (angleDeg * Math.PI) / 180;
-  return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) };
+  return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
 }
 
 // Builds an SVG path for one annular wedge (a segment of the gauge "donut")
@@ -29,16 +33,25 @@ function polarToXY(cx: number, cy: number, r: number, angleDeg: number) {
 function wedgePath(startDeg: number, endDeg: number): string {
   const outerStart = polarToXY(CX, CY, OUTER_R, startDeg);
   const outerEnd = polarToXY(CX, CY, OUTER_R, endDeg);
-  const innerStart = polarToXY(CX, CY, INNER_R, endDeg);
-  const innerEnd = polarToXY(CX, CY, INNER_R, startDeg);
-  const largeArc = Math.abs(startDeg - endDeg) > 180 ? 1 : 0;
+  const innerEnd = polarToXY(CX, CY, INNER_R, endDeg);
+  const innerStart = polarToXY(CX, CY, INNER_R, startDeg);
+  const largeArc = Math.abs(endDeg - startDeg) > 180 ? 1 : 0;
   return [
     `M ${outerStart.x} ${outerStart.y}`,
-    `A ${OUTER_R} ${OUTER_R} 0 ${largeArc} 0 ${outerEnd.x} ${outerEnd.y}`,
-    `L ${innerStart.x} ${innerStart.y}`,
-    `A ${INNER_R} ${INNER_R} 0 ${largeArc} 1 ${innerEnd.x} ${innerEnd.y}`,
+    `A ${OUTER_R} ${OUTER_R} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${INNER_R} ${INNER_R} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
     "Z",
   ].join(" ");
+}
+
+// A solid teardrop needle (wide at the pivot, tapering to a point) -- the
+// classic speedometer needle shape, rather than a thin line.
+function needlePath(angleDeg: number): string {
+  const tip = polarToXY(CX, CY, OUTER_R - 6, angleDeg);
+  const leftBase = polarToXY(CX, CY, 12, angleDeg - 90);
+  const rightBase = polarToXY(CX, CY, 12, angleDeg + 90);
+  return `M ${leftBase.x} ${leftBase.y} L ${tip.x} ${tip.y} L ${rightBase.x} ${rightBase.y} Z`;
 }
 
 export function ModeratorGauge({ segments }: ModeratorGaugeProps) {
@@ -54,29 +67,24 @@ export function ModeratorGauge({ segments }: ModeratorGaugeProps) {
   const retaining = segments.filter((s) => s.stance === "retain");
   const rest = segments.filter((s) => s.stance !== "retain");
   const ordered = [...retaining, ...rest];
-  const needleAngle = 180 - (retaining.length / total) * 180;
+  const needleAngle = -90 + (retaining.length / total) * 180;
 
   return (
     <svg viewBox="0 0 400 215" className="w-full h-auto select-none" aria-label="Retain vs. remove agreement gauge">
       {ordered.map((segment, i) => {
-        const startDeg = 180 - i * step;
-        const endDeg = 180 - (i + 1) * step;
+        const startDeg = -90 + i * step;
+        const endDeg = -90 + (i + 1) * step;
         const midDeg = (startDeg + endDeg) / 2;
         const fill = segment.stance === "unknown" ? GRAY_FILL : colorForSlot(segment.colorSlot).solid;
         const label = polarToXY(CX, CY, LABEL_R, midDeg);
         // Labels near the two ends of the arc sit close to the horizontal
         // centerline and read best left/right aligned; labels nearer the
-        // top of the dome read best centered underneath their point.
-        const textAnchor = midDeg > 135 ? "end" : midDeg < 45 ? "start" : "middle";
+        // top of the dome read best centered above their point.
+        const textAlign = midDeg < -45 ? "right" : midDeg > 45 ? "left" : "center";
 
         return (
           <g key={segment.userId}>
-            <path
-              d={wedgePath(startDeg, endDeg)}
-              fill={fill}
-              stroke="hsl(var(--card))"
-              strokeWidth={2}
-            />
+            <path d={wedgePath(startDeg, endDeg)} fill={fill} stroke="hsl(var(--card))" strokeWidth={2} />
             <foreignObject
               x={label.x - 72}
               y={label.y - 22}
@@ -84,10 +92,7 @@ export function ModeratorGauge({ segments }: ModeratorGaugeProps) {
               height={48}
               style={{ overflow: "visible", pointerEvents: "none" }}
             >
-              <div
-                className="text-[10px] leading-snug text-muted-foreground"
-                style={{ textAlign: textAnchor === "middle" ? "center" : textAnchor === "end" ? "right" : "left" }}
-              >
+              <div className="text-[10px] leading-snug text-muted-foreground" style={{ textAlign }}>
                 <span className="font-semibold" style={{ color: fill }}>
                   {segment.username}
                 </span>
@@ -98,16 +103,10 @@ export function ModeratorGauge({ segments }: ModeratorGaugeProps) {
         );
       })}
 
-      {/* Needle marking the retain/remove boundary */}
-      {(() => {
-        const tip = polarToXY(CX, CY, OUTER_R + 10, needleAngle);
-        return (
-          <g>
-            <line x1={CX} y1={CY} x2={tip.x} y2={tip.y} stroke="hsl(var(--foreground))" strokeWidth={2.5} strokeLinecap="round" />
-            <circle cx={CX} cy={CY} r={6} fill="hsl(var(--foreground))" />
-          </g>
-        );
-      })()}
+      {/* Needle marking the retain/remove boundary -- a solid teardrop, like
+          a classic speedometer needle, pivoting from the gauge's center. */}
+      <path d={needlePath(needleAngle)} fill="hsl(var(--foreground))" />
+      <circle cx={CX} cy={CY} r={9} fill="hsl(var(--foreground))" />
 
       {/* Scale endpoints */}
       <text x={4} y={CY + 14} className="fill-muted-foreground text-[10px]">0% retain</text>
