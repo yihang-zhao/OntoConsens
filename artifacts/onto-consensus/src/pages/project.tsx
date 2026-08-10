@@ -24,7 +24,7 @@ import {
   Loader2, 
   Network, 
 } from "lucide-react";
-import { useProjectSocket } from "@/hooks/useProjectSocket";
+import { useProjectSocket, type ModeratorSummaryEvent } from "@/hooks/useProjectSocket";
 import { ModeratorPanel } from "@/components/ModeratorPanel";
 
 export default function ProjectWorkspace() {
@@ -81,7 +81,7 @@ export default function ProjectWorkspace() {
       refetchInterval: 10_000,
     },
   });
-  const [summaries, setSummaries] = useState<{ text: string; createdAt: string }[]>([]);
+  const [summaries, setSummaries] = useState<ModeratorSummaryEvent[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
 
   const {
@@ -106,8 +106,8 @@ export default function ProjectWorkspace() {
       queryClient.removeQueries({ queryKey: getGetProjectQueryKey(projectId) });
       navigate("/");
     },
-    onModeratorSummary: (text, createdAt) => {
-      setSummaries((prev) => [...prev, { text, createdAt }]);
+    onModeratorSummary: (summary) => {
+      setSummaries((prev) => [...prev, summary]);
     },
     onModeratorError: (message) => {
       setModeratorErrorMessage(message);

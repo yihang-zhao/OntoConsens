@@ -11,3 +11,4 @@
 - [Fixed radial slot count must match visible-item count exactly](radial-slot-reserve-matches-visibility.md) — reserving a wedge for an add-button slot that isn't rendered (e.g. at cap) leaves a visible gap.
 - [api-server dev script doesn't hot-reload](api-server-dev-no-watch.md) — backend edits need an "API Server" workflow restart even to test the same service you just changed.
 - [User-scoped WebSocket channel in wsHub](ws-hub-dashboard-scoped-channel.md) — reuse this pattern to push realtime events to a user outside any project page (e.g. dashboard).
+- [Retain/remove gauge needle orientation](moderator-gauge-needle-orientation.md) — needle position (not segment side) encodes the 0-100% value in an agree/disagree gauge.

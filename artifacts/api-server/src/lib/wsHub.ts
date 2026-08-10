@@ -58,7 +58,19 @@ export type ServerEvent =
   | { type: "project_deleted"; projectId?: number }
   | { type: "member_count_changed"; projectId: number; memberCount: number }
   | { type: "speaker_volume"; userId: number; level: number }
-  | { type: "moderator_summary"; text: string; createdAt: string }
+  | {
+      type: "moderator_summary";
+      className: string | null;
+      propertyName: string | null;
+      segments: {
+        userId: number;
+        username: string;
+        colorSlot: number;
+        stance: "retain" | "remove" | "unknown";
+        opinion: string | null;
+      }[];
+      createdAt: string;
+    }
   | { type: "moderator_error"; message: string };
 
 function onlineUserIds(projectId: number): number[] {

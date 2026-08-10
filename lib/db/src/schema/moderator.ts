@@ -1,6 +1,7 @@
 import {
   boolean,
   integer,
+  jsonb,
   pgTable,
   serial,
   text,
@@ -112,12 +113,35 @@ export const moderatorTranscriptChunksTable = pgTable(
 export type ModeratorTranscriptChunk =
   typeof moderatorTranscriptChunksTable.$inferSelect;
 
+// One row per project member, for every summary round: the raw material
+// for the retain/remove gauge. Members who spoke and took a clear position
+// carry stance "retain"/"remove" plus a short paraphrase of what they said;
+// everyone else (silent this round, or the AI moderator isn't on for them
+// at all) carries stance "unknown" with a null opinion, which the UI always
+// renders as a gray segment on the "disagree" side of the needle.
+export interface ModeratorSummarySegment {
+  userId: number;
+  username: string;
+  colorSlot: number;
+  stance: "retain" | "remove" | "unknown";
+  opinion: string | null;
+}
+
 export const moderatorSummariesTable = pgTable("moderator_summaries", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id")
     .notNull()
     .references(() => projectsTable.id, { onDelete: "cascade" }),
+  // Short human-readable label for this round (e.g. "Person.hasEmail") --
+  // kept mainly for admin/debug visibility; the UI renders the structured
+  // fields below rather than this string.
   summary: text("summary").notNull(),
+  // The class and property the AI determined the transcript was actually
+  // discussing this round, in terms of whether to retain or remove it. Null
+  // if the model couldn't identify a clear subject.
+  className: text("class_name"),
+  propertyName: text("property_name"),
+  segments: jsonb("segments").$type<ModeratorSummarySegment[]>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

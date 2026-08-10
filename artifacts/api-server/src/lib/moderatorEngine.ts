@@ -5,9 +5,11 @@ import {
   moderatorSummariesTable,
   moderatorTranscriptChunksTable,
   moderatorParticipantsTable,
+  projectMembersTable,
   projectModeratorTable,
   projectsTable,
   usersTable,
+  type ModeratorSummarySegment,
 } from "@workspace/db";
 import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
@@ -256,6 +258,14 @@ async function generateSummary(projectId: number) {
 
   const users = await db.query.usersTable.findMany();
   const usernameById = new Map(users.map((u) => [u.id, u.username]));
+  const userIdByUsername = new Map(users.map((u) => [u.username, u.id]));
+
+  // Every current project member gets a gauge segment -- not just whoever
+  // spoke this round -- so someone who never turned the moderator on (or
+  // has gone quiet) still shows up gray rather than vanishing from the dial.
+  const members = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
 
   const transcriptText = newChunks
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
@@ -280,7 +290,9 @@ async function generateSummary(projectId: number) {
           {
             role: "system",
             content:
-              "You are an AI moderator for a group ontology-design conversation. Summarize what has been said so far, organized clearly by speaker (use their names as headings or labels). Be concise but capture each person's key points and any decisions or disagreements.",
+              "You are an AI moderator for a group ontology-design conversation. Look at the transcript below and identify the SINGLE class and property the speakers are currently discussing in terms of whether it should be retained or removed from the ontology. For every person who spoke, decide whether their stated position argues to RETAIN or to REMOVE that property, and write a short paraphrase (12 words or fewer) of their opinion in their own voice. " +
+              'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: {"className": string, "propertyName": string, "opinions": [{"username": string, "stance": "retain" | "remove", "opinion": string}]}. ' +
+              "Use the exact usernames as they appear as speaker labels in the transcript. Omit anyone whose stance genuinely isn't clear from what they said.",
           },
           { role: "user", content: transcriptText },
         ],
@@ -299,14 +311,69 @@ async function generateSummary(projectId: number) {
     const data = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
     };
-    const summaryText = data.choices?.[0]?.message?.content?.trim();
-    if (!summaryText) {
+    const rawContent = data.choices?.[0]?.message?.content?.trim();
+    if (!rawContent) {
       broadcastToProject(projectId, {
         type: "moderator_error",
         message: "OpenAI returned an empty summary.",
       });
       return;
     }
+
+    let parsed: {
+      className?: unknown;
+      propertyName?: unknown;
+      opinions?: unknown;
+    };
+    try {
+      // The model is asked for raw JSON, but strip a stray ```json fence
+      // defensively in case it doesn't follow that instruction exactly.
+      const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+      parsed = JSON.parse(cleaned);
+    } catch {
+      broadcastToProject(projectId, {
+        type: "moderator_error",
+        message: "Could not understand the AI moderator's analysis of the discussion.",
+      });
+      return;
+    }
+
+    const className = typeof parsed.className === "string" ? parsed.className : null;
+    const propertyName = typeof parsed.propertyName === "string" ? parsed.propertyName : null;
+    const rawOpinions = Array.isArray(parsed.opinions) ? parsed.opinions : [];
+
+    // One entry per opted-in opinion, keyed by userId so it can be merged
+    // against the full member list below.
+    const opinionByUserId = new Map<number, { stance: "retain" | "remove"; opinion: string }>();
+    for (const entry of rawOpinions) {
+      if (!entry || typeof entry !== "object") continue;
+      const username = (entry as any).username;
+      const stance = (entry as any).stance;
+      const opinion = (entry as any).opinion;
+      if (typeof username !== "string" || (stance !== "retain" && stance !== "remove") || typeof opinion !== "string") {
+        continue;
+      }
+      const userId = userIdByUsername.get(username);
+      if (userId === undefined) continue;
+      opinionByUserId.set(userId, { stance, opinion });
+    }
+
+    // Every current member gets exactly one segment: a real stance if the
+    // model identified one for them, otherwise "unknown" -- rendered gray
+    // and to the right of the needle regardless of whether that's because
+    // they stayed silent this round or never turned the moderator on.
+    const segments: ModeratorSummarySegment[] = members.map((member) => {
+      const opinion = opinionByUserId.get(member.userId);
+      return {
+        userId: member.userId,
+        username: usernameById.get(member.userId) ?? `User ${member.userId}`,
+        colorSlot: member.colorSlot,
+        stance: opinion?.stance ?? "unknown",
+        opinion: opinion?.opinion ?? null,
+      };
+    });
+
+    const summaryLabel = className && propertyName ? `${className}.${propertyName}` : "Ontology discussion";
 
     // Commit the summary and advance the durable checkpoint atomically, and
     // only if the project's moderator config row is still the one we
@@ -318,7 +385,13 @@ async function generateSummary(projectId: number) {
         .where(eq(projectModeratorTable.projectId, projectId))
         .for("update");
       if (!current) return false;
-      await tx.insert(moderatorSummariesTable).values({ projectId, summary: summaryText });
+      await tx.insert(moderatorSummariesTable).values({
+        projectId,
+        summary: summaryLabel,
+        className,
+        propertyName,
+        segments,
+      });
       await tx
         .update(projectModeratorTable)
         .set({ lastSummarizedAt: maxCreatedAt })
@@ -330,7 +403,9 @@ async function generateSummary(projectId: number) {
 
     broadcastToProject(projectId, {
       type: "moderator_summary",
-      text: summaryText,
+      className,
+      propertyName,
+      segments,
       createdAt: new Date().toISOString(),
     });
   } catch (err) {

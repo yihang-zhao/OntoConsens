@@ -14,6 +14,26 @@ export interface SpeakerVolume {
   updatedAt: number;
 }
 
+// One gauge segment per current project member -- see
+// ModeratorSummarySegment in lib/db/src/schema/moderator.ts for the
+// server-side source of this shape. "unknown" covers both "stayed silent
+// this round" and "never turned the moderator on"; the UI renders both the
+// same way (gray, right of the needle).
+export interface ModeratorSummarySegment {
+  userId: number;
+  username: string;
+  colorSlot: number;
+  stance: "retain" | "remove" | "unknown";
+  opinion: string | null;
+}
+
+export interface ModeratorSummaryEvent {
+  className: string | null;
+  propertyName: string | null;
+  segments: ModeratorSummarySegment[];
+  createdAt: string;
+}
+
 type ServerEvent =
   | { type: "cursor"; userId: number; x: number; y: number }
   | { type: "cursor_left"; userId: number }
@@ -26,7 +46,7 @@ type ServerEvent =
   | { type: "member_ready" }
   | { type: "project_deleted" }
   | { type: "speaker_volume"; userId: number; level: number }
-  | { type: "moderator_summary"; text: string; createdAt: string }
+  | ({ type: "moderator_summary" } & ModeratorSummaryEvent)
   | { type: "moderator_error"; message: string };
 
 interface UseProjectSocketOptions {
@@ -35,7 +55,7 @@ interface UseProjectSocketOptions {
   onProjectChanged?: () => void;
   onPropertiesChanged?: () => void;
   onProjectDeleted?: () => void;
-  onModeratorSummary?: (text: string, createdAt: string) => void;
+  onModeratorSummary?: (summary: ModeratorSummaryEvent) => void;
   onModeratorError?: (message: string) => void;
 }
 
@@ -198,7 +218,12 @@ export function useProjectSocket({
             });
             break;
           case "moderator_summary":
-            callbacksRef.current.onModeratorSummary?.(data.text, data.createdAt);
+            callbacksRef.current.onModeratorSummary?.({
+              className: data.className,
+              propertyName: data.propertyName,
+              segments: data.segments,
+              createdAt: data.createdAt,
+            });
             break;
           case "moderator_error":
             callbacksRef.current.onModeratorError?.(data.message);

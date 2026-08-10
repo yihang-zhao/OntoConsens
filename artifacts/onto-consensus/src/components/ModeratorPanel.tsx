@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Sparkles, AlertTriangle, X } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
-import type { SpeakerVolume } from "@/hooks/useProjectSocket";
+import { ModeratorGauge } from "@/components/ModeratorGauge";
+import type { ModeratorSummaryEvent, SpeakerVolume } from "@/hooks/useProjectSocket";
 
 interface ModeratorMember {
   userId: number;
@@ -29,7 +30,7 @@ interface ModeratorPanelProps {
   /** True once the project creator's account has an OpenAI API key saved --
    *  without one, nobody can turn the moderator on. */
   moderatorConfigured: boolean;
-  summaries: { text: string; createdAt: string }[];
+  summaries: ModeratorSummaryEvent[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
 }
@@ -93,7 +94,7 @@ export function ModeratorPanel({
   // A fluent, floating summary notification: appears centered over the
   // canvas, fades in and back out on its own, and never demands a click to
   // go away -- so it reads as commentary rather than an interruption.
-  const [toastSummary, setToastSummary] = useState<{ text: string; createdAt: string } | null>(null);
+  const [toastSummary, setToastSummary] = useState<ModeratorSummaryEvent | null>(null);
   const [toastShown, setToastShown] = useState(false);
   useEffect(() => {
     if (summaries.length === 0) return;
@@ -154,12 +155,14 @@ export function ModeratorPanel({
             toastShown ? "opacity-100 duration-500" : "opacity-0 duration-700"
           }`}
         >
-          <div className="pointer-events-auto max-w-md w-[90%] bg-card/95 backdrop-blur-sm border shadow-xl rounded-2xl p-4 space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+          <div className="pointer-events-auto relative max-w-lg w-[92%] bg-card/95 backdrop-blur-sm border shadow-xl rounded-2xl pt-9 pb-3 px-3">
+            <div className="absolute top-3 left-4 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
               <Sparkles className="w-3.5 h-3.5 text-primary" />
-              AI moderator
+              {toastSummary.className && toastSummary.propertyName
+                ? `${toastSummary.className}.${toastSummary.propertyName}`
+                : "AI moderator"}
             </div>
-            <p className="text-sm whitespace-pre-wrap leading-relaxed">{toastSummary.text}</p>
+            <ModeratorGauge segments={toastSummary.segments} />
           </div>
         </div>
       )}
