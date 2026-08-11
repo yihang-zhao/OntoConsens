@@ -122,6 +122,37 @@ export interface ModeratorAudioInput {
   audio: Blob;
 }
 
+/**
+ * "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself.
+ */
+export type ModeratorChatMessageType = typeof ModeratorChatMessageType[keyof typeof ModeratorChatMessageType];
+
+
+export const ModeratorChatMessageType = {
+  intro: 'intro',
+  system: 'system',
+  transcript: 'transcript',
+  intervention: 'intervention',
+} as const;
+
+export interface ModeratorChatMessage {
+  id: number;
+  /** "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself. */
+  type: ModeratorChatMessageType;
+  /** Null for moderator-authored messages (intro, intervention). */
+  userId: number | null;
+  username: string | null;
+  colorSlot: number | null;
+  content: string;
+  /** Only meaningful for "intervention" messages -- whether the discussion resolved to a real class/property in this project's workspace. */
+  matched: boolean | null;
+  className: string | null;
+  propertyName: string | null;
+  classId: number | null;
+  propertyId: number | null;
+  createdAt: string;
+}
+
 export interface Member {
   userId: number;
   username: string;
@@ -204,4 +235,8 @@ export interface ExportPayload {
   meta: ExportMeta;
   classes: ExportClass[];
 }
+
+export type ListModeratorChatMessages200 = {
+  messages: ModeratorChatMessage[];
+};
 

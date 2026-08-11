@@ -1,7 +1,6 @@
 import {
   boolean,
   integer,
-  jsonb,
   pgTable,
   serial,
   text,
@@ -86,9 +85,12 @@ export type ModeratorParticipant =
   typeof moderatorParticipantsTable.$inferSelect;
 
 // Raw speech-to-text chunks, tagged by speaker, accumulated between
-// summaries. Never shown verbatim to users — only fed into the periodic AI
-// summary — but kept as rows (rather than an in-memory buffer) so a server
-// restart mid-conversation doesn't silently drop unsummarized speech.
+// interventions. Never shown verbatim on their own -- each one is also
+// mirrored into moderatorChatMessagesTable (type "transcript") the moment
+// it's recorded, which is what the chat panel actually renders -- but kept
+// as rows here (rather than an in-memory buffer) so a server restart
+// mid-conversation doesn't silently drop unsummarized speech, and so the
+// full-history summarizer below has something durable to re-query.
 export const moderatorTranscriptChunksTable = pgTable(
   "moderator_transcript_chunks",
   {
@@ -106,6 +108,21 @@ export const moderatorTranscriptChunksTable = pgTable(
     // lets a conditional write reject a chunk whose session ended mid
     // transcription.
     activationId: text("activation_id"),
+    // Retroactively stamped once a round of the moderator's topic-detection
+    // step ties this chunk (among others in that round's window) to a real
+    // class+property -- null until then. This is what lets a LATER
+    // intervention on the SAME property re-analyze every chunk ever tied to
+    // it (old and new) instead of only what's arrived since the last
+    // checkpoint: see generateSummary's two-pass design in
+    // moderatorEngine.ts. Only ever set once per chunk (never overwritten),
+    // so a chunk that happened to get tagged under one property keeps that
+    // attribution even if a later round's window drifts to a different one.
+    classId: integer("class_id").references(() => ontologyClassesTable.id, {
+      onDelete: "set null",
+    }),
+    propertyId: integer("property_id").references(() => propertiesTable.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -115,37 +132,45 @@ export const moderatorTranscriptChunksTable = pgTable(
 export type ModeratorTranscriptChunk =
   typeof moderatorTranscriptChunksTable.$inferSelect;
 
-// One row per project member, for every summary round: the raw material
-// for the retain/remove gauge. Members who spoke and took a clear position
-// carry stance "retain"/"remove" plus a short paraphrase of what they said;
-// everyone else (silent this round, or the AI moderator isn't on for them
-// at all) carries stance "unknown" with a null opinion, which the UI always
-// renders as a gray segment on the "disagree" side of the needle.
-export interface ModeratorSummarySegment {
-  userId: number;
-  username: string;
-  colorSlot: number;
-  stance: "retain" | "remove" | "unknown";
-  opinion: string | null;
-}
+// The AI moderator's entire visible presence is one ordered log of chat
+// messages per project, persisted here so it survives a reload or a member
+// rejoining (rather than living only in the WebSocket stream / React
+// state):
+//   - "intro": the one-time message posted the moment the shared space
+//     opens, explaining what the moderator does and that it needs mic
+//     access. `userId` is null (it's from the moderator, not a member).
+//   - "system": a short first-person-plural announcement about a member's
+//     own participation, e.g. "<username> enabled their microphone.
+//     Recording started." `userId` identifies that member (for color
+//     attribution in the UI).
+//   - "transcript": one member's transcribed speech, attributed via
+//     `userId`. Visible to every member regardless of their own mic state.
+//   - "intervention": a stalled-discussion message. `matched` false means
+//     it's a plain reminder that no class/property could be confidently
+//     identified; `matched` true means `content` carries the full
+//     examples/counterexamples/proposed-by summary, and `classId`/
+//     `propertyId`/`className`/`propertyName` identify what it was about.
+// A user's own "reject the mic" reminder is deliberately NOT a row here --
+// it's a purely local, ephemeral nudge to that one member, not part of the
+// shared discussion record.
+export type ModeratorChatMessageType =
+  | "intro"
+  | "system"
+  | "transcript"
+  | "intervention";
 
-export const moderatorSummariesTable = pgTable("moderator_summaries", {
+export const moderatorChatMessagesTable = pgTable("moderator_chat_messages", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id")
     .notNull()
     .references(() => projectsTable.id, { onDelete: "cascade" }),
-  // Short human-readable label for this round (e.g. "Person.hasEmail") --
-  // kept mainly for admin/debug visibility; the UI renders the structured
-  // fields below rather than this string.
-  summary: text("summary").notNull(),
-  // The class and property the AI determined the transcript was actually
-  // discussing this round, in terms of whether to retain or remove it.
-  // These are always the CANONICAL label/name of a class/property that
-  // genuinely exists in this project's shared workspace right now -- never
-  // raw, unverified model output. Null (with `matched` false) whenever the
-  // model couldn't confidently tie the discussion to one specific
-  // class+property actually present in the workspace; in that case the UI
-  // shows a text reminder instead of a visualization.
+  type: text("type").notNull().$type<ModeratorChatMessageType>(),
+  userId: integer("user_id").references(() => usersTable.id, {
+    onDelete: "set null",
+  }),
+  content: text("content").notNull(),
+  // Only meaningful for type "intervention" -- see the type-level doc above.
+  matched: boolean("matched"),
   className: text("class_name"),
   propertyName: text("property_name"),
   classId: integer("class_id").references(() => ontologyClassesTable.id, {
@@ -154,11 +179,10 @@ export const moderatorSummariesTable = pgTable("moderator_summaries", {
   propertyId: integer("property_id").references(() => propertiesTable.id, {
     onDelete: "set null",
   }),
-  matched: boolean("matched").notNull().default(false),
-  segments: jsonb("segments").$type<ModeratorSummarySegment[]>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 });
 
-export type ModeratorSummary = typeof moderatorSummariesTable.$inferSelect;
+export type ModeratorChatMessage =
+  typeof moderatorChatMessagesTable.$inferSelect;

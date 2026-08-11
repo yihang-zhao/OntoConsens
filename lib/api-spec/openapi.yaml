@@ -490,6 +490,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{id}/moderator/messages:
+    get:
+      operationId: listModeratorChatMessages
+      tags: [moderator]
+      summary: >-
+        Full persisted moderator chat history for this project (intro,
+        system, transcript, and intervention messages), visible to every
+        member regardless of their own mic state.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Moderator chat history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModeratorChatMessage"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -691,6 +715,56 @@ components:
         audio:
           type: string
           format: binary
+
+    ModeratorChatMessage:
+      type: object
+      required: [id, type, userId, username, colorSlot, content, matched, className, propertyName, classId, propertyId, createdAt]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [intro, system, transcript, intervention]
+          description: >-
+            "intro" is the moderator's one-time welcome message. "system" is
+            an ephemeral-looking but persisted event like a member enabling
+            their mic. "transcript" is a live-transcribed speech chunk from a
+            member. "intervention" is a stalled-discussion analysis posted by
+            the moderator itself.
+        userId:
+          type: integer
+          nullable: true
+          description: Null for moderator-authored messages (intro, intervention).
+        username:
+          type: string
+          nullable: true
+        colorSlot:
+          type: integer
+          nullable: true
+        content:
+          type: string
+        matched:
+          type: boolean
+          nullable: true
+          description: >-
+            Only meaningful for "intervention" messages -- whether the
+            discussion resolved to a real class/property in this project's
+            workspace.
+        className:
+          type: string
+          nullable: true
+        propertyName:
+          type: string
+          nullable: true
+        classId:
+          type: integer
+          nullable: true
+        propertyId:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
 
     Member:
       type: object

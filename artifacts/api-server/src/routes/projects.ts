@@ -16,6 +16,7 @@ import { requireAuth } from "../lib/auth";
 import { parseOntologyFile } from "../lib/ontologyParser";
 import { issueTicket, issueUserTicket, broadcastToProject, broadcastToUsers } from "../lib/wsHub";
 import { getPropertyQuota, mergeDuplicatePropertiesOnReady } from "./properties";
+import { ensureModeratorIntroMessage } from "../lib/moderatorEngine";
 import { clearModeratorSilenceTimer } from "../lib/moderatorEngine";
 
 const router: IRouter = Router();
@@ -377,6 +378,7 @@ router.patch("/projects/:id/ready", async (req, res) => {
     membersAfterUpdate.every((m) => m.ready);
   if (nowFullyReady) {
     await mergeDuplicatePropertiesOnReady(projectId);
+    await ensureModeratorIntroMessage(projectId);
   }
 
   broadcastToProject(projectId, { type: "member_ready" });

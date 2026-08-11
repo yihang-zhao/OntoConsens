@@ -14,30 +14,22 @@ export interface SpeakerVolume {
   updatedAt: number;
 }
 
-// One gauge segment per current project member -- see
-// ModeratorSummarySegment in lib/db/src/schema/moderator.ts for the
-// server-side source of this shape. "unknown" covers both "stayed silent
-// this round" and "never turned the moderator on"; the UI renders both the
-// same way (gray, right of the needle).
-export interface ModeratorSummarySegment {
-  userId: number;
-  username: string;
-  colorSlot: number;
-  stance: "retain" | "remove" | "unknown";
-  opinion: string | null;
-}
-
-export interface ModeratorSummaryEvent {
-  // Canonical class/property that genuinely exists in the shared workspace
-  // right now, or null when the discussion couldn't be confidently tied to
-  // one -- `matched` tells the UI whether to render the gauge (true) or a
-  // text reminder to discuss something already in the workspace (false).
+// One entry in the persistent moderator chat log -- mirrors
+// SerializedChatMessage on the server (see moderatorEngine.ts) and the
+// ModeratorChatMessage OpenAPI schema, so a live-broadcast message and one
+// fetched from GET /projects/:id/moderator/messages render identically.
+export interface ModeratorChatMessage {
+  id: number;
+  type: "intro" | "system" | "transcript" | "intervention";
+  userId: number | null;
+  username: string | null;
+  colorSlot: number | null;
+  content: string;
+  matched: boolean | null;
   className: string | null;
   propertyName: string | null;
   classId: number | null;
   propertyId: number | null;
-  matched: boolean;
-  segments: ModeratorSummarySegment[];
   createdAt: string;
 }
 
@@ -53,7 +45,7 @@ type ServerEvent =
   | { type: "member_ready" }
   | { type: "project_deleted" }
   | { type: "speaker_volume"; userId: number; level: number }
-  | ({ type: "moderator_summary" } & ModeratorSummaryEvent)
+  | { type: "moderator_chat_message"; message: ModeratorChatMessage }
   | { type: "moderator_error"; message: string };
 
 interface UseProjectSocketOptions {
@@ -62,7 +54,7 @@ interface UseProjectSocketOptions {
   onProjectChanged?: () => void;
   onPropertiesChanged?: () => void;
   onProjectDeleted?: () => void;
-  onModeratorSummary?: (summary: ModeratorSummaryEvent) => void;
+  onModeratorChatMessage?: (message: ModeratorChatMessage) => void;
   onModeratorError?: (message: string) => void;
 }
 
@@ -92,7 +84,7 @@ export function useProjectSocket({
   onProjectChanged,
   onPropertiesChanged,
   onProjectDeleted,
-  onModeratorSummary,
+  onModeratorChatMessage,
   onModeratorError,
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
@@ -105,14 +97,14 @@ export function useProjectSocket({
     onProjectChanged,
     onPropertiesChanged,
     onProjectDeleted,
-    onModeratorSummary,
+    onModeratorChatMessage,
     onModeratorError,
   });
   callbacksRef.current = {
     onProjectChanged,
     onPropertiesChanged,
     onProjectDeleted,
-    onModeratorSummary,
+    onModeratorChatMessage,
     onModeratorError,
   };
 
@@ -224,16 +216,8 @@ export function useProjectSocket({
               return next;
             });
             break;
-          case "moderator_summary":
-            callbacksRef.current.onModeratorSummary?.({
-              className: data.className,
-              propertyName: data.propertyName,
-              classId: data.classId,
-              propertyId: data.propertyId,
-              matched: data.matched,
-              segments: data.segments,
-              createdAt: data.createdAt,
-            });
+          case "moderator_chat_message":
+            callbacksRef.current.onModeratorChatMessage?.(data.message);
             break;
           case "moderator_error":
             callbacksRef.current.onModeratorError?.(data.message);

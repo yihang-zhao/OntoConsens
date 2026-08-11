@@ -449,3 +449,28 @@ export const UploadModeratorAudioBody = zod.object({
 export const UploadModeratorAudioResponse = zod.void()
 
 
+/**
+ * @summary Full persisted moderator chat history for this project (intro, system, transcript, and intervention messages), visible to every member regardless of their own mic state.
+ */
+export const ListModeratorChatMessagesParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const ListModeratorChatMessagesResponse = zod.object({
+  "messages": zod.array(zod.object({
+  "id": zod.number().int(),
+  "type": zod.enum(['intro', 'system', 'transcript', 'intervention']).describe('\"intro\" is the moderator\'s one-time welcome message. \"system\" is an ephemeral-looking but persisted event like a member enabling their mic. \"transcript\" is a live-transcribed speech chunk from a member. \"intervention\" is a stalled-discussion analysis posted by the moderator itself.'),
+  "userId": zod.number().int().nullable().describe('Null for moderator-authored messages (intro, intervention).'),
+  "username": zod.string().nullable(),
+  "colorSlot": zod.number().int().nullable(),
+  "content": zod.string(),
+  "matched": zod.boolean().nullable().describe('Only meaningful for \"intervention\" messages -- whether the discussion resolved to a real class\/property in this project\'s workspace.'),
+  "className": zod.string().nullable(),
+  "propertyName": zod.string().nullable(),
+  "classId": zod.number().int().nullable(),
+  "propertyId": zod.number().int().nullable(),
+  "createdAt": zod.coerce.date()
+}))
+})
+
+

@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import {
   db,
-  moderatorSummariesTable,
+  moderatorChatMessagesTable,
   moderatorTranscriptChunksTable,
   moderatorParticipantsTable,
   ontologyClassesTable,
@@ -12,7 +12,8 @@ import {
   propertiesTable,
   propertyAgreementsTable,
   usersTable,
-  type ModeratorSummarySegment,
+  type ModeratorChatMessage,
+  type ModeratorChatMessageType,
 } from "@workspace/db";
 import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
@@ -24,26 +25,15 @@ const SILENCE_TIMEOUT_MS = 5_000;
 // mirrors the same fallback used by the properties routes' agreement check.
 const MAX_PROJECT_MEMBERS = 3;
 
-// Minimum spacing between two AI moderator interventions (i.e. two summary
-// popups actually shown to the group, whether they resolved to a real
-// class/property or just a "focus on the workspace" reminder) -- keeps the
-// moderator from interrupting back-to-back even if the group keeps pausing
-// and resuming within a few seconds of each other.
+// Minimum spacing between two AI moderator interventions (i.e. two
+// "stalled discussion" chat messages actually posted to the group, whether
+// they resolved to a real class/property or just a "focus on the
+// workspace" reminder) -- keeps the moderator from interrupting
+// back-to-back even if the group keeps pausing and resuming within a few
+// seconds of each other. The next eligible silence-check only starts being
+// honored INTERVENTION_COOLDOWN_MS after the last one actually posted.
 const INTERVENTION_COOLDOWN_MS = 15_000;
 const lastInterventionAt = new Map<number, number>();
-
-// Running, per-property record of the most recent stance/opinion the
-// moderator has ever extracted for each user, keyed by
-// "<classId>:<propertyId>". A user who weighed in on a property two rounds
-// ago but stayed quiet this round should still show their real stance
-// (not "unknown") every time that same property comes back up -- this is
-// what lets a single intervention reflect everyone's position on the
-// property, not just whoever happened to speak in the last few seconds.
-type PropertyOpinion = { stance: "retain" | "remove"; opinion: string };
-const propertyOpinionsByKey = new Map<string, Map<number, PropertyOpinion>>();
-function propertyOpinionKey(classId: number, propertyId: number): string {
-  return `${classId}:${propertyId}`;
-}
 
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
@@ -59,9 +49,9 @@ export function generateActivationId(): string {
 }
 
 // One silence timer per project, shared across every active participant --
-// the AI moderator produces one running summary per project (not one per
-// person), so "5 seconds since the last chunk from ANYONE currently on"
-// is what triggers the next summary attempt.
+// the AI moderator produces one running discussion per project (not one per
+// person), so "5 seconds since the last chunk from ANYONE currently on" is
+// what triggers the next intervention attempt.
 const silenceTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 export function clearModeratorSilenceTimer(projectId: number) {
@@ -188,6 +178,131 @@ export async function getProjectOwnerApiKey(projectId: number): Promise<string |
   }
 }
 
+// ---------------------------------------------------------------------
+// Chat message log: the moderator's entire visible presence is this one
+// persisted, ordered log per project (see moderator.ts schema doc for the
+// meaning of each type). Every place a message is created also broadcasts
+// it live, and serializes it the same way the fetch-all-history endpoint
+// does, so a freshly-posted message and a rejoin/reload always render
+// identically.
+// ---------------------------------------------------------------------
+
+export interface SerializedChatMessage {
+  id: number;
+  type: ModeratorChatMessageType;
+  userId: number | null;
+  username: string | null;
+  colorSlot: number | null;
+  content: string;
+  matched: boolean | null;
+  className: string | null;
+  propertyName: string | null;
+  classId: number | null;
+  propertyId: number | null;
+  createdAt: string;
+}
+
+async function serializeChatMessage(row: ModeratorChatMessage): Promise<SerializedChatMessage> {
+  let username: string | null = null;
+  let colorSlot: number | null = null;
+  if (row.userId !== null) {
+    const [user, membership] = await Promise.all([
+      db.query.usersTable.findFirst({ where: eq(usersTable.id, row.userId) }),
+      db.query.projectMembersTable.findFirst({
+        where: and(
+          eq(projectMembersTable.projectId, row.projectId),
+          eq(projectMembersTable.userId, row.userId),
+        ),
+      }),
+    ]);
+    username = user?.username ?? "unknown";
+    colorSlot = membership?.colorSlot ?? 0;
+  }
+  return {
+    id: row.id,
+    type: row.type,
+    userId: row.userId,
+    username,
+    colorSlot,
+    content: row.content,
+    matched: row.matched,
+    className: row.className,
+    propertyName: row.propertyName,
+    classId: row.classId,
+    propertyId: row.propertyId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export async function listChatMessages(projectId: number): Promise<SerializedChatMessage[]> {
+  const rows = await db.query.moderatorChatMessagesTable.findMany({
+    where: eq(moderatorChatMessagesTable.projectId, projectId),
+    orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
+  });
+  return Promise.all(rows.map(serializeChatMessage));
+}
+
+async function postChatMessage(
+  projectId: number,
+  fields: {
+    type: ModeratorChatMessageType;
+    userId?: number | null;
+    content: string;
+    matched?: boolean | null;
+    className?: string | null;
+    propertyName?: string | null;
+    classId?: number | null;
+    propertyId?: number | null;
+  },
+): Promise<void> {
+  const [row] = await db
+    .insert(moderatorChatMessagesTable)
+    .values({ projectId, userId: fields.userId ?? null, ...fields })
+    .returning();
+  if (!row) return;
+  const message = await serializeChatMessage(row);
+  broadcastToProject(projectId, { type: "moderator_chat_message", message });
+}
+
+// Posted exactly once per project, the moment the shared space opens (every
+// expected member has marked ready) -- called from the ready route. A
+// no-op on every subsequent call for the same project.
+export async function ensureModeratorIntroMessage(projectId: number): Promise<void> {
+  const existing = await db.query.moderatorChatMessagesTable.findFirst({
+    where: and(
+      eq(moderatorChatMessagesTable.projectId, projectId),
+      eq(moderatorChatMessagesTable.type, "intro"),
+    ),
+  });
+  if (existing) return;
+
+  await postChatMessage(projectId, {
+    type: "intro",
+    userId: null,
+    content:
+      "Hi, I'm your AI moderator. I'll speak up here whenever discussion on a class or property stalls, " +
+      "and summarize the examples and counterexamples I've heard so far. To do that I need your microphone " +
+      "enabled so I can listen in -- everything said will appear here as chat messages, visible to everyone " +
+      "in this project.",
+  });
+}
+
+// Posted right after a member successfully turns their own mic on -- see
+// the PUT /projects/:id/moderator route.
+export async function postRecordingStartedMessage(projectId: number, userId: number, username: string): Promise<void> {
+  await postChatMessage(projectId, {
+    type: "system",
+    userId,
+    content: `${username} enabled their microphone. Recording started -- their speech will now appear here.`,
+  });
+}
+
+// Mirrors a transcribed chunk into the shared chat log the moment it's
+// recorded, so every member sees it live regardless of their own mic state.
+async function postTranscriptMessage(projectId: number, userId: number, text: string): Promise<void> {
+  await postChatMessage(projectId, { type: "transcript", userId, content: text });
+}
+
 // Persists a transcribed chunk IFF this member is still an active
 // participant under the same activationId the caller captured before
 // starting the (slow) transcription request. Runs as a single transaction
@@ -198,15 +313,15 @@ export async function getProjectOwnerApiKey(projectId: number): Promise<string |
 // where a write can land under a stale activationId. Returns true only if
 // the chunk was actually committed. Chunks from members who never turned
 // their own participation on are never recorded in the first place (the
-// route rejects those uploads before this is ever called), so summaries
-// naturally only ever draw on speech from opted-in members.
+// route rejects those uploads before this is ever called), so the
+// moderator naturally only ever draws on speech from opted-in members.
 export async function recordTranscriptChunk(
   projectId: number,
   userId: number,
   text: string,
   activationId: string,
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  const committed = await db.transaction(async (tx) => {
     const [current] = await tx
       .select()
       .from(moderatorParticipantsTable)
@@ -223,19 +338,28 @@ export async function recordTranscriptChunk(
     await tx.insert(moderatorTranscriptChunksTable).values({ projectId, userId, text, activationId });
     return true;
   });
+  if (committed) {
+    // Broadcasting the chat message is independent of the transcript-chunk
+    // transaction above (it doesn't need to be atomic with it -- worst case
+    // a chat message shows up a moment after the row that backs it).
+    await postTranscriptMessage(projectId, userId, text);
+  }
+  return committed;
 }
 
 // Fires an intervention attempt after the usual silence timeout, but never
-// sooner than INTERVENTION_COOLDOWN_MS after the last one actually shown to
-// the group -- if the cooldown hasn't elapsed yet, it reschedules itself for
-// the remainder rather than firing immediately or dropping the attempt.
-// Content isn't lost either way: generateSummary always summarizes
-// everything accumulated since the last checkpoint, whenever it does run.
+// sooner than INTERVENTION_COOLDOWN_MS after the last one actually posted
+// to the group -- if the cooldown hasn't elapsed yet, it reschedules itself
+// for the remainder rather than firing immediately or dropping the
+// attempt. Content isn't lost either way: generateIntervention always
+// re-analyzes everything accumulated since the last checkpoint (plus, for a
+// matched property, its ENTIRE prior history -- see generateIntervention),
+// whenever it does run.
 function fireWhenCooldownElapsed(projectId: number): void {
   const last = lastInterventionAt.get(projectId) ?? 0;
   const remaining = INTERVENTION_COOLDOWN_MS - (Date.now() - last);
   if (remaining <= 0) {
-    enqueueSummary(projectId);
+    enqueueIntervention(projectId);
     return;
   }
   setTimeout(() => fireWhenCooldownElapsed(projectId), remaining);
@@ -254,31 +378,97 @@ export function noteSpeechActivity(projectId: number): void {
 }
 
 // Two silence periods can legitimately occur close together -- someone
-// speaks again just as a summary request is still in flight, then goes
-// quiet again before the first one finishes. Without serialization, both
-// invocations would read the same `lastSummarizedAt` checkpoint, generate
-// overlapping summaries, and race to advance it -- whichever commits last
-// can even move it backwards, causing duplicated or dropped content.
-// Chaining every summary attempt for a project onto a single promise tail
+// speaks again just as an intervention request is still in flight, then
+// goes quiet again before the first one finishes. Without serialization,
+// both invocations would read the same `lastSummarizedAt` checkpoint,
+// generate overlapping interventions, and race to advance it -- whichever
+// commits last can even move it backwards, causing duplicated or dropped
+// content. Chaining every attempt for a project onto a single promise tail
 // guarantees they run one at a time, in order, so each one always reads the
 // checkpoint left by the one before it.
-const summaryQueues = new Map<number, Promise<void>>();
+const interventionQueues = new Map<number, Promise<void>>();
 
-function enqueueSummary(projectId: number): void {
-  const previous = summaryQueues.get(projectId) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(() => generateSummary(projectId));
-  summaryQueues.set(projectId, next);
+function enqueueIntervention(projectId: number): void {
+  const previous = interventionQueues.get(projectId) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(() => generateIntervention(projectId));
+  interventionQueues.set(projectId, next);
   next
     .catch((err) => {
-      logger.error({ err, projectId }, "Moderator summary generation failed unexpectedly");
+      logger.error({ err, projectId }, "Moderator intervention generation failed unexpectedly");
     })
     .finally(() => {
       // Avoid leaking a growing map entry once nothing else is queued behind us.
-      if (summaryQueues.get(projectId) === next) summaryQueues.delete(projectId);
+      if (interventionQueues.get(projectId) === next) interventionQueues.delete(projectId);
     });
 }
 
-async function generateSummary(projectId: number) {
+interface CatalogEntry {
+  classId: number;
+  propertyId: number;
+  className: string;
+  propertyName: string;
+}
+
+async function callOpenAiJson(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<any | null> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const message =
+      (body && typeof body === "object" && "error" in body && (body as any).error?.message) ||
+      `OpenAI request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+  const rawContent = data.choices?.[0]?.message?.content?.trim();
+  if (!rawContent) throw new Error("OpenAI returned an empty response.");
+
+  try {
+    const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+    return JSON.parse(cleaned);
+  } catch {
+    throw new Error("Could not understand the AI moderator's analysis of the discussion.");
+  }
+}
+
+function formatChunksAsTranscript(
+  chunks: { userId: number; text: string; createdAt: Date }[],
+  usernameById: Map<number, string>,
+): string {
+  return chunks
+    .slice()
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((chunk) => `${usernameById.get(chunk.userId) ?? `User ${chunk.userId}`}: ${chunk.text}`)
+    .join("\n");
+}
+
+// Two-pass design, run every time the group has gone quiet:
+//   Pass 1 (topic detection) looks ONLY at what's new since the last
+//   checkpoint -- "what are they discussing right now" is inherently a
+//   question about the most recent stretch of conversation.
+//   Pass 2 (full-history extraction) runs ONLY once pass 1 resolves to a
+//   real class+property in the workspace, and re-reads EVERY transcript
+//   chunk ever tied to that same class+property (chunks are retroactively
+//   tagged the first time they're attributed to a property, and that tag
+//   is never overwritten) -- not just what's new -- so an example given
+//   several rounds ago and never repeated since is never silently dropped,
+//   and the summary always reflects the complete, current state of the
+//   discussion rather than an incremental delta.
+async function generateIntervention(projectId: number): Promise<void> {
   const config = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
@@ -288,9 +478,10 @@ async function generateSummary(projectId: number) {
   if (!apiKey) return;
 
   // lastSummarizedAt is a DB column (not in-memory), so this checkpoint
-  // survives a restart -- chunks already folded into an earlier summary are
-  // never re-sent. It's shared across every participant's chunks: one
-  // running summary per project, not per person.
+  // survives a restart -- chunks already folded into an earlier
+  // intervention are never re-sent as "new". It's shared across every
+  // participant's chunks: one running discussion per project, not per
+  // person.
   const sinceClause = config.lastSummarizedAt
     ? gt(moderatorTranscriptChunksTable.createdAt, config.lastSummarizedAt)
     : undefined;
@@ -302,14 +493,6 @@ async function generateSummary(projectId: number) {
 
   const users = await db.query.usersTable.findMany();
   const usernameById = new Map(users.map((u) => [u.id, u.username]));
-  const userIdByUsername = new Map(users.map((u) => [u.username, u.id]));
-
-  // Every current project member gets a gauge segment -- not just whoever
-  // spoke this round -- so someone who never turned the moderator on (or
-  // has gone quiet) still shows up gray rather than vanishing from the dial.
-  const members = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
 
   // The model must only ever report a class/property that genuinely exists
   // in THIS project's shared workspace right now, using the exact same
@@ -339,8 +522,9 @@ async function generateSummary(projectId: number) {
   for (const a of agreements) {
     agreementCountByPropertyId.set(a.propertyId, (agreementCountByPropertyId.get(a.propertyId) ?? 0) + 1);
   }
+  const propertyById = new Map(properties.map((p) => [p.id, p]));
   const classLabelById = new Map(classes.map((c) => [c.id, c.label]));
-  const catalog = properties
+  const catalog: CatalogEntry[] = properties
     .filter((p) => (agreementCountByPropertyId.get(p.id) ?? 0) < maxMembers)
     .map((p) => ({
       classId: p.classId,
@@ -348,15 +532,9 @@ async function generateSummary(projectId: number) {
       className: classLabelById.get(p.classId) ?? null,
       propertyName: p.name,
     }))
-    .filter((entry): entry is { classId: number; propertyId: number; className: string; propertyName: string } =>
-      entry.className !== null,
-    );
+    .filter((entry): entry is CatalogEntry => entry.className !== null);
 
-  const transcriptText = newChunks
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((chunk) => `${usernameById.get(chunk.userId) ?? `User ${chunk.userId}`}: ${chunk.text}`)
-    .join("\n");
-
+  const newChunksTranscript = formatChunksAsTranscript(newChunks, usernameById);
   const maxCreatedAt = newChunks.reduce(
     (max, c) => (c.createdAt > max ? c.createdAt : max),
     config.lastSummarizedAt ?? new Date(0),
@@ -367,84 +545,33 @@ async function generateSummary(projectId: number) {
       ? catalog.map((entry) => `- ${entry.className}.${entry.propertyName}`).join("\n")
       : "(the workspace has no classes/properties yet)";
 
+  let matchedEntry: CatalogEntry | undefined;
+  let interventionContent: string;
+  let matched: boolean;
+
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an AI moderator for a group ontology-design conversation. Look at the transcript below and identify the SINGLE class and property the speakers are currently discussing in terms of whether it should be retained or removed from the ontology. " +
-              "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
-              catalogText +
-              "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the list. If the discussion doesn't clearly and specifically match one of these listed pairs, set both className and propertyName to null. " +
-              "For every person who spoke, decide whether their stated position argues to RETAIN or to REMOVE that property, and write a short paraphrase (12 words or fewer) of their opinion in their own voice. " +
-              'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: {"className": string | null, "propertyName": string | null, "opinions": [{"username": string, "stance": "retain" | "remove", "opinion": string}]}. ' +
-              "Use the exact usernames as they appear as speaker labels in the transcript. Omit anyone whose stance genuinely isn't clear from what they said.",
-          },
-          { role: "user", content: transcriptText },
-        ],
-      }),
-    });
+    // --- Pass 1: what is the group discussing right now? ---
+    const topicResult = await callOpenAiJson(
+      apiKey,
+      config.model,
+      "You are an AI moderator for a group ontology-design conversation. Look at the transcript below and " +
+        "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
+        "retained, removed, or how it should be defined). " +
+        "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
+        catalogText +
+        "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
+        "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
+        "list. If the discussion doesn't clearly and specifically match one of these listed pairs, set both " +
+        "className and propertyName to null. " +
+        'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+        '{"className": string | null, "propertyName": string | null}.',
+      newChunksTranscript,
+    );
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      const message =
-        (body && typeof body === "object" && "error" in body && (body as any).error?.message) ||
-        `OpenAI request failed with status ${response.status}`;
-      broadcastToProject(projectId, { type: "moderator_error", message });
-      return;
-    }
-
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const rawContent = data.choices?.[0]?.message?.content?.trim();
-    if (!rawContent) {
-      broadcastToProject(projectId, {
-        type: "moderator_error",
-        message: "OpenAI returned an empty summary.",
-      });
-      return;
-    }
-
-    let parsed: {
-      className?: unknown;
-      propertyName?: unknown;
-      opinions?: unknown;
-    };
-    try {
-      // The model is asked for raw JSON, but strip a stray ```json fence
-      // defensively in case it doesn't follow that instruction exactly.
-      const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
-      parsed = JSON.parse(cleaned);
-    } catch {
-      broadcastToProject(projectId, {
-        type: "moderator_error",
-        message: "Could not understand the AI moderator's analysis of the discussion.",
-      });
-      return;
-    }
-
-    const rawClassName = typeof parsed.className === "string" ? parsed.className : null;
-    const rawPropertyName = typeof parsed.propertyName === "string" ? parsed.propertyName : null;
-    const rawOpinions = Array.isArray(parsed.opinions) ? parsed.opinions : [];
-
-    // Never trust the model's className/propertyName as-is -- resolve it
-    // against the real catalog of classes/properties that exist in this
-    // project's shared workspace right now (case/whitespace-insensitive, in
-    // case the model normalizes casing slightly). Only a genuine match
-    // produces a visualization; anything else is treated the same as the
-    // model reporting "no clear subject" -- the UI shows a reminder to
-    // discuss properties already in the workspace instead of a gauge.
     const normalize = (s: string) => s.trim().toLowerCase();
-    const matchedEntry =
+    const rawClassName = typeof topicResult?.className === "string" ? topicResult.className : null;
+    const rawPropertyName = typeof topicResult?.propertyName === "string" ? topicResult.propertyName : null;
+    matchedEntry =
       rawClassName && rawPropertyName
         ? catalog.find(
             (entry) =>
@@ -452,116 +579,128 @@ async function generateSummary(projectId: number) {
               normalize(entry.propertyName) === normalize(rawPropertyName),
           )
         : undefined;
+    matched = matchedEntry !== undefined;
 
-    const matched = matchedEntry !== undefined;
-    const className = matchedEntry?.className ?? null;
-    const propertyName = matchedEntry?.propertyName ?? null;
-    const classId = matchedEntry?.classId ?? null;
-    const propertyId = matchedEntry?.propertyId ?? null;
+    if (matched && matchedEntry) {
+      const { classId, propertyId, className, propertyName } = matchedEntry;
 
-    // One entry per opted-in opinion, keyed by userId so it can be merged
-    // against the full member list below.
-    const opinionByUserId = new Map<number, { stance: "retain" | "remove"; opinion: string }>();
-    for (const entry of rawOpinions) {
-      if (!entry || typeof entry !== "object") continue;
-      const username = (entry as any).username;
-      const stance = (entry as any).stance;
-      const opinion = (entry as any).opinion;
-      if (typeof username !== "string" || (stance !== "retain" && stance !== "remove") || typeof opinion !== "string") {
-        continue;
+      // Retroactively tag this round's chunks with the matched property --
+      // only ones not already tagged under some earlier topic, so an
+      // attribution is never overwritten once made.
+      const newChunkIds = newChunks.filter((c) => c.classId === null && c.propertyId === null).map((c) => c.id);
+      if (newChunkIds.length > 0) {
+        await db
+          .update(moderatorTranscriptChunksTable)
+          .set({ classId, propertyId })
+          .where(
+            and(
+              inArray(moderatorTranscriptChunksTable.id, newChunkIds),
+              isNull(moderatorTranscriptChunksTable.classId),
+            ),
+          );
       }
-      const userId = userIdByUsername.get(username);
-      if (userId === undefined) continue;
-      opinionByUserId.set(userId, { stance, opinion });
-    }
 
-    // Merge this round's freshly-extracted opinions into the running
-    // per-property record, then read segments back from THAT (not from
-    // opinionByUserId alone) so a member who already stated a stance in an
-    // earlier round keeps showing it here even if they said nothing new
-    // this round.
-    let persistedOpinions: Map<number, PropertyOpinion> | undefined;
-    if (matched && classId !== null && propertyId !== null) {
-      const key = propertyOpinionKey(classId, propertyId);
-      persistedOpinions = propertyOpinionsByKey.get(key) ?? new Map();
-      for (const [userId, value] of opinionByUserId) persistedOpinions.set(userId, value);
-      propertyOpinionsByKey.set(key, persistedOpinions);
-    }
-
-    // Every current member gets exactly one segment: a real stance if the
-    // model identified one for them, otherwise "unknown" -- rendered gray
-    // and to the right of the needle regardless of whether that's because
-    // they stayed silent this round or never turned the moderator on.
-    // Only built when the discussion actually resolved to a real
-    // class+property in the workspace -- there's nothing meaningful to
-    // visualize a retain/remove split for otherwise.
-    const segments: ModeratorSummarySegment[] = matched
-      ? members.map((member) => {
-          const opinion = persistedOpinions?.get(member.userId);
-          return {
-            userId: member.userId,
-            username: usernameById.get(member.userId) ?? `User ${member.userId}`,
-            colorSlot: member.colorSlot,
-            stance: opinion?.stance ?? "unknown",
-            opinion: opinion?.opinion ?? null,
-          };
-        })
-      : [];
-
-    const summaryLabel = matched ? `${className}.${propertyName}` : "Ontology discussion (no clear workspace match)";
-
-    // Commit the summary and advance the durable checkpoint atomically, and
-    // only if the project's moderator config row is still the one we
-    // generated this summary for.
-    const committed = await db.transaction(async (tx) => {
-      const [current] = await tx
-        .select()
-        .from(projectModeratorTable)
-        .where(eq(projectModeratorTable.projectId, projectId))
-        .for("update");
-      if (!current) return false;
-      await tx.insert(moderatorSummariesTable).values({
-        projectId,
-        summary: summaryLabel,
-        className,
-        propertyName,
-        classId,
-        propertyId,
-        matched,
-        segments,
+      // --- Pass 2: re-analyze the COMPLETE history tied to this property. ---
+      const historicalChunks = await db.query.moderatorTranscriptChunksTable.findMany({
+        where: and(
+          eq(moderatorTranscriptChunksTable.projectId, projectId),
+          eq(moderatorTranscriptChunksTable.classId, classId),
+          eq(moderatorTranscriptChunksTable.propertyId, propertyId),
+        ),
       });
-      await tx
-        .update(projectModeratorTable)
-        .set({ lastSummarizedAt: maxCreatedAt })
-        .where(eq(projectModeratorTable.projectId, projectId));
-      return true;
-    });
+      const fullTranscript = formatChunksAsTranscript(historicalChunks, usernameById);
 
-    if (!committed) return;
+      const extraction = await callOpenAiJson(
+        apiKey,
+        config.model,
+        `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
+          "Below is the ENTIRE transcript of everything said about this specific property so far (not just the " +
+          "most recent portion). Extract every concrete EXAMPLE given in support of keeping/adding this property, " +
+          "and every COUNTEREXAMPLE or objection given against it, across the whole transcript -- include " +
+          "something even if it was only mentioned once early on and never repeated, but leave it out if someone " +
+          "later explicitly retracted or contradicted it. For each one, note who said it. " +
+          'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+          '{"examples": [{"text": string, "by": string}], "counterexamples": [{"text": string, "by": string}]}. ' +
+          "Use the exact usernames as they appear as speaker labels in the transcript.",
+        fullTranscript,
+      );
 
-    // Marks this as the most recent intervention shown to the group --
-    // gates fireWhenCooldownElapsed for the NEXT one, whether or not this
-    // round matched a real class/property (a "focus on the workspace"
-    // reminder is still an intervention the group just saw).
-    lastInterventionAt.set(projectId, Date.now());
+      const examples = Array.isArray(extraction?.examples) ? extraction.examples : [];
+      const counterexamples = Array.isArray(extraction?.counterexamples) ? extraction.counterexamples : [];
+      const formatEntries = (entries: unknown[]) =>
+        entries
+          .filter(
+            (e): e is { text: string; by: string } =>
+              Boolean(e) && typeof e === "object" && typeof (e as any).text === "string",
+          )
+          .map((e) => `- ${e.text}${typeof e.by === "string" && e.by ? ` (given by ${e.by})` : ""}`)
+          .join("\n");
 
-    broadcastToProject(projectId, {
-      type: "moderator_summary",
-      className,
-      propertyName,
-      classId,
-      propertyId,
-      matched,
-      segments,
-      createdAt: new Date().toISOString(),
-    });
+      const examplesText = formatEntries(examples) || "(none given yet)";
+      const counterexamplesText = formatEntries(counterexamples) || "(none given yet)";
+      const proposer = propertyById.get(propertyId);
+      const proposedByUsername = proposer ? usernameById.get(proposer.proposedByUserId) ?? "someone" : "someone";
+
+      interventionContent =
+        `Stalled discussion detected on ${className}.${propertyName}.\n\n` +
+        `Examples:\n${examplesText}\n\n` +
+        `Counterexamples:\n${counterexamplesText}\n\n` +
+        `Originally proposed by: ${proposedByUsername}`;
+    } else {
+      interventionContent =
+        "Stalled discussion detected, but I couldn't tell which class or property this was about. " +
+        "Try focusing the discussion on properties already in this shared workspace.";
+    }
   } catch (err) {
-    logger.error({ err, projectId }, "Moderator summary request errored");
+    logger.error({ err, projectId }, "Moderator intervention generation errored");
     broadcastToProject(projectId, {
       type: "moderator_error",
-      message: "Could not reach OpenAI to generate a summary.",
+      message: err instanceof Error ? err.message : "Could not reach OpenAI to generate a summary.",
     });
+    return;
   }
+
+  // Commit the intervention and advance the durable checkpoint atomically,
+  // and only if the project's moderator config row is still the one we
+  // generated this intervention for.
+  const [insertedRow, committed] = await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(projectModeratorTable)
+      .where(eq(projectModeratorTable.projectId, projectId))
+      .for("update");
+    if (!current) return [undefined, false] as const;
+    const [row] = await tx
+      .insert(moderatorChatMessagesTable)
+      .values({
+        projectId,
+        type: "intervention",
+        userId: null,
+        content: interventionContent,
+        matched,
+        className: matchedEntry?.className ?? null,
+        propertyName: matchedEntry?.propertyName ?? null,
+        classId: matchedEntry?.classId ?? null,
+        propertyId: matchedEntry?.propertyId ?? null,
+      })
+      .returning();
+    await tx
+      .update(projectModeratorTable)
+      .set({ lastSummarizedAt: maxCreatedAt })
+      .where(eq(projectModeratorTable.projectId, projectId));
+    return [row, true] as const;
+  });
+
+  if (!committed || !insertedRow) return;
+
+  // Marks this as the most recent intervention shown to the group -- gates
+  // fireWhenCooldownElapsed for the NEXT one, whether or not this round
+  // matched a real class/property (a "focus on the workspace" reminder is
+  // still an intervention the group just saw).
+  lastInterventionAt.set(projectId, Date.now());
+
+  const message = await serializeChatMessage(insertedRow);
+  broadcastToProject(projectId, { type: "moderator_chat_message", message });
 }
 
 export async function transcribeAudioChunk(

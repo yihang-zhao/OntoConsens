@@ -6,6 +6,7 @@ import {
   projectModeratorTable,
   projectsTable,
   projectMembersTable,
+  usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../lib/auth";
 import { broadcastToProject } from "../lib/wsHub";
@@ -16,6 +17,8 @@ import {
   generateActivationId,
   getParticipant,
   getProjectOwnerApiKey,
+  listChatMessages,
+  postRecordingStartedMessage,
   projectOwnerHasApiKey,
   recordTranscriptChunk,
   noteSpeechActivity,
@@ -101,7 +104,29 @@ router.put("/projects/:id/moderator", async (req, res) => {
   // flight, but it never affects any other member's on/off state.
   const activationId = generateActivationId();
   await activateParticipant(projectId, userId, activationId);
+
+  const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+  await postRecordingStartedMessage(projectId, userId, user?.username ?? "A member");
+
   res.json({ active: true, configured: true });
+});
+
+// Full persisted chat history for this project -- visible to every
+// member regardless of their own mic state, so a reload/rejoin renders the
+// exact same transcript/intervention/system messages already broadcast
+// live over the socket.
+router.get("/projects/:id/moderator/messages", async (req, res) => {
+  const userId = req.userId!;
+  const projectId = Number(req.params.id);
+
+  const membership = await getMembership(projectId, userId);
+  if (!membership) {
+    res.status(403).json({ error: "You are not a member of this project" });
+    return;
+  }
+
+  const messages = await listChatMessages(projectId);
+  res.json({ messages });
 });
 
 router.post("/projects/:id/moderator/disable", async (req, res) => {

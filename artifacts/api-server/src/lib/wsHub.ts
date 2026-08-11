@@ -59,25 +59,25 @@ export type ServerEvent =
   | { type: "member_count_changed"; projectId: number; memberCount: number }
   | { type: "speaker_volume"; userId: number; level: number }
   | {
-      type: "moderator_summary";
-      // Canonical class/property that genuinely exists in the project's
-      // shared workspace right now, or null when the discussion couldn't be
-      // confidently tied to one -- `matched` distinguishes the two cases
-      // (rather than the client having to infer it from nulls alone) so it
-      // can show a gauge only when there's something real to visualize.
-      className: string | null;
-      propertyName: string | null;
-      classId: number | null;
-      propertyId: number | null;
-      matched: boolean;
-      segments: {
-        userId: number;
-        username: string;
-        colorSlot: number;
-        stance: "retain" | "remove" | "unknown";
-        opinion: string | null;
-      }[];
-      createdAt: string;
+      type: "moderator_chat_message";
+      // A single, fully-serialized row from the persisted moderator chat
+      // log -- intro/system/transcript/intervention -- ready to render or
+      // append as-is, identical in shape to what GET
+      // /projects/:id/moderator/messages returns for reload/rejoin.
+      message: {
+        id: number;
+        type: "intro" | "system" | "transcript" | "intervention";
+        userId: number | null;
+        username: string | null;
+        colorSlot: number | null;
+        content: string;
+        matched: boolean | null;
+        className: string | null;
+        propertyName: string | null;
+        classId: number | null;
+        propertyId: number | null;
+        createdAt: string;
+      };
     }
   | { type: "moderator_error"; message: string };
 

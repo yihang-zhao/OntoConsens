@@ -24,8 +24,9 @@ import {
   Loader2, 
   Network, 
 } from "lucide-react";
-import { useProjectSocket, type ModeratorSummaryEvent } from "@/hooks/useProjectSocket";
-import { ModeratorPanel } from "@/components/ModeratorPanel";
+import { useProjectSocket, type ModeratorChatMessage } from "@/hooks/useProjectSocket";
+import { ModeratorChatPanel } from "@/components/ModeratorChatPanel";
+import { colorForSlot } from "@/lib/memberColors";
 
 export default function ProjectWorkspace() {
   const { id: idStr } = useParams();
@@ -81,25 +82,17 @@ export default function ProjectWorkspace() {
       refetchInterval: 10_000,
     },
   });
-  const [summaries, setSummaries] = useState<ModeratorSummaryEvent[]>([]);
+  const [liveMessages, setLiveMessages] = useState<ModeratorChatMessage[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
-  // Once the AI moderator's summary popup disappears, briefly highlight the
-  // class/property it was actually about in the shared graph -- gives the
-  // popup's takeaway somewhere to land instead of just fading away.
+  // The instant a matched "stalled discussion" intervention arrives,
+  // briefly highlight the class/property it was actually about in the
+  // shared graph -- gives the moderator's message somewhere to land in the
+  // workspace instead of only living in the chat panel.
   const [highlightedProperty, setHighlightedProperty] = useState<{ classId: number; propertyId: number } | null>(
     null,
   );
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const HIGHLIGHT_DURATION_MS = 4_000;
-  const handleSummaryDismissed = (target: { classId: number; propertyId: number } | null) => {
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-    if (!target) {
-      setHighlightedProperty(null);
-      return;
-    }
-    setHighlightedProperty(target);
-    highlightTimerRef.current = setTimeout(() => setHighlightedProperty(null), HIGHLIGHT_DURATION_MS);
-  };
   useEffect(() => {
     return () => {
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -128,8 +121,13 @@ export default function ProjectWorkspace() {
       queryClient.removeQueries({ queryKey: getGetProjectQueryKey(projectId) });
       navigate("/");
     },
-    onModeratorSummary: (summary) => {
-      setSummaries((prev) => [...prev, summary]);
+    onModeratorChatMessage: (message) => {
+      setLiveMessages((prev) => [...prev, message]);
+      if (message.type === "intervention" && message.matched && message.classId !== null && message.propertyId !== null) {
+        if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        setHighlightedProperty({ classId: message.classId, propertyId: message.propertyId });
+        highlightTimerRef.current = setTimeout(() => setHighlightedProperty(null), HIGHLIGHT_DURATION_MS);
+      }
     },
     onModeratorError: (message) => {
       setModeratorErrorMessage(message);
@@ -195,6 +193,16 @@ export default function ProjectWorkspace() {
       console.error("Export failed", e);
     }
   };
+
+  // The pulsing canvas border reflects whoever is currently speaking
+  // loudest, using their member color — a stand-in "who has the floor"
+  // indicator without showing raw audio or a transcript.
+  const activeSpeaker = [...speakerVolumes.values()]
+    .filter((v) => v.level > 0.04)
+    .sort((a, b) => b.level - a.level)[0];
+  const speakerColor = activeSpeaker
+    ? colorForSlot(project?.members.find((m) => m.userId === activeSpeaker.userId)?.colorSlot ?? 0)
+    : null;
 
   if (isLoading) {
     return (
@@ -295,7 +303,7 @@ export default function ProjectWorkspace() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex min-h-0 relative">
-        {/* Canvas Area (full width - the item list sidebar has been removed) */}
+        {/* Canvas Area */}
         <main className="flex-1 min-w-0 bg-background relative">
           {me && (
             <GraphCanvas
@@ -309,19 +317,16 @@ export default function ProjectWorkspace() {
             />
           )}
 
-          {me && allReady && (
-            <ModeratorPanel
-              projectId={projectId}
-              sharedModeEnabled={allReady}
-              members={project.members}
-              speakerVolumes={speakerVolumes}
-              sendVolume={sendVolume}
-              moderatorActive={moderatorStatus?.active ?? false}
-              moderatorConfigured={moderatorStatus?.configured ?? false}
-              summaries={summaries}
-              moderatorErrorMessage={moderatorErrorMessage}
-              onDismissError={() => setModeratorErrorMessage(null)}
-              onSummaryDismissed={handleSummaryDismissed}
+          {/* Pulsing border overlay while someone opted-in is speaking --
+              relocated here (out of the chat panel) since it's a property of
+              the canvas, not the chat log. */}
+          {activeSpeaker && speakerColor && (
+            <div
+              className="pointer-events-none absolute inset-0 z-40 transition-[box-shadow] duration-100"
+              style={{
+                boxShadow: `inset 0 0 0 ${3 + activeSpeaker.level * 10}px ${speakerColor.solid}`,
+                opacity: 0.35 + activeSpeaker.level * 0.5,
+              }}
             />
           )}
 
@@ -340,6 +345,21 @@ export default function ProjectWorkspace() {
             </span>
           )}
         </main>
+
+        {/* Persistent AI moderator chat panel -- appears once the shared
+            space is open, visible to every member regardless of their own
+            mic state. */}
+        {allReady && (
+          <ModeratorChatPanel
+            projectId={projectId}
+            moderatorActive={moderatorStatus?.active ?? false}
+            moderatorConfigured={moderatorStatus?.configured ?? false}
+            liveMessages={liveMessages}
+            onVolume={sendVolume}
+            moderatorErrorMessage={moderatorErrorMessage}
+            onDismissError={() => setModeratorErrorMessage(null)}
+          />
+        )}
       </div>
 
       {/* Bottom Export Bar */}
