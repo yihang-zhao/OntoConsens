@@ -232,20 +232,7 @@ export function ModeratorChatPanel({
     if (revealTimerRef.current) return; // a reveal is already in flight
     const next = messages.find((m) => !revealedIds.has(m.id) && m.id !== typingMessageId);
     if (!next) return;
-    // Transcript messages (what a member actually said) reveal instantly --
-    // they were already visible as a live caption a moment ago, so there's
-    // nothing to "type out". Routing them through the typing-indicator state
-    // first, even for 0ms, still rendered one extra frame with the dots
-    // bubble in place of the just-removed caption bubble, and that briefly
-    // different box height was what made the chat visibly jump right as a
-    // message finalized. Only the AI moderator's own messages (intro /
-    // intervention) get the typing delay, since there's no live preview to
-    // hand off from for those.
-    if (next.type === "transcript") {
-      setRevealedIds((prev) => new Set(prev).add(next.id));
-      return;
-    }
-    const delay = 1100;
+    const delay = next.type === "intro" || next.type === "intervention" ? 1100 : 0;
     setTypingMessageId(next.id);
     revealTimerRef.current = setTimeout(() => {
       setRevealedIds((prev) => new Set(prev).add(next.id));
