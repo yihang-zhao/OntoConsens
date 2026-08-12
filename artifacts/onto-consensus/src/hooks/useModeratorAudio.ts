@@ -4,6 +4,10 @@ interface UseModeratorAudioOptions {
   projectId: number;
   /** Mic capture only runs while this is true (moderator on AND user opted in). */
   active: boolean;
+  /** BCP-47 language tag passed straight to the recognizer (e.g. "en-US",
+   *  "zh-CN") -- lets each member recognize their own spoken language
+   *  independently of everyone else's. */
+  lang: string;
   /** Called ~8x/second with a 0..1 volume level while active, for the
    *  per-member "speaking" fallback indicator (used when the browser has no
    *  speech recognizer, so there's at least a visible sign someone's talking). */
@@ -16,10 +20,10 @@ interface UseModeratorAudioOptions {
    *  implementation, so live transcription is simply unavailable there. */
   onCaption?: (text: string) => void;
   /** Called once per utterance, with its full recognized text, the moment
-   *  5 seconds pass with no further speech (or the mic is turned off mid-
+   *  3 seconds pass with no further speech (or the mic is turned off mid-
    *  utterance) -- this is the point where the text should be persisted as
    *  a real, permanent chat message. While the user keeps talking with less
-   *  than 5s of silence between words, onCaption keeps growing the SAME
+   *  than 3s of silence between words, onCaption keeps growing the SAME
    *  in-progress utterance instead of this firing. */
   onFinalize?: (text: string) => void;
 }
@@ -47,10 +51,8 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 const VOLUME_SEND_INTERVAL_MS = 120;
 
 // How long an utterance can go without any new recognized word before it's
-// considered over and gets finalized into its own permanent message. Kept
-// generous on purpose: someone pausing mid-thought for a few seconds should
-// still land in the same message box, not get fragmented into several.
-const SILENCE_FINALIZE_MS = 5_000;
+// considered over and gets finalized into its own permanent message.
+const SILENCE_FINALIZE_MS = 3_000;
 const SILENCE_CHECK_INTERVAL_MS = 300;
 // Browsers periodically end a "continuous" recognition session on their own
 // even while the user keeps talking -- this restarts it quickly so that
@@ -63,7 +65,7 @@ const RECOGNITION_RESTART_DELAY_MS = 250;
 // mic: (1) a continuous volume level, sent to everyone as a fallback
 // "someone is speaking" signal, and (2) live speech-to-text via the
 // browser's own recognizer, which is now the transcript itself.
-export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFinalize }: UseModeratorAudioOptions) {
+export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption, onFinalize }: UseModeratorAudioOptions) {
   const [micError, setMicError] = useState<string | null>(null);
   const [speechSupported, setSpeechSupported] = useState(true);
   const onVolumeRef = useRef(onVolume);
@@ -94,19 +96,37 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFi
     // Utterance state is bridged across recognizer restarts (see
     // RECOGNITION_RESTART_DELAY_MS above) -- only wall-clock silence since
     // the last recognized word can end an utterance, never the recognizer's
-    // own start/stop lifecycle.
-    let finalizedText = "";
-    let interimText = "";
+    // own start/stop lifecycle. `priorSessionsText` holds everything already
+    // recognized in earlier recognizer sessions of this SAME utterance;
+    // within the current session, the full text-so-far is recomputed from
+    // scratch on every onresult (see below) instead of being built up
+    // incrementally, which is what caused words to vanish -- some
+    // recognizers (notably for Chinese and other non-English languages)
+    // deliver interim results as short growing/shrinking fragments rather
+    // than one steadily-growing phrase, and incrementally appending each
+    // fragment onto the previous one duplicated or dropped words. Reading
+    // the browser's own results array fresh each time is the only
+    // representation that's always correct, regardless of language.
+    let priorSessionsText = "";
     let lastSpeechAt = 0;
+    let lastResults: any = null;
 
-    function currentText() {
-      return [finalizedText, interimText].filter(Boolean).join(" ").trim();
+    function textFromResults(results: any): string {
+      const parts: string[] = [];
+      for (let i = 0; i < results.length; i++) {
+        const text = results[i]?.[0]?.transcript?.trim();
+        if (text) parts.push(text);
+      }
+      return parts.join(" ").trim();
     }
 
-    function finalizeIfAny() {
-      const text = currentText();
-      finalizedText = "";
-      interimText = "";
+    function currentText(sessionText: string) {
+      return [priorSessionsText, sessionText].filter(Boolean).join(" ").trim();
+    }
+
+    function finalizeIfAny(sessionText = "") {
+      const text = currentText(sessionText);
+      priorSessionsText = "";
       onCaptionRef.current?.("");
       if (text) onFinalizeRef.current?.(text);
     }
@@ -116,28 +136,25 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFi
       const rec = new Ctor();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = navigator.language || "en-US";
+      rec.lang = lang;
       rec.onresult = (event: any) => {
-        const results = event.results;
-        for (let i = event.resultIndex; i < results.length; i++) {
-          const result = results[i];
-          const text = result?.[0]?.transcript?.trim();
-          if (!text) continue;
-          if (result.isFinal) {
-            finalizedText = finalizedText ? `${finalizedText} ${text}` : text;
-            interimText = "";
-          } else {
-            interimText = text;
-          }
-        }
+        lastResults = event.results;
+        const sessionText = textFromResults(event.results);
         lastSpeechAt = Date.now();
-        onCaptionRef.current?.(currentText());
+        onCaptionRef.current?.(currentText(sessionText));
       };
       rec.onerror = () => {
         // "no-speech"/"aborted" etc. — just let onend's restart handle it.
       };
       rec.onend = () => {
-        if (!stopped) restartTimer = setTimeout(start, RECOGNITION_RESTART_DELAY_MS);
+        if (stopped) return;
+        // The session that just ended may have recognized more words that
+        // never got folded into priorSessionsText -- carry them forward so
+        // the restart below is invisible rather than dropping the tail end
+        // of what was just said.
+        if (lastResults) priorSessionsText = currentText(textFromResults(lastResults));
+        lastResults = null;
+        restartTimer = setTimeout(start, RECOGNITION_RESTART_DELAY_MS);
       };
       try {
         rec.start();
@@ -154,7 +171,8 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFi
       if (!lastSpeechAt) return;
       if (Date.now() - lastSpeechAt >= SILENCE_FINALIZE_MS) {
         lastSpeechAt = 0;
-        finalizeIfAny();
+        finalizeIfAny(lastResults ? textFromResults(lastResults) : "");
+        lastResults = null;
       }
     }, SILENCE_CHECK_INTERVAL_MS);
 
@@ -164,7 +182,7 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFi
       if (silenceTimer) clearInterval(silenceTimer);
       // Flush whatever's in progress immediately -- e.g. the mic was turned
       // off mid-sentence, which shouldn't silently drop that utterance.
-      finalizeIfAny();
+      finalizeIfAny(lastResults ? textFromResults(lastResults) : "");
       if (recognition) {
         recognition.onend = null;
         recognition.onerror = null;
@@ -176,7 +194,10 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFi
         }
       }
     };
-  }, [active]);
+    // Restart the recognizer on a language change too, not just on/off --
+    // otherwise switching languages mid-session keeps recognizing in the
+    // old one until the mic is toggled off and back on.
+  }, [active, lang]);
 
   useEffect(() => {
     if (!active) return;

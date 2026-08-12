@@ -9,10 +9,41 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
-import { Sparkles, AlertTriangle, X, Mic, MicOff } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sparkles, AlertTriangle, X, Mic, MicOff, Languages } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
 import type { LiveCaption, ModeratorChatMessage, SpeakerVolume } from "@/hooks/useProjectSocket";
+
+// Languages the live transcript can recognize -- each member picks their own
+// independently of everyone else's, since the mic and recognizer are
+// per-browser. BCP-47 tags are passed straight to the Web Speech API.
+const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
+  { value: "en-US", label: "English" },
+  { value: "zh-CN", label: "中文 (Chinese)" },
+  { value: "es-ES", label: "Español" },
+  { value: "fr-FR", label: "Français" },
+  { value: "de-DE", label: "Deutsch" },
+  { value: "ja-JP", label: "日本語" },
+  { value: "ko-KR", label: "한국어" },
+  { value: "hi-IN", label: "हिन्दी" },
+  { value: "pt-BR", label: "Português" },
+  { value: "ru-RU", label: "Русский" },
+];
+const RECOGNITION_LANG_STORAGE_KEY = "onto-consensus-moderator-lang";
+
+// Defaults to whichever of the supported languages best matches the
+// browser's own language setting, falling back to English -- most users
+// never need to touch the picker at all.
+function defaultRecognitionLang(): string {
+  const stored = localStorage.getItem(RECOGNITION_LANG_STORAGE_KEY);
+  if (stored && RECOGNITION_LANGUAGES.some((l) => l.value === stored)) return stored;
+  const browserLang = (navigator.language || "en-US").toLowerCase();
+  const match = RECOGNITION_LANGUAGES.find((l) => l.value.toLowerCase() === browserLang);
+  if (match) return match.value;
+  const prefixMatch = RECOGNITION_LANGUAGES.find((l) => l.value.toLowerCase().split("-")[0] === browserLang.split("-")[0]);
+  return prefixMatch?.value ?? "en-US";
+}
 
 interface ModeratorChatPanelProps {
   projectId: number;
@@ -89,6 +120,15 @@ export function ModeratorChatPanel({
   const invalidateStatus = () =>
     queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
 
+  // Which language THIS member's mic is recognized in -- purely a local,
+  // per-browser choice (each member can speak a different language), so it
+  // lives in localStorage rather than anywhere shared/synced.
+  const [recognitionLang, setRecognitionLang] = useState(defaultRecognitionLang);
+  const handleLangChange = (value: string) => {
+    setRecognitionLang(value);
+    localStorage.setItem(RECOGNITION_LANG_STORAGE_KEY, value);
+  };
+
   // Turning the moderator on for yourself is the same click that starts
   // capturing your mic. The browser's own permission prompt is the only
   // thing the user sees the first time; if they've already granted it, the
@@ -96,12 +136,14 @@ export function ModeratorChatPanel({
   const { micError, speechSupported } = useModeratorAudio({
     projectId,
     active: moderatorActive,
+    lang: recognitionLang,
     onVolume,
     // Live, word-by-word text as it's recognized -- this IS the transcript
     // now, broadcast to everyone (including the speaker) so one growing
-    // message box is visible in real time while they keep talking.
+    // message box is visible in real time while they keep talking. Nothing
+    // else touches this bubble's content.
     onCaption: sendCaption,
-    // Fires once per utterance, 5 seconds after the last recognized word (or
+    // Fires once per utterance, 3 seconds after the last recognized word (or
     // immediately if the mic is turned off mid-utterance) -- this is the
     // only point where a permanent chat message gets created, so continuous
     // talking never fragments into several boxes.
@@ -263,6 +305,21 @@ export function ModeratorChatPanel({
             disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
           />
         </div>
+        {speechSupported && (
+          <Select value={recognitionLang} onValueChange={handleLangChange}>
+            <SelectTrigger className="h-8 rounded-full bg-muted/50 border text-xs pl-3">
+              <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RECOGNITION_LANGUAGES.map((l) => (
+                <SelectItem key={l.value} value={l.value} className="text-xs">
+                  {l.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
     </aside>
   );
