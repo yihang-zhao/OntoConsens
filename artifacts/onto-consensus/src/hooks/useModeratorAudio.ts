@@ -20,10 +20,10 @@ interface UseModeratorAudioOptions {
    *  implementation, so live transcription is simply unavailable there. */
   onCaption?: (text: string) => void;
   /** Called once per utterance, with its full recognized text, the moment
-   *  3 seconds pass with no further speech (or the mic is turned off mid-
+   *  2 seconds pass with no further speech (or the mic is turned off mid-
    *  utterance) -- this is the point where the text should be persisted as
    *  a real, permanent chat message. While the user keeps talking with less
-   *  than 3s of silence between words, onCaption keeps growing the SAME
+   *  than 2s of silence between words, onCaption keeps growing the SAME
    *  in-progress utterance instead of this firing. */
   onFinalize?: (text: string) => void;
 }
@@ -52,7 +52,7 @@ const VOLUME_SEND_INTERVAL_MS = 120;
 
 // How long an utterance can go without any new recognized word before it's
 // considered over and gets finalized into its own permanent message.
-const SILENCE_FINALIZE_MS = 3_000;
+const SILENCE_FINALIZE_MS = 2_000;
 const SILENCE_CHECK_INTERVAL_MS = 300;
 // Browsers periodically end a "continuous" recognition session on their own
 // even while the user keeps talking -- this restarts it quickly so that
