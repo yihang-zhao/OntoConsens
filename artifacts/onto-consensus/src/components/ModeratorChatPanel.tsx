@@ -87,17 +87,6 @@ export function ModeratorChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moderatorActive, micError]);
 
-  // Rejecting the mic is a purely local, ephemeral reminder -- never
-  // persisted or broadcast to anyone else. It just tells THIS user the
-  // moderator can't hear them until they turn their mic on.
-  const [showRejectReminder, setShowRejectReminder] = useState(false);
-  const rejectReminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (rejectReminderTimerRef.current) clearTimeout(rejectReminderTimerRef.current);
-    };
-  }, []);
-
   const handleToggleClick = () => {
     if (moderatorActive) {
       disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
@@ -112,12 +101,6 @@ export function ModeratorChatPanel({
         },
       );
     }
-  };
-
-  const handleRejectClick = () => {
-    if (rejectReminderTimerRef.current) clearTimeout(rejectReminderTimerRef.current);
-    setShowRejectReminder(true);
-    rejectReminderTimerRef.current = setTimeout(() => setShowRejectReminder(false), 5_000);
   };
 
   // Reveal messages one at a time with a short "typing..." pause in front of
@@ -186,11 +169,6 @@ export function ModeratorChatPanel({
       </div>
 
       <div className="border-t shrink-0 p-3 flex flex-col gap-2">
-        {showRejectReminder && (
-          <p className="text-[11px] font-medium text-muted-foreground bg-muted rounded-lg px-2.5 py-1.5">
-            The moderator can't hear you until you enable your microphone.
-          </p>
-        )}
         {configure.isError && !moderatorActive && (
           <p className="text-[11px] font-medium text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-2.5 py-1.5">
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
@@ -202,17 +180,7 @@ export function ModeratorChatPanel({
           ) : (
             <MicOff className="w-4 h-4 text-muted-foreground" />
           )}
-          <span className="flex-1 text-xs font-medium text-muted-foreground">
-            {moderatorActive ? "Microphone enabled" : "Microphone disabled"}
-          </span>
-          {!moderatorActive && (
-            <button
-              onClick={handleRejectClick}
-              className="text-[11px] font-semibold text-muted-foreground hover:text-foreground px-1.5"
-            >
-              Reject
-            </button>
-          )}
+          <span className="flex-1 text-xs font-medium text-muted-foreground">Microphone</span>
           <Switch
             checked={moderatorActive}
             onCheckedChange={handleToggleClick}
@@ -241,7 +209,28 @@ function TypingIndicatorBubble() {
 }
 
 function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
-  if (message.type === "intro" || message.type === "system" || message.type === "intervention") {
+  // Mic on/off announcements are about a specific person, not the AI --
+  // their name (in their own workspace color) is the title, no AI icon, and
+  // the whole bubble is filled with their color so it reads as "their"
+  // message rather than the moderator's.
+  if (message.type === "system") {
+    const color = colorForSlot(message.colorSlot ?? 0);
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
+          {message.username ?? "unknown"}
+        </div>
+        <div
+          className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed text-white whitespace-pre-wrap"
+          style={{ backgroundColor: color.solid }}
+        >
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+
+  if (message.type === "intro" || message.type === "intervention") {
     const color = message.userId !== null ? colorForSlot(message.colorSlot ?? 0) : null;
     return (
       <div className="flex flex-col gap-1">
@@ -255,9 +244,7 @@ function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
             ? message.matched && message.className && message.propertyName
               ? `${message.className}.${message.propertyName}`
               : "AI moderator"
-            : message.userId !== null
-              ? message.username ?? "unknown"
-              : "AI moderator"}
+            : "AI moderator"}
         </div>
         <div
           className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"

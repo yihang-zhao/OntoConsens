@@ -277,9 +277,9 @@ export async function ensureModeratorIntroMessage(projectId: number): Promise<vo
   if (existing) return;
 
   const introMessages = [
-    "Hi, I'm your AI moderator. You can now discuss any properties that haven't yet been agreed to be retained by everyone.",
-    "I'll keep track of your discussion and help you sort things out whenever you get stalled on a class or property.",
-    "In order for me to do that, please open the microphone below.",
+    "Hi, I'm the AI moderator for this discussion session. Feel free to talk with your peers about any properties you haven't yet agreed to keep or remove.",
+    "I'll keep track of your discussion and step in to help whenever things stall.",
+    "In order for me to do that, please turn on the microphone below.",
   ];
   for (const content of introMessages) {
     await postChatMessage(projectId, { type: "intro", userId: null, content });
@@ -292,7 +292,18 @@ export async function postRecordingStartedMessage(projectId: number, userId: num
   await postChatMessage(projectId, {
     type: "system",
     userId,
-    content: `${username} enabled their microphone. Recording started -- their speech will now appear here.`,
+    content: `${username} turned on their microphone.`,
+  });
+}
+
+// Posted right after a member turns their own mic off -- see the
+// POST /projects/:id/moderator/disable route. Every member should see when
+// someone stops being heard by the moderator, not just when they start.
+export async function postRecordingStoppedMessage(projectId: number, userId: number, username: string): Promise<void> {
+  await postChatMessage(projectId, {
+    type: "system",
+    userId,
+    content: `${username} turned off their microphone.`,
   });
 }
 

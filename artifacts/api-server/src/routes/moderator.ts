@@ -19,6 +19,7 @@ import {
   getProjectOwnerApiKey,
   listChatMessages,
   postRecordingStartedMessage,
+  postRecordingStoppedMessage,
   projectOwnerHasApiKey,
   recordTranscriptChunk,
   noteSpeechActivity,
@@ -146,6 +147,10 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
   }
 
   await deactivateParticipant(projectId, userId);
+
+  const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+  await postRecordingStoppedMessage(projectId, userId, user?.username ?? "A member");
+
   res.json({ active: false, configured: await projectOwnerHasApiKey(projectId, project.ownerId) });
 });
 
