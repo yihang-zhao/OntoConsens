@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Sparkles, AlertTriangle, X, Mic, MicOff } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
-import type { ModeratorChatMessage, SpeakerVolume } from "@/hooks/useProjectSocket";
+import type { LiveCaption, ModeratorChatMessage, SpeakerVolume } from "@/hooks/useProjectSocket";
 
 interface ModeratorChatPanelProps {
   projectId: number;
@@ -30,6 +30,12 @@ interface ModeratorChatPanelProps {
    *  starts talking, well before their transcript can possibly be
    *  transcribed and posted. */
   speakerVolumes: Map<number, SpeakerVolume>;
+  /** Live, word-by-word speech-to-text as each member talks -- a real-time
+   *  caption (Teams-style), not the final persisted transcript. Only
+   *  populated for members whose browser supports the Web Speech API. */
+  liveCaptions: Map<number, LiveCaption>;
+  sendCaption: (text: string) => void;
+  clearLiveCaption: (userId: number) => void;
   members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
@@ -58,6 +64,9 @@ export function ModeratorChatPanel({
   liveMessages,
   onVolume,
   speakerVolumes,
+  liveCaptions,
+  sendCaption,
+  clearLiveCaption,
   members,
   moderatorErrorMessage,
   onDismissError,
@@ -86,7 +95,23 @@ export function ModeratorChatPanel({
     projectId,
     active: moderatorActive,
     onVolume,
+    onCaption: sendCaption,
   });
+
+  // The instant a real transcript message lands, drop its speaker's interim
+  // caption -- otherwise the live caption bubble can sit there stale for up
+  // to its own TTL, right next to (or above) the final message it was
+  // standing in for.
+  const lastMessageIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.id === lastMessageIdRef.current) return;
+    lastMessageIdRef.current = last.id;
+    if (last.type === "transcript" && last.userId !== null) {
+      clearLiveCaption(last.userId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   // "If the user at any point closes the mic, the AI moderator is closed as
   // well" -- so losing mic access (denied/revoked permission, device
@@ -146,11 +171,16 @@ export function ModeratorChatPanel({
   const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
   const isTyping = typingMessageId !== null;
 
-  // Live "X is speaking" bubbles -- one per member whose broadcast volume is
-  // currently above the ambient threshold. This is what makes the panel
-  // feel instant: real transcription can lag a couple of seconds behind
-  // actual speech, but the "someone is talking" signal is immediate.
-  const speakingMembers = members.filter((m) => (speakerVolumes.get(m.userId)?.level ?? 0) >= SPEAKING_LEVEL_THRESHOLD);
+  // Live "X is speaking" bubbles -- one per member who is either above the
+  // ambient volume threshold or has an in-flight live caption (captions can
+  // arrive a beat after volume crosses the threshold, and should keep the
+  // bubble alive through brief pauses mid-sentence). This is what makes the
+  // panel feel instant: real transcription can lag a couple of seconds
+  // behind actual speech, but the "someone is talking" signal -- and, where
+  // supported, their actual words -- show up immediately.
+  const speakingMembers = members.filter(
+    (m) => (speakerVolumes.get(m.userId)?.level ?? 0) >= SPEAKING_LEVEL_THRESHOLD || liveCaptions.has(m.userId),
+  );
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -185,7 +215,12 @@ export function ModeratorChatPanel({
         ))}
         {isTyping && <TypingIndicatorBubble />}
         {speakingMembers.map((m) => (
-          <SpeakingIndicatorBubble key={m.userId} username={m.username} colorSlot={m.colorSlot} />
+          <SpeakingIndicatorBubble
+            key={m.userId}
+            username={m.username}
+            colorSlot={m.colorSlot}
+            caption={liveCaptions.get(m.userId)?.text ?? ""}
+          />
         ))}
         <div ref={messagesEndRef} />
       </div>
@@ -230,7 +265,40 @@ function TypingIndicatorBubble() {
   );
 }
 
-function SpeakingIndicatorBubble({ username, colorSlot }: { username: string; colorSlot: number }) {
+function SpeakingBars({ color }: { color: string }) {
+  return (
+    <span className="flex items-end gap-0.5 h-3 shrink-0">
+      <span
+        className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
+        style={{ backgroundColor: color, height: "40%", animationDelay: "0s" }}
+      />
+      <span
+        className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
+        style={{ backgroundColor: color, height: "100%", animationDelay: "0.15s" }}
+      />
+      <span
+        className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
+        style={{ backgroundColor: color, height: "60%", animationDelay: "0.3s" }}
+      />
+    </span>
+  );
+}
+
+// The live, real-time caption bubble -- a Teams-style "closed caption" of
+// what a member is saying as they say it, sourced from the browser's own
+// speech recognizer (see useModeratorAudio's onCaption). Where the browser
+// doesn't support live speech recognition, this falls back to just the
+// animated "speaking..." bars so there's still an immediate signal that
+// someone is talking, even without their words.
+function SpeakingIndicatorBubble({
+  username,
+  colorSlot,
+  caption,
+}: {
+  username: string;
+  colorSlot: number;
+  caption: string;
+}) {
   const color = colorForSlot(colorSlot);
   return (
     <div className="flex flex-col gap-1">
@@ -238,26 +306,19 @@ function SpeakingIndicatorBubble({ username, colorSlot }: { username: string; co
         {username}
       </div>
       <div
-        className="rounded-xl rounded-tl-sm px-3 py-2.5 w-fit flex items-center gap-2"
+        className="rounded-xl rounded-tl-sm px-3 py-2.5 w-fit max-w-full flex items-center gap-2"
         style={{ backgroundColor: color.soft }}
       >
-        <span className="flex items-end gap-0.5 h-3">
-          <span
-            className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
-            style={{ backgroundColor: color.solid, height: "40%", animationDelay: "0s" }}
-          />
-          <span
-            className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
-            style={{ backgroundColor: color.solid, height: "100%", animationDelay: "0.15s" }}
-          />
-          <span
-            className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
-            style={{ backgroundColor: color.solid, height: "60%", animationDelay: "0.3s" }}
-          />
-        </span>
-        <span className="text-[11px] font-medium" style={{ color: color.softText }}>
-          speaking...
-        </span>
+        <SpeakingBars color={color.solid} />
+        {caption ? (
+          <span className="text-xs leading-relaxed" style={{ color: color.softText }}>
+            {caption}
+          </span>
+        ) : (
+          <span className="text-[11px] font-medium" style={{ color: color.softText }}>
+            speaking...
+          </span>
+        )}
       </div>
     </div>
   );

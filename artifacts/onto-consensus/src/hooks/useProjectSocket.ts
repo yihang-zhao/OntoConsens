@@ -45,8 +45,15 @@ type ServerEvent =
   | { type: "member_ready" }
   | { type: "project_deleted" }
   | { type: "speaker_volume"; userId: number; level: number }
+  | { type: "live_caption"; userId: number; text: string }
   | { type: "moderator_chat_message"; message: ModeratorChatMessage }
   | { type: "moderator_error"; message: string };
+
+export interface LiveCaption {
+  userId: number;
+  text: string;
+  updatedAt: number;
+}
 
 interface UseProjectSocketOptions {
   projectId: number;
@@ -63,6 +70,12 @@ interface UseProjectSocketOptions {
 // mid-sentence and no further "speaking stopped" signal ever comes in.
 const SPEAKER_VOLUME_TTL_MS = 1_200;
 const SPEAKER_VOLUME_PRUNE_INTERVAL_MS = 500;
+
+// A live caption is cleared this long after its last update -- long enough
+// to bridge normal mid-sentence pauses, short enough that it's gone well
+// before it could be confused with a stale/wrong utterance.
+const LIVE_CAPTION_TTL_MS = 2_500;
+const LIVE_CAPTION_PRUNE_INTERVAL_MS = 500;
 
 // Cursors older than this are considered stale and pruned even if no new
 // socket message ever arrives to trigger a re-render.
@@ -93,6 +106,7 @@ export function useProjectSocket({
   const [status, setStatus] = useState<SocketStatus>("reconnecting");
   const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(new Set());
   const [speakerVolumes, setSpeakerVolumes] = useState<Map<number, SpeakerVolume>>(new Map());
+  const [liveCaptions, setLiveCaptions] = useState<Map<number, LiveCaption>>(new Map());
   const callbacksRef = useRef({
     onProjectChanged,
     onPropertiesChanged,
@@ -114,6 +128,7 @@ export function useProjectSocket({
       setStatus("reconnecting");
       setOnlineUserIds(new Set());
       setSpeakerVolumes(new Map());
+      setLiveCaptions(new Map());
       return;
     }
 
@@ -216,6 +231,13 @@ export function useProjectSocket({
               return next;
             });
             break;
+          case "live_caption":
+            setLiveCaptions((prev) => {
+              const next = new Map(prev);
+              next.set(data.userId, { userId: data.userId, text: data.text, updatedAt: Date.now() });
+              return next;
+            });
+            break;
           case "moderator_chat_message":
             callbacksRef.current.onModeratorChatMessage?.(data.message);
             break;
@@ -292,6 +314,29 @@ export function useProjectSocket({
     return () => clearInterval(interval);
   }, [enabled]);
 
+  // A live caption with no update in a while means the speaker either
+  // finished their sentence and the recognizer went quiet, or their tab
+  // disappeared mid-word -- either way it should fade rather than linger
+  // forever waiting for an utterance that may never resume.
+  useEffect(() => {
+    if (!enabled) return;
+    const interval = setInterval(() => {
+      setLiveCaptions((prev) => {
+        const cutoff = Date.now() - LIVE_CAPTION_TTL_MS;
+        let changed = false;
+        const next = new Map(prev);
+        for (const [userId, caption] of prev) {
+          if (caption.updatedAt < cutoff) {
+            next.delete(userId);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, LIVE_CAPTION_PRUNE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [enabled]);
+
   const sendCursor = useCallback((x: number, y: number) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -306,5 +351,35 @@ export function useProjectSocket({
     }
   }, []);
 
-  return { cursors, sendCursor, status, onlineUserIds, speakerVolumes, sendVolume };
+  const sendCaption = useCallback((text: string) => {
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "caption", text }));
+    }
+  }, []);
+
+  // Clears this user's own live caption immediately once their real,
+  // persisted transcript message shows up in the chat -- otherwise the
+  // interim caption bubble can briefly linger under/above the final message
+  // until its own TTL expires.
+  const clearLiveCaption = useCallback((userId: number) => {
+    setLiveCaptions((prev) => {
+      if (!prev.has(userId)) return prev;
+      const next = new Map(prev);
+      next.delete(userId);
+      return next;
+    });
+  }, []);
+
+  return {
+    cursors,
+    sendCursor,
+    status,
+    onlineUserIds,
+    speakerVolumes,
+    sendVolume,
+    liveCaptions,
+    sendCaption,
+    clearLiveCaption,
+  };
 }

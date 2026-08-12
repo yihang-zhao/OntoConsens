@@ -106,6 +106,9 @@ export default function ProjectWorkspace() {
     onlineUserIds,
     speakerVolumes,
     sendVolume,
+    liveCaptions,
+    sendCaption,
+    clearLiveCaption,
   } = useProjectSocket({
     projectId,
     enabled: Boolean(project && meMember),
@@ -357,6 +360,9 @@ export default function ProjectWorkspace() {
             liveMessages={liveMessages}
             onVolume={sendVolume}
             speakerVolumes={speakerVolumes}
+            liveCaptions={liveCaptions}
+            sendCaption={sendCaption}
+            clearLiveCaption={clearLiveCaption}
             members={project.members}
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}

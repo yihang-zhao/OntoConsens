@@ -7,6 +7,34 @@ interface UseModeratorAudioOptions {
   active: boolean;
   /** Called ~8x/second with a 0..1 volume level while active, for the pulsing border. */
   onVolume: (level: number) => void;
+  /** Called with the current in-progress utterance's text as the browser's
+   *  speech recognizer refines it, live -- this is a real-time caption, not
+   *  the final transcript (that still comes from the server via Whisper).
+   *  Called with an empty string when an utterance ends. Only fires in
+   *  browsers that support the Web Speech API (Chrome/Edge); it's a
+   *  progressive enhancement on top of the existing record-then-transcribe
+   *  pipeline, not a replacement for it. */
+  onCaption?: (text: string) => void;
+}
+
+// Chrome/Edge ship this as the prefixed webkitSpeechRecognition; Firefox and
+// Safari currently have no implementation at all, so this is always
+// feature-detected and captions are simply skipped where unsupported.
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+interface SpeechRecognitionLike extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: any) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: any) => void) | null;
+}
+function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
+  const w = window as any;
+  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
 
 const VOLUME_SEND_INTERVAL_MS = 120;
@@ -51,11 +79,78 @@ function extensionForMimeType(mimeType: string): string {
 // everyone regardless of content, and (2) speech-triggered recording
 // uploaded for transcription, which is what actually resets the server's
 // 5-second silence timer — raw ambient volume never should.
-export function useModeratorAudio({ projectId, active, onVolume }: UseModeratorAudioOptions) {
+export function useModeratorAudio({ projectId, active, onVolume, onCaption }: UseModeratorAudioOptions) {
   const [micError, setMicError] = useState<string | null>(null);
   const uploadAudio = useUploadModeratorAudio();
   const onVolumeRef = useRef(onVolume);
   onVolumeRef.current = onVolume;
+  const onCaptionRef = useRef(onCaption);
+  onCaptionRef.current = onCaption;
+
+  // Live captions run as a second, independent consumer of the microphone
+  // via the browser's own speech recognizer -- it manages its own mic
+  // access separately from the MediaRecorder pipeline above, so the two
+  // don't interfere with each other.
+  useEffect(() => {
+    if (!active) return;
+    const maybeCtor = getSpeechRecognitionCtor();
+    if (!maybeCtor) return; // unsupported browser -- captions are best-effort
+    const Ctor = maybeCtor;
+
+    let stopped = false;
+    let recognition: SpeechRecognitionLike | null = null;
+    let restartTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function start() {
+      if (stopped) return;
+      const rec = new Ctor();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = navigator.language || "en-US";
+      rec.onresult = (event: any) => {
+        // The recognizer's own idea of the current utterance is the last
+        // result in its list, whether interim or final -- exactly what a
+        // live-captions UI (à la Teams) should show as it keeps refining.
+        const results = event.results;
+        const last = results[results.length - 1];
+        const text = last?.[0]?.transcript?.trim();
+        if (text) onCaptionRef.current?.(text);
+        if (last?.isFinal) onCaptionRef.current?.("");
+      };
+      rec.onerror = () => {
+        // "no-speech"/"aborted" etc. — just let onend's restart handle it.
+      };
+      rec.onend = () => {
+        onCaptionRef.current?.("");
+        if (!stopped) restartTimer = setTimeout(start, 250);
+      };
+      try {
+        rec.start();
+      } catch {
+        if (!stopped) restartTimer = setTimeout(start, 250);
+        return;
+      }
+      recognition = rec;
+    }
+
+    start();
+
+    return () => {
+      stopped = true;
+      if (restartTimer) clearTimeout(restartTimer);
+      onCaptionRef.current?.("");
+      if (recognition) {
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.onresult = null;
+        try {
+          recognition.abort();
+        } catch {
+          // already stopped
+        }
+      }
+    };
+  }, [active]);
 
   useEffect(() => {
     if (!active) return;

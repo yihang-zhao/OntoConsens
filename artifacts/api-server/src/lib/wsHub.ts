@@ -58,6 +58,7 @@ export type ServerEvent =
   | { type: "project_deleted"; projectId?: number }
   | { type: "member_count_changed"; projectId: number; memberCount: number }
   | { type: "speaker_volume"; userId: number; level: number }
+  | { type: "live_caption"; userId: number; text: string }
   | {
       type: "moderator_chat_message";
       // A single, fully-serialized row from the persisted moderator chat
@@ -193,11 +194,25 @@ export function setupWebSocketServer(): WebSocketServer {
         typeof (data as { level: unknown }).level === "number"
       ) {
         const { level } = data as { level: number };
-        broadcastToProject(
-          ticket.projectId,
-          { type: "speaker_volume", userId: ticket.userId, level },
-          socket,
-        );
+        // Unlike cursor moves, the speaker themself also needs this event --
+        // it drives their own "you are speaking" indicator, not just
+        // everyone else's pulsing border -- so it is NOT excluded from the
+        // sending socket.
+        broadcastToProject(ticket.projectId, { type: "speaker_volume", userId: ticket.userId, level });
+      } else if (
+        data &&
+        typeof data === "object" &&
+        "type" in data &&
+        (data as { type: unknown }).type === "caption" &&
+        "text" in data &&
+        typeof (data as { text: unknown }).text === "string"
+      ) {
+        const { text } = data as { text: string };
+        // Live captions round-trip back to the speaker too, so everyone
+        // (including them) renders the exact same growing text in the same
+        // place -- one source of truth instead of a local echo that could
+        // drift from what peers see.
+        broadcastToProject(ticket.projectId, { type: "live_caption", userId: ticket.userId, text });
       }
     });
 
