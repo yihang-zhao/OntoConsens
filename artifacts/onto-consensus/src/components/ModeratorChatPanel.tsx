@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Sparkles, AlertTriangle, X, Mic, MicOff } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
-import type { ModeratorChatMessage } from "@/hooks/useProjectSocket";
+import type { ModeratorChatMessage, SpeakerVolume } from "@/hooks/useProjectSocket";
 
 interface ModeratorChatPanelProps {
   projectId: number;
@@ -25,9 +25,20 @@ interface ModeratorChatPanelProps {
    *  appended to (not replacing) the persisted history fetched below. */
   liveMessages: ModeratorChatMessage[];
   onVolume: (level: number) => void;
+  /** Live per-member mic volume, broadcast by everyone with their mic on --
+   *  used to show a "so-and-so is speaking" indicator the instant someone
+   *  starts talking, well before their transcript can possibly be
+   *  transcribed and posted. */
+  speakerVolumes: Map<number, SpeakerVolume>;
+  members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
 }
+
+// Someone counts as "currently speaking" while their reported volume is
+// above ambient noise and was updated recently -- stale entries are pruned
+// by the socket hook itself, so a simple level check is enough here.
+const SPEAKING_LEVEL_THRESHOLD = 0.12;
 
 // Deduplicate by id: the persisted-history fetch and live socket messages can
 // legitimately overlap (e.g. a message arrives over the socket just before
@@ -46,6 +57,8 @@ export function ModeratorChatPanel({
   moderatorConfigured,
   liveMessages,
   onVolume,
+  speakerVolumes,
+  members,
   moderatorErrorMessage,
   onDismissError,
 }: ModeratorChatPanelProps) {
@@ -133,10 +146,16 @@ export function ModeratorChatPanel({
   const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
   const isTyping = typingMessageId !== null;
 
+  // Live "X is speaking" bubbles -- one per member whose broadcast volume is
+  // currently above the ambient threshold. This is what makes the panel
+  // feel instant: real transcription can lag a couple of seconds behind
+  // actual speech, but the "someone is talking" signal is immediate.
+  const speakingMembers = members.filter((m) => (speakerVolumes.get(m.userId)?.level ?? 0) >= SPEAKING_LEVEL_THRESHOLD);
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [visibleMessages.length, isTyping]);
+  }, [visibleMessages.length, isTyping, speakingMembers.length]);
 
   return (
     <aside className="w-80 shrink-0 h-full flex flex-col border-l bg-card">
@@ -165,6 +184,9 @@ export function ModeratorChatPanel({
           <ChatMessageBubble key={message.id} message={message} />
         ))}
         {isTyping && <TypingIndicatorBubble />}
+        {speakingMembers.map((m) => (
+          <SpeakingIndicatorBubble key={m.userId} username={m.username} colorSlot={m.colorSlot} />
+        ))}
         <div ref={messagesEndRef} />
       </div>
 
@@ -208,65 +230,71 @@ function TypingIndicatorBubble() {
   );
 }
 
-function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
-  // Mic on/off announcements are about a specific person, not the AI --
-  // their name (in their own workspace color) is the title, no AI icon, and
-  // the whole bubble is filled with their color so it reads as "their"
-  // message rather than the moderator's.
-  if (message.type === "system") {
-    const color = colorForSlot(message.colorSlot ?? 0);
-    return (
-      <div className="flex flex-col gap-1">
-        <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
-          {message.username ?? "unknown"}
-        </div>
-        <div
-          className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed text-white whitespace-pre-wrap"
-          style={{ backgroundColor: color.solid }}
-        >
-          {message.content}
-        </div>
+function SpeakingIndicatorBubble({ username, colorSlot }: { username: string; colorSlot: number }) {
+  const color = colorForSlot(colorSlot);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
+        {username}
       </div>
-    );
-  }
+      <div
+        className="rounded-xl rounded-tl-sm px-3 py-2.5 w-fit flex items-center gap-2"
+        style={{ backgroundColor: color.soft }}
+      >
+        <span className="flex items-end gap-0.5 h-3">
+          <span
+            className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
+            style={{ backgroundColor: color.solid, height: "40%", animationDelay: "0s" }}
+          />
+          <span
+            className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
+            style={{ backgroundColor: color.solid, height: "100%", animationDelay: "0.15s" }}
+          />
+          <span
+            className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
+            style={{ backgroundColor: color.solid, height: "60%", animationDelay: "0.3s" }}
+          />
+        </span>
+        <span className="text-[11px] font-medium" style={{ color: color.softText }}>
+          speaking...
+        </span>
+      </div>
+    </div>
+  );
+}
 
-  if (message.type === "intro" || message.type === "intervention") {
-    const color = message.userId !== null ? colorForSlot(message.colorSlot ?? 0) : null;
+function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
+  // Intro / mic on-off announcements / stalled-discussion interventions are
+  // all things the AI moderator itself is saying -- same title, icon, and
+  // color regardless of which member the announcement is about.
+  if (message.type === "intro" || message.type === "system" || message.type === "intervention") {
     return (
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
-          {message.type === "intervention" ? (
-            <Sparkles className="w-3 h-3 text-primary" />
-          ) : (
-            <Sparkles className="w-3 h-3 text-muted-foreground" />
-          )}
-          {message.type === "intervention"
-            ? message.matched && message.className && message.propertyName
-              ? `${message.className}.${message.propertyName}`
-              : "AI moderator"
+          <Sparkles className="w-3 h-3 text-primary" />
+          {message.type === "intervention" && message.matched && message.className && message.propertyName
+            ? `${message.className}.${message.propertyName}`
             : "AI moderator"}
         </div>
-        <div
-          className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
-          style={{
-            backgroundColor: color ? color.soft : "hsl(var(--muted))",
-            color: color ? color.softText : undefined,
-          }}
-        >
+        <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-primary/10 text-foreground">
           {message.content}
         </div>
       </div>
     );
   }
 
-  // transcript
+  // transcript -- styled entirely in the speaker's own workspace color, so
+  // it's immediately clear who said what without re-reading the name.
   const color = colorForSlot(message.colorSlot ?? 0);
   return (
     <div className="flex flex-col gap-1">
       <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
         {message.username ?? "unknown"}
       </div>
-      <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed bg-muted/60 whitespace-pre-wrap">
+      <div
+        className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
+        style={{ backgroundColor: color.soft, color: color.softText }}
+      >
         {message.content}
       </div>
     </div>

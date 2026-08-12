@@ -356,6 +356,8 @@ export default function ProjectWorkspace() {
             moderatorConfigured={moderatorStatus?.configured ?? false}
             liveMessages={liveMessages}
             onVolume={sendVolume}
+            speakerVolumes={speakerVolumes}
+            members={project.members}
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
           />

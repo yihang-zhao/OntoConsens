@@ -17,7 +17,7 @@ const SPEECH_STOP_THRESHOLD = 0.03;
 // How long volume must stay below the stop threshold before we consider the
 // utterance actually over — short sub-second dips (breaths, plosives) would
 // otherwise fragment one sentence into many tiny uploads.
-const SPEECH_STOP_DEBOUNCE_MS = 800;
+const SPEECH_STOP_DEBOUNCE_MS = 450;
 // Caps a single recorded chunk so one long monologue doesn't become one huge
 // upload (or keep the server's silence timer from ever getting a chance to
 // fire mid-sentence on a very long speaker).
