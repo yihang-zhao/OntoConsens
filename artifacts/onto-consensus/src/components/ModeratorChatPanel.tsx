@@ -20,7 +20,7 @@ import type { LiveCaption, ModeratorChatMessage, SpeakerVolume } from "@/hooks/u
 // per-browser. BCP-47 tags are passed straight to the Web Speech API.
 const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
   { value: "en-US", label: "English" },
-  { value: "zh-CN", label: "中文 (Chinese)" },
+  { value: "zh-CN", label: "中文" },
   { value: "es-ES", label: "Español" },
   { value: "fr-FR", label: "Français" },
   { value: "de-DE", label: "Deutsch" },
@@ -398,12 +398,7 @@ function LiveTranscriptBubble({
             />
           </span>
         ) : (
-          <>
-            <SpeakingBars color={color.solid} />
-            <span className="text-[11px] font-medium" style={{ color: color.softText }}>
-              listening...
-            </span>
-          </>
+          <SpeakingBars color={color.solid} />
         )}
       </div>
     </div>
