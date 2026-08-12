@@ -73,11 +73,6 @@ interface ModeratorChatPanelProps {
   onDismissError: () => void;
 }
 
-// Someone counts as "currently speaking" while their reported volume is
-// above ambient noise and was updated recently -- stale entries are pruned
-// by the socket hook itself, so a simple level check is enough here.
-const SPEAKING_LEVEL_THRESHOLD = 0.12;
-
 // Deduplicate by id: the persisted-history fetch and live socket messages can
 // legitimately overlap (e.g. a message arrives over the socket just before
 // the history query resolves) -- id is the one stable identity both sides
@@ -249,16 +244,11 @@ export function ModeratorChatPanel({
   const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
   const isTyping = typingMessageId !== null;
 
-  // Live "X is speaking" bubbles -- one per member who is either above the
-  // ambient volume threshold or has an in-flight live caption (captions can
-  // arrive a beat after volume crosses the threshold, and should keep the
-  // bubble alive through brief pauses mid-sentence). This is what makes the
-  // panel feel instant: real transcription can lag a couple of seconds
-  // behind actual speech, but the "someone is talking" signal -- and, where
-  // supported, their actual words -- show up immediately.
-  const speakingMembers = members.filter(
-    (m) => (speakerVolumes.get(m.userId)?.level ?? 0) >= SPEAKING_LEVEL_THRESHOLD || liveCaptions.has(m.userId),
-  );
+  // One in-progress bubble per member who currently has actual recognized
+  // text coming in -- nothing else. No separate "someone is speaking"
+  // indicator, animation, or volume-based trigger; the bubble exists purely
+  // to hold the live transcript text as it's captured.
+  const speakingMembers = members.filter((m) => !!liveCaptions.get(m.userId)?.text);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   // The initial backlog jumps straight to the bottom instantly -- it's not
@@ -375,35 +365,15 @@ function TypingIndicatorBubble() {
   );
 }
 
-function SpeakingBars({ color }: { color: string }) {
-  return (
-    <span className="flex items-end gap-0.5 h-3 shrink-0">
-      <span
-        className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
-        style={{ backgroundColor: color, height: "40%", animationDelay: "0s" }}
-      />
-      <span
-        className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
-        style={{ backgroundColor: color, height: "100%", animationDelay: "0.15s" }}
-      />
-      <span
-        className="w-1 rounded-full animate-[speaking-bar_0.9s_ease-in-out_infinite]"
-        style={{ backgroundColor: color, height: "60%", animationDelay: "0.3s" }}
-      />
-    </span>
-  );
-}
-
 // The in-progress message box for whoever is currently talking -- styled
 // identically to a real, persisted ChatMessageBubble (same colors, same
 // shape) so the transition from "still talking" to "said it" is seamless,
 // with a blinking cursor as the one visual cue that it's still live. This
-// growing text IS what becomes the permanent transcript message once 5
-// seconds of silence finalizes it (see useModeratorAudio's onFinalize) --
-// it is never replaced by a separately-transcribed version. Where the
-// browser doesn't support live speech recognition at all, this falls back
-// to just the animated "listening..." bars so there's still an immediate
-// signal that someone is talking, even though no text can appear.
+// growing text IS what becomes the permanent transcript message once
+// silence finalizes it (see useModeratorAudio's onFinalize) -- it is never
+// replaced by a separately-transcribed version. It only exists once there
+// is actual recognized text to show -- no separate "someone is speaking"
+// indicator or animation of any kind.
 function LiveTranscriptBubble({
   username,
   colorSlot,
@@ -423,17 +393,13 @@ function LiveTranscriptBubble({
         className="rounded-xl rounded-tl-sm px-3 py-2 w-fit max-w-full flex items-center gap-2"
         style={{ backgroundColor: color.soft }}
       >
-        {caption ? (
-          <span className="text-xs leading-relaxed whitespace-pre-wrap" style={{ color: color.softText }}>
-            {caption}
-            <span
-              className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse"
-              style={{ backgroundColor: color.softText }}
-            />
-          </span>
-        ) : (
-          <SpeakingBars color={color.solid} />
-        )}
+        <span className="text-xs leading-relaxed whitespace-pre-wrap" style={{ color: color.softText }}>
+          {caption}
+          <span
+            className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse"
+            style={{ backgroundColor: color.softText }}
+          />
+        </span>
       </div>
     </div>
   );
