@@ -152,7 +152,7 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
 });
 
 // The client recognizes speech entirely in the member's own browser (Web
-// Speech API) and only calls this once an utterance is finalized (5s of
+// Speech API) and only calls this once an utterance is finalized (2s of
 // silence, or the mic being turned off) -- there is no server-side
 // transcription step and no OpenAI audio call involved here at all.
 router.post("/projects/:id/moderator/transcript", async (req, res) => {

@@ -19,7 +19,7 @@ import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
 import { logger } from "./logger";
 
-const SILENCE_TIMEOUT_MS = 5_000;
+const SILENCE_TIMEOUT_MS = 60_000;
 
 // Falls back to this if a project's own `maxMembers` is somehow unset --
 // mirrors the same fallback used by the properties routes' agreement check.
@@ -50,7 +50,7 @@ export function generateActivationId(): string {
 
 // One silence timer per project, shared across every active participant --
 // the AI moderator produces one running discussion per project (not one per
-// person), so "5 seconds since the last chunk from ANYONE currently on" is
+// person), so "60 seconds since the last chunk from ANYONE currently on" is
 // what triggers the next intervention attempt.
 const silenceTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
