@@ -120,10 +120,40 @@ export function ModeratorChatPanel({
     rejectReminderTimerRef.current = setTimeout(() => setShowRejectReminder(false), 5_000);
   };
 
+  // Reveal messages one at a time with a short "typing..." pause in front of
+  // each one, so the AI moderator's own messages feel like they're actually
+  // being typed out rather than dumped onto the screen all at once. Messages
+  // from real members (transcript/system) don't need this -- they already
+  // happened live -- so only "intro" and "intervention" messages get the
+  // pause; everything else reveals immediately.
+  const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
+  const [typingMessageId, setTypingMessageId] = useState<number | null>(null);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (revealTimerRef.current) return; // a reveal is already in flight
+    const next = messages.find((m) => !revealedIds.has(m.id) && m.id !== typingMessageId);
+    if (!next) return;
+    const delay = next.type === "intro" || next.type === "intervention" ? 1100 : 0;
+    setTypingMessageId(next.id);
+    revealTimerRef.current = setTimeout(() => {
+      setRevealedIds((prev) => new Set(prev).add(next.id));
+      setTypingMessageId(null);
+      revealTimerRef.current = null;
+    }, delay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, revealedIds]);
+  const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
+  const isTyping = typingMessageId !== null;
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [visibleMessages.length, isTyping]);
 
   return (
     <aside className="w-80 shrink-0 h-full flex flex-col border-l bg-card">
@@ -143,14 +173,15 @@ export function ModeratorChatPanel({
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3">
-        {messages.length === 0 && (
+        {visibleMessages.length === 0 && !isTyping && (
           <p className="text-xs text-muted-foreground text-center mt-6">
             The AI moderator's messages will appear here once the shared workspace is open.
           </p>
         )}
-        {messages.map((message) => (
+        {visibleMessages.map((message) => (
           <ChatMessageBubble key={message.id} message={message} />
         ))}
+        {isTyping && <TypingIndicatorBubble />}
         <div ref={messagesEndRef} />
       </div>
 
@@ -190,6 +221,22 @@ export function ModeratorChatPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+function TypingIndicatorBubble() {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+        <Sparkles className="w-3 h-3 text-muted-foreground" />
+        AI moderator
+      </div>
+      <div className="rounded-xl rounded-tl-sm px-3 py-2.5 bg-muted w-fit flex items-center gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.3s]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.15s]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60 animate-bounce" />
+      </div>
+    </div>
   );
 }
 

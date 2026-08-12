@@ -276,15 +276,14 @@ export async function ensureModeratorIntroMessage(projectId: number): Promise<vo
   });
   if (existing) return;
 
-  await postChatMessage(projectId, {
-    type: "intro",
-    userId: null,
-    content:
-      "Hi, I'm your AI moderator. I'll speak up here whenever discussion on a class or property stalls, " +
-      "and summarize the examples and counterexamples I've heard so far. To do that I need your microphone " +
-      "enabled so I can listen in -- everything said will appear here as chat messages, visible to everyone " +
-      "in this project.",
-  });
+  const introMessages = [
+    "Hi, I'm your AI moderator. You can now discuss any properties that haven't yet been agreed to be retained by everyone.",
+    "I'll keep track of your discussion and help you sort things out whenever you get stalled on a class or property.",
+    "In order for me to do that, please open the microphone below.",
+  ];
+  for (const content of introMessages) {
+    await postChatMessage(projectId, { type: "intro", userId: null, content });
+  }
 }
 
 // Posted right after a member successfully turns their own mic on -- see
