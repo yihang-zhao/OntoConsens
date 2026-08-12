@@ -712,31 +712,3 @@ async function generateIntervention(projectId: number): Promise<void> {
   const message = await serializeChatMessage(insertedRow);
   broadcastToProject(projectId, { type: "moderator_chat_message", message });
 }
-
-export async function transcribeAudioChunk(
-  apiKey: string,
-  audioBuffer: Buffer,
-  filename: string,
-  mimeType: string,
-): Promise<string> {
-  const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(audioBuffer)], { type: mimeType }), filename);
-  form.append("model", "whisper-1");
-
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
-  });
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const message =
-      (body && typeof body === "object" && "error" in body && (body as any).error?.message) ||
-      `Transcription failed with status ${response.status}`;
-    throw new Error(message);
-  }
-
-  const data = (await response.json()) as { text?: string };
-  return (data.text ?? "").trim();
-}

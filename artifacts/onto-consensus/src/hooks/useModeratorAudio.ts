@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { useUploadModeratorAudio } from "@workspace/api-client-react";
 
 interface UseModeratorAudioOptions {
   projectId: number;
   /** Mic capture only runs while this is true (moderator on AND user opted in). */
   active: boolean;
-  /** Called ~8x/second with a 0..1 volume level while active, for the pulsing border. */
+  /** Called ~8x/second with a 0..1 volume level while active, for the
+   *  per-member "speaking" fallback indicator (used when the browser has no
+   *  speech recognizer, so there's at least a visible sign someone's talking). */
   onVolume: (level: number) => void;
   /** Called with the current in-progress utterance's text as the browser's
-   *  speech recognizer refines it, live -- this is a real-time caption, not
-   *  the final transcript (that still comes from the server via Whisper).
-   *  Called with an empty string when an utterance ends. Only fires in
-   *  browsers that support the Web Speech API (Chrome/Edge); it's a
-   *  progressive enhancement on top of the existing record-then-transcribe
-   *  pipeline, not a replacement for it. */
+   *  speech recognizer refines it, live -- this IS the transcript now (there
+   *  is no separate server-side transcription step). Called with an empty
+   *  string when there's no utterance in progress. Only fires in browsers
+   *  that support the Web Speech API (Chrome/Edge); Firefox/Safari have no
+   *  implementation, so live transcription is simply unavailable there. */
   onCaption?: (text: string) => void;
+  /** Called once per utterance, with its full recognized text, the moment
+   *  5 seconds pass with no further speech (or the mic is turned off mid-
+   *  utterance) -- this is the point where the text should be persisted as
+   *  a real, permanent chat message. While the user keeps talking with less
+   *  than 5s of silence between words, onCaption keeps growing the SAME
+   *  in-progress utterance instead of this firing. */
+  onFinalize?: (text: string) => void;
 }
 
 // Chrome/Edge ship this as the prefixed webkitSpeechRecognition; Firefox and
@@ -38,68 +45,71 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 }
 
 const VOLUME_SEND_INTERVAL_MS = 120;
-// Two different thresholds (start higher than stop) avoid rapid on/off
-// chatter right at the boundary of ambient room noise.
-const SPEECH_START_THRESHOLD = 0.06;
-const SPEECH_STOP_THRESHOLD = 0.03;
-// How long volume must stay below the stop threshold before we consider the
-// utterance actually over — short sub-second dips (breaths, plosives) would
-// otherwise fragment one sentence into many tiny uploads.
-const SPEECH_STOP_DEBOUNCE_MS = 450;
-// Caps a single recorded chunk so one long monologue doesn't become one huge
-// upload (or keep the server's silence timer from ever getting a chance to
-// fire mid-sentence on a very long speaker).
-const MAX_CHUNK_DURATION_MS = 15_000;
 
-// Whisper only accepts a fixed set of file extensions and infers the format
-// from the filename, not the Content-Type header — so the extension we hand
-// it must actually match what MediaRecorder produced.
-function extensionForMimeType(mimeType: string): string {
-  const base = mimeType.split(";")[0]?.trim().toLowerCase();
-  switch (base) {
-    case "audio/webm":
-      return "webm";
-    case "audio/ogg":
-      return "ogg";
-    case "audio/mp4":
-      return "mp4";
-    case "audio/mpeg":
-      return "mp3";
-    case "audio/wav":
-    case "audio/wave":
-    case "audio/x-wav":
-      return "wav";
-    default:
-      return "webm";
-  }
-}
+// How long an utterance can go without any new recognized word before it's
+// considered over and gets finalized into its own permanent message. Kept
+// generous on purpose: someone pausing mid-thought for a few seconds should
+// still land in the same message box, not get fragmented into several.
+const SILENCE_FINALIZE_MS = 5_000;
+const SILENCE_CHECK_INTERVAL_MS = 300;
+// Browsers periodically end a "continuous" recognition session on their own
+// even while the user keeps talking -- this restarts it quickly so that
+// technical hiccup is invisible and never itself counts as the silence that
+// closes out a message (only wall-clock time since the last recognized word
+// does that; see lastSpeechAt below).
+const RECOGNITION_RESTART_DELAY_MS = 250;
 
-// Handles the two audio jobs the AI moderator needs, both driven off one
-// mic stream: (1) a continuous volume level for the pulsing border, sent to
-// everyone regardless of content, and (2) speech-triggered recording
-// uploaded for transcription, which is what actually resets the server's
-// 5-second silence timer — raw ambient volume never should.
-export function useModeratorAudio({ projectId, active, onVolume, onCaption }: UseModeratorAudioOptions) {
+// Handles the two audio jobs the AI moderator needs, both driven off the
+// mic: (1) a continuous volume level, sent to everyone as a fallback
+// "someone is speaking" signal, and (2) live speech-to-text via the
+// browser's own recognizer, which is now the transcript itself.
+export function useModeratorAudio({ projectId, active, onVolume, onCaption, onFinalize }: UseModeratorAudioOptions) {
   const [micError, setMicError] = useState<string | null>(null);
-  const uploadAudio = useUploadModeratorAudio();
+  const [speechSupported, setSpeechSupported] = useState(true);
   const onVolumeRef = useRef(onVolume);
   onVolumeRef.current = onVolume;
   const onCaptionRef = useRef(onCaption);
   onCaptionRef.current = onCaption;
+  const onFinalizeRef = useRef(onFinalize);
+  onFinalizeRef.current = onFinalize;
 
-  // Live captions run as a second, independent consumer of the microphone
-  // via the browser's own speech recognizer -- it manages its own mic
-  // access separately from the MediaRecorder pipeline above, so the two
-  // don't interfere with each other.
+  // Live speech-to-text runs as its own consumer of the microphone via the
+  // browser's speech recognizer -- it manages its own mic access separately
+  // from the volume-metering effect below, so the two don't interfere.
   useEffect(() => {
     if (!active) return;
     const maybeCtor = getSpeechRecognitionCtor();
-    if (!maybeCtor) return; // unsupported browser -- captions are best-effort
+    if (!maybeCtor) {
+      setSpeechSupported(false);
+      return; // unsupported browser -- no live transcript is possible here
+    }
+    setSpeechSupported(true);
     const Ctor = maybeCtor;
 
     let stopped = false;
     let recognition: SpeechRecognitionLike | null = null;
     let restartTimer: ReturnType<typeof setTimeout> | null = null;
+    let silenceTimer: ReturnType<typeof setInterval> | null = null;
+
+    // Utterance state is bridged across recognizer restarts (see
+    // RECOGNITION_RESTART_DELAY_MS above) -- only wall-clock silence since
+    // the last recognized word can end an utterance, never the recognizer's
+    // own start/stop lifecycle.
+    let finalizedText = "";
+    let interimText = "";
+    let lastSpeechAt = 0;
+
+    function currentText() {
+      return [finalizedText, interimText].filter(Boolean).join(" ").trim();
+    }
+
+    function finalizeIfAny() {
+      const text = currentText();
+      finalizedText = "";
+      interimText = "";
+      onCaptionRef.current?.("");
+      if (text) onFinalizeRef.current?.(text);
+    }
 
     function start() {
       if (stopped) return;
@@ -108,26 +118,31 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption }: Us
       rec.interimResults = true;
       rec.lang = navigator.language || "en-US";
       rec.onresult = (event: any) => {
-        // The recognizer's own idea of the current utterance is the last
-        // result in its list, whether interim or final -- exactly what a
-        // live-captions UI (à la Teams) should show as it keeps refining.
         const results = event.results;
-        const last = results[results.length - 1];
-        const text = last?.[0]?.transcript?.trim();
-        if (text) onCaptionRef.current?.(text);
-        if (last?.isFinal) onCaptionRef.current?.("");
+        for (let i = event.resultIndex; i < results.length; i++) {
+          const result = results[i];
+          const text = result?.[0]?.transcript?.trim();
+          if (!text) continue;
+          if (result.isFinal) {
+            finalizedText = finalizedText ? `${finalizedText} ${text}` : text;
+            interimText = "";
+          } else {
+            interimText = text;
+          }
+        }
+        lastSpeechAt = Date.now();
+        onCaptionRef.current?.(currentText());
       };
       rec.onerror = () => {
         // "no-speech"/"aborted" etc. — just let onend's restart handle it.
       };
       rec.onend = () => {
-        onCaptionRef.current?.("");
-        if (!stopped) restartTimer = setTimeout(start, 250);
+        if (!stopped) restartTimer = setTimeout(start, RECOGNITION_RESTART_DELAY_MS);
       };
       try {
         rec.start();
       } catch {
-        if (!stopped) restartTimer = setTimeout(start, 250);
+        if (!stopped) restartTimer = setTimeout(start, RECOGNITION_RESTART_DELAY_MS);
         return;
       }
       recognition = rec;
@@ -135,10 +150,21 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption }: Us
 
     start();
 
+    silenceTimer = setInterval(() => {
+      if (!lastSpeechAt) return;
+      if (Date.now() - lastSpeechAt >= SILENCE_FINALIZE_MS) {
+        lastSpeechAt = 0;
+        finalizeIfAny();
+      }
+    }, SILENCE_CHECK_INTERVAL_MS);
+
     return () => {
       stopped = true;
       if (restartTimer) clearTimeout(restartTimer);
-      onCaptionRef.current?.("");
+      if (silenceTimer) clearInterval(silenceTimer);
+      // Flush whatever's in progress immediately -- e.g. the mic was turned
+      // off mid-sentence, which shouldn't silently drop that utterance.
+      finalizeIfAny();
       if (recognition) {
         recognition.onend = null;
         recognition.onerror = null;
@@ -160,73 +186,7 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption }: Us
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
     let rafId: number | null = null;
-    // `activeRecorder` is the sole marker of "is a recording in progress" —
-    // there is deliberately no separate boolean that could disagree with it.
-    // Every MediaRecorder instance owns its own `chunks` array via closure,
-    // so an in-flight (stopping) recorder's dataavailable/onstop handlers
-    // can never see or mutate a different segment's state. Rotating at the
-    // duration cap sets `rotatePending` and calls stop() — the *next*
-    // segment is only ever started from that recorder's own `onstop`, once
-    // its shutdown (and final blob) is fully settled, never synchronously
-    // alongside it.
-    let activeRecorder: MediaRecorder | null = null;
-    let rotatePending = false;
-    let belowThresholdSince: number | null = null;
-    let recordingStartedAt = 0;
     let lastVolumeSentAt = 0;
-
-    function startRecording() {
-      if (!stream || activeRecorder) return;
-      const chunks: Blob[] = [];
-      let rec: MediaRecorder;
-      try {
-        rec = new MediaRecorder(stream);
-      } catch {
-        return;
-      }
-      rec.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      rec.onstop = () => {
-        if (chunks.length > 0) {
-          const mimeType = rec.mimeType || "audio/webm";
-          // The upload client appends this as a bare Blob with no filename
-          // argument, so FormData falls back to the literal name "blob"
-          // (no extension) unless we hand it a File instead — and Whisper's
-          // transcription API rejects files whose name doesn't carry a
-          // recognized extension, regardless of the actual Content-Type.
-          const file = new File([new Blob(chunks, { type: mimeType })], `chunk.${extensionForMimeType(mimeType)}`, {
-            type: mimeType,
-          });
-          uploadAudio.mutate({ id: projectId, data: { audio: file } });
-        }
-        if (activeRecorder === rec) activeRecorder = null;
-        if (rotatePending && !stopped) {
-          rotatePending = false;
-          startRecording();
-        }
-      };
-      rec.start();
-      activeRecorder = rec;
-      recordingStartedAt = Date.now();
-      belowThresholdSince = null;
-    }
-
-    function stopRecording(rotate = false) {
-      if (!activeRecorder) return;
-      if (rotate) rotatePending = true;
-      try {
-        activeRecorder.stop();
-      } catch {
-        // Already stopped/inactive — its onstop won't fire, so clear the
-        // marker (and honor a pending rotation) here instead.
-        activeRecorder = null;
-        if (rotate) {
-          rotatePending = false;
-          startRecording();
-        }
-      }
-    }
 
     function tick() {
       if (stopped || !analyser) return;
@@ -243,24 +203,8 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption }: Us
       if (now - lastVolumeSentAt >= VOLUME_SEND_INTERVAL_MS) {
         lastVolumeSentAt = now;
         // Normal speech RMS is a small fraction of full scale — scale up so
-        // the border visibly pulses instead of barely moving.
+        // the fallback indicator visibly pulses instead of barely moving.
         onVolumeRef.current(Math.min(1, rms * 4));
-      }
-
-      if (rms >= SPEECH_START_THRESHOLD) {
-        belowThresholdSince = null;
-        if (!activeRecorder) startRecording();
-        else if (now - recordingStartedAt >= MAX_CHUNK_DURATION_MS) {
-          // Rotate: stop this segment and let its own onstop kick off the
-          // next one once the current recorder has fully shut down.
-          stopRecording(true);
-        }
-      } else if (rms < SPEECH_STOP_THRESHOLD && activeRecorder) {
-        if (belowThresholdSince === null) {
-          belowThresholdSince = now;
-        } else if (now - belowThresholdSince >= SPEECH_STOP_DEBOUNCE_MS) {
-          stopRecording(false);
-        }
       }
 
       rafId = requestAnimationFrame(tick);
@@ -289,15 +233,11 @@ export function useModeratorAudio({ projectId, active, onVolume, onCaption }: Us
     return () => {
       stopped = true;
       if (rafId !== null) cancelAnimationFrame(rafId);
-      // `stopped` is checked inside onstop, so this will never trigger a
-      // rotation after unmount even though a rotate could already be
-      // pending from the tick loop.
-      if (activeRecorder) stopRecording(false);
       stream?.getTracks().forEach((t) => t.stop());
       audioCtx?.close().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, active]);
 
-  return { micError };
+  return { micError, speechSupported };
 }

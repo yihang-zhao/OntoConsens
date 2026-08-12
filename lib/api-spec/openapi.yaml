@@ -467,24 +467,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ModeratorStatus"
 
-  /projects/{id}/moderator/audio:
+  /projects/{id}/moderator/transcript:
     post:
-      operationId: uploadModeratorAudio
+      operationId: submitModeratorTranscript
       tags: [moderator]
-      summary: Upload a recorded speech chunk for transcription by the moderator
+      summary: >-
+        Submit a finalized utterance recognized entirely in the member's own
+        browser (Web Speech API) to append to the moderator transcript --
+        there is no separate server-side transcription step.
       parameters:
         - $ref: "#/components/parameters/ProjectId"
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
-              $ref: "#/components/schemas/ModeratorAudioInput"
+              $ref: "#/components/schemas/ModeratorTranscriptInput"
       responses:
         "204":
-          description: Transcribed and appended
+          description: Appended
         "400":
-          description: Moderator not active or no file provided
+          description: Moderator not active or empty text
           content:
             application/json:
               schema:
@@ -708,13 +711,12 @@ components:
             to the project's already-configured model, or "gpt-5.6-luna" the
             first time a project is configured.
 
-    ModeratorAudioInput:
+    ModeratorTranscriptInput:
       type: object
-      required: [audio]
+      required: [text]
       properties:
-        audio:
+        text:
           type: string
-          format: binary
 
     ModeratorChatMessage:
       type: object

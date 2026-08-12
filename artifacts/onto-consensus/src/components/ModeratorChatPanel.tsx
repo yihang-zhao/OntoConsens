@@ -3,6 +3,7 @@ import {
   useConfigureModerator,
   useDisableModerator,
   useListModeratorChatMessages,
+  useSubmitModeratorTranscript,
   getGetModeratorStatusQueryKey,
   getListModeratorChatMessagesQueryKey,
 } from "@workspace/api-client-react";
@@ -74,6 +75,7 @@ export function ModeratorChatPanel({
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
   const disable = useDisableModerator();
+  const submitTranscript = useSubmitModeratorTranscript();
 
   const { data: history } = useListModeratorChatMessages(projectId, {
     query: { queryKey: getListModeratorChatMessagesQueryKey(projectId) },
@@ -91,11 +93,22 @@ export function ModeratorChatPanel({
   // capturing your mic. The browser's own permission prompt is the only
   // thing the user sees the first time; if they've already granted it, the
   // mic just opens.
-  const { micError } = useModeratorAudio({
+  const { micError, speechSupported } = useModeratorAudio({
     projectId,
     active: moderatorActive,
     onVolume,
+    // Live, word-by-word text as it's recognized -- this IS the transcript
+    // now, broadcast to everyone (including the speaker) so one growing
+    // message box is visible in real time while they keep talking.
     onCaption: sendCaption,
+    // Fires once per utterance, 5 seconds after the last recognized word (or
+    // immediately if the mic is turned off mid-utterance) -- this is the
+    // only point where a permanent chat message gets created, so continuous
+    // talking never fragments into several boxes.
+    onFinalize: (text) => {
+      sendCaption(""); // clear the in-progress bubble right away, don't wait for the round trip
+      submitTranscript.mutate({ id: projectId, data: { text } });
+    },
   });
 
   // The instant a real transcript message lands, drop its speaker's interim
@@ -215,7 +228,7 @@ export function ModeratorChatPanel({
         ))}
         {isTyping && <TypingIndicatorBubble />}
         {speakingMembers.map((m) => (
-          <SpeakingIndicatorBubble
+          <LiveTranscriptBubble
             key={m.userId}
             username={m.username}
             colorSlot={m.colorSlot}
@@ -226,6 +239,12 @@ export function ModeratorChatPanel({
       </div>
 
       <div className="border-t shrink-0 p-3 flex flex-col gap-2">
+        {moderatorActive && !speechSupported && (
+          <p className="text-[11px] font-medium text-muted-foreground bg-muted/50 border rounded-lg px-2.5 py-1.5">
+            Live transcription needs Chrome or Edge -- your mic is on, but your speech can't be turned into text in
+            this browser.
+          </p>
+        )}
         {configure.isError && !moderatorActive && (
           <p className="text-[11px] font-medium text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-2.5 py-1.5">
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
@@ -284,13 +303,17 @@ function SpeakingBars({ color }: { color: string }) {
   );
 }
 
-// The live, real-time caption bubble -- a Teams-style "closed caption" of
-// what a member is saying as they say it, sourced from the browser's own
-// speech recognizer (see useModeratorAudio's onCaption). Where the browser
-// doesn't support live speech recognition, this falls back to just the
-// animated "speaking..." bars so there's still an immediate signal that
-// someone is talking, even without their words.
-function SpeakingIndicatorBubble({
+// The in-progress message box for whoever is currently talking -- styled
+// identically to a real, persisted ChatMessageBubble (same colors, same
+// shape) so the transition from "still talking" to "said it" is seamless,
+// with a blinking cursor as the one visual cue that it's still live. This
+// growing text IS what becomes the permanent transcript message once 5
+// seconds of silence finalizes it (see useModeratorAudio's onFinalize) --
+// it is never replaced by a separately-transcribed version. Where the
+// browser doesn't support live speech recognition at all, this falls back
+// to just the animated "listening..." bars so there's still an immediate
+// signal that someone is talking, even though no text can appear.
+function LiveTranscriptBubble({
   username,
   colorSlot,
   caption,
@@ -306,18 +329,24 @@ function SpeakingIndicatorBubble({
         {username}
       </div>
       <div
-        className="rounded-xl rounded-tl-sm px-3 py-2.5 w-fit max-w-full flex items-center gap-2"
+        className="rounded-xl rounded-tl-sm px-3 py-2 w-fit max-w-full flex items-center gap-2"
         style={{ backgroundColor: color.soft }}
       >
-        <SpeakingBars color={color.solid} />
         {caption ? (
-          <span className="text-xs leading-relaxed" style={{ color: color.softText }}>
+          <span className="text-xs leading-relaxed whitespace-pre-wrap" style={{ color: color.softText }}>
             {caption}
+            <span
+              className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse"
+              style={{ backgroundColor: color.softText }}
+            />
           </span>
         ) : (
-          <span className="text-[11px] font-medium" style={{ color: color.softText }}>
-            speaking...
-          </span>
+          <>
+            <SpeakingBars color={color.solid} />
+            <span className="text-[11px] font-medium" style={{ color: color.softText }}>
+              listening...
+            </span>
+          </>
         )}
       </div>
     </div>

@@ -436,17 +436,17 @@ export const DisableModeratorResponse = zod.object({
 
 
 /**
- * @summary Upload a recorded speech chunk for transcription by the moderator
+ * @summary Submit a finalized utterance recognized entirely in the member's own browser (Web Speech API) to append to the moderator transcript -- there is no separate server-side transcription step.
  */
-export const UploadModeratorAudioParams = zod.object({
+export const SubmitModeratorTranscriptParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
-export const UploadModeratorAudioBody = zod.object({
-  "audio": zod.instanceof(File)
+export const SubmitModeratorTranscriptBody = zod.object({
+  "text": zod.string()
 })
 
-export const UploadModeratorAudioResponse = zod.void()
+export const SubmitModeratorTranscriptResponse = zod.void()
 
 
 /**

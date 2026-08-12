@@ -1,5 +1,4 @@
 import { Router, type IRouter } from "express";
-import multer from "multer";
 import { and, eq } from "drizzle-orm";
 import {
   db,
@@ -23,11 +22,9 @@ import {
   projectOwnerHasApiKey,
   recordTranscriptChunk,
   noteSpeechActivity,
-  transcribeAudioChunk,
 } from "../lib/moderatorEngine";
 
 const router: IRouter = Router();
-const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.use(requireAuth);
 
@@ -154,64 +151,48 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
   res.json({ active: false, configured: await projectOwnerHasApiKey(projectId, project.ownerId) });
 });
 
-router.post("/projects/:id/moderator/audio", upload.single("audio"), async (req, res) => {
+// The client recognizes speech entirely in the member's own browser (Web
+// Speech API) and only calls this once an utterance is finalized (5s of
+// silence, or the mic being turned off) -- there is no server-side
+// transcription step and no OpenAI audio call involved here at all.
+router.post("/projects/:id/moderator/transcript", async (req, res) => {
   const userId = req.userId!;
   const projectId = Number(req.params.id);
-  const file = req.file;
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
 
   const membership = await getMembership(projectId, userId);
   if (!membership) {
     res.status(403).json({ error: "You are not a member of this project" });
     return;
   }
-  if (!file) {
-    res.status(400).json({ error: "Audio file is required" });
+  if (!text) {
+    res.status(400).json({ error: "Transcript text is required" });
     return;
   }
 
   // ensureActiveParticipant re-validates against the DB row every time
   // (not a cached in-memory flag), so a disable that happened while this
-  // upload was still in flight (or a server restart) is always caught.
+  // was still in flight (or a server restart) is always caught.
   const active = await ensureActiveParticipant(projectId, userId);
   if (!active) {
     res.status(403).json({ error: "You have not turned on the AI moderator for yourself" });
     return;
   }
 
-  const apiKey = await getProjectOwnerApiKey(projectId);
-  if (!apiKey) {
-    res.status(400).json({ error: "The project creator hasn't saved an OpenAI API key" });
+  // recordTranscriptChunk performs the "is this member's participation
+  // still current" check and the insert as one row-locked transaction, so
+  // a disable that happened concurrently can't land this text under a
+  // period this member never consented to.
+  const committed = await recordTranscriptChunk(projectId, userId, text, active.activationId);
+  if (!committed) {
+    res.status(409).json({ error: "Your AI moderator session changed; please try again." });
     return;
   }
 
-  try {
-    const text = await transcribeAudioChunk(apiKey, file.buffer, file.originalname || "chunk.webm", file.mimetype);
-    if (!text) {
-      res.status(204).end();
-      return;
-    }
-
-    // recordTranscriptChunk performs the "is this member's participation
-    // still current" check and the insert as one row-locked transaction, so
-    // a disable that happened while we were waiting on OpenAI can't land
-    // this recording under a period this member never consented to.
-    const committed = await recordTranscriptChunk(projectId, userId, text, active.activationId);
-    if (!committed) {
-      res.status(409).json({ error: "Your AI moderator session changed while transcribing; please try again." });
-      return;
-    }
-
-    // Only armed once we know the chunk actually landed -- never on the
-    // strength of a write that was rejected.
-    noteSpeechActivity(projectId);
-    res.status(204).end();
-  } catch (err) {
-    broadcastToProject(projectId, {
-      type: "moderator_error",
-      message: err instanceof Error ? err.message : "Transcription failed",
-    });
-    res.status(502).json({ error: "Transcription failed" });
-  }
+  // Only armed once we know the chunk actually landed -- never on the
+  // strength of a write that was rejected.
+  noteSpeechActivity(projectId);
+  res.status(204).end();
 });
 
 export default router;

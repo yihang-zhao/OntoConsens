@@ -28,9 +28,9 @@ import type {
   JoinProjectInput,
   ListModeratorChatMessages200,
   Member,
-  ModeratorAudioInput,
   ModeratorConfigInput,
   ModeratorStatus,
+  ModeratorTranscriptInput,
   ProjectDetail,
   ProjectInput,
   ProjectSummary,
@@ -1762,28 +1762,26 @@ export const useDisableModerator = <TError = ErrorType<unknown>,
       return useMutation(getDisableModeratorMutationOptions(options));
     }
 
-export const getUploadModeratorAudioUrl = (id: number,) => {
+export const getSubmitModeratorTranscriptUrl = (id: number,) => {
 
 
 
 
-  return `/api/projects/${id}/moderator/audio`
+  return `/api/projects/${id}/moderator/transcript`
 }
 
 /**
- * @summary Upload a recorded speech chunk for transcription by the moderator
+ * @summary Submit a finalized utterance recognized entirely in the member's own browser (Web Speech API) to append to the moderator transcript -- there is no separate server-side transcription step.
  */
-export const uploadModeratorAudio = async (id: number,
-    moderatorAudioInput: ModeratorAudioInput, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
-    const formData = new FormData();
-formData.append(`audio`, moderatorAudioInput.audio);
+export const submitModeratorTranscript = async (id: number,
+    moderatorTranscriptInput: ModeratorTranscriptInput, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
 
-  return customFetch<void>(getUploadModeratorAudioUrl(id),
+  return customFetch<void>(getSubmitModeratorTranscriptUrl(id),
   {
     ...options,
-    method: 'POST'
-    ,
-    body: formData
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(moderatorTranscriptInput)
   }
 );}
 
@@ -1791,11 +1789,11 @@ formData.append(`audio`, moderatorAudioInput.audio);
 
 
 
-export const getUploadModeratorAudioMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadModeratorAudio>>, TError,{id: number;data: BodyType<ModeratorAudioInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof uploadModeratorAudio>>, TError,{id: number;data: BodyType<ModeratorAudioInput>}, TContext> => {
+export const getSubmitModeratorTranscriptMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitModeratorTranscript>>, TError,{id: number;data: BodyType<ModeratorTranscriptInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof submitModeratorTranscript>>, TError,{id: number;data: BodyType<ModeratorTranscriptInput>}, TContext> => {
 
-const mutationKey = ['uploadModeratorAudio'];
+const mutationKey = ['submitModeratorTranscript'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -1805,10 +1803,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadModeratorAudio>>, {id: number;data: BodyType<ModeratorAudioInput>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitModeratorTranscript>>, {id: number;data: BodyType<ModeratorTranscriptInput>}> = (props) => {
           const {id,data} = props ?? {};
 
-          return  uploadModeratorAudio(id,data,requestOptions)
+          return  submitModeratorTranscript(id,data,requestOptions)
         }
 
 
@@ -1818,22 +1816,22 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type UploadModeratorAudioMutationResult = NonNullable<Awaited<ReturnType<typeof uploadModeratorAudio>>>
-    export type UploadModeratorAudioMutationBody = BodyType<ModeratorAudioInput>
-    export type UploadModeratorAudioMutationError = ErrorType<ErrorResponse>
+    export type SubmitModeratorTranscriptMutationResult = NonNullable<Awaited<ReturnType<typeof submitModeratorTranscript>>>
+    export type SubmitModeratorTranscriptMutationBody = BodyType<ModeratorTranscriptInput>
+    export type SubmitModeratorTranscriptMutationError = ErrorType<ErrorResponse>
 
     /**
- * @summary Upload a recorded speech chunk for transcription by the moderator
+ * @summary Submit a finalized utterance recognized entirely in the member's own browser (Web Speech API) to append to the moderator transcript -- there is no separate server-side transcription step.
  */
-export const useUploadModeratorAudio = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadModeratorAudio>>, TError,{id: number;data: BodyType<ModeratorAudioInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useSubmitModeratorTranscript = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitModeratorTranscript>>, TError,{id: number;data: BodyType<ModeratorTranscriptInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof uploadModeratorAudio>>,
+        Awaited<ReturnType<typeof submitModeratorTranscript>>,
         TError,
-        {id: number;data: BodyType<ModeratorAudioInput>},
+        {id: number;data: BodyType<ModeratorTranscriptInput>},
         TContext
       > => {
-      return useMutation(getUploadModeratorAudioMutationOptions(options));
+      return useMutation(getSubmitModeratorTranscriptMutationOptions(options));
     }
 
 export const getListModeratorChatMessagesUrl = (id: number,) => {

@@ -118,8 +118,8 @@ export interface ModeratorConfigInput {
   model?: string;
 }
 
-export interface ModeratorAudioInput {
-  audio: Blob;
+export interface ModeratorTranscriptInput {
+  text: string;
 }
 
 /**

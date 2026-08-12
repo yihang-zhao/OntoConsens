@@ -26,7 +26,6 @@ import {
 } from "lucide-react";
 import { useProjectSocket, type ModeratorChatMessage } from "@/hooks/useProjectSocket";
 import { ModeratorChatPanel } from "@/components/ModeratorChatPanel";
-import { colorForSlot } from "@/lib/memberColors";
 
 export default function ProjectWorkspace() {
   const { id: idStr } = useParams();
@@ -197,16 +196,6 @@ export default function ProjectWorkspace() {
     }
   };
 
-  // The pulsing canvas border reflects whoever is currently speaking
-  // loudest, using their member color — a stand-in "who has the floor"
-  // indicator without showing raw audio or a transcript.
-  const activeSpeaker = [...speakerVolumes.values()]
-    .filter((v) => v.level > 0.04)
-    .sort((a, b) => b.level - a.level)[0];
-  const speakerColor = activeSpeaker
-    ? colorForSlot(project?.members.find((m) => m.userId === activeSpeaker.userId)?.colorSlot ?? 0)
-    : null;
-
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -317,19 +306,6 @@ export default function ProjectWorkspace() {
               sharedModeEnabled={allReady}
               ownSpaceLocked={isReady && !allReady}
               highlightedProperty={highlightedProperty}
-            />
-          )}
-
-          {/* Pulsing border overlay while someone opted-in is speaking --
-              relocated here (out of the chat panel) since it's a property of
-              the canvas, not the chat log. */}
-          {activeSpeaker && speakerColor && (
-            <div
-              className="pointer-events-none absolute inset-0 z-40 transition-[box-shadow] duration-100"
-              style={{
-                boxShadow: `inset 0 0 0 ${3 + activeSpeaker.level * 10}px ${speakerColor.solid}`,
-                opacity: 0.35 + activeSpeaker.level * 0.5,
-              }}
             />
           )}
 

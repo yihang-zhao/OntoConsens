@@ -6,6 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface ModeratorAudioInput {
-  audio: Blob;
+export interface ModeratorTranscriptInput {
+  text: string;
 }
