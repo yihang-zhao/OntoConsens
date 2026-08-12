@@ -261,10 +261,20 @@ export function ModeratorChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyReady]);
+  // Live caption text itself -- not just a box appearing/disappearing --
+  // has to be a scroll trigger too. Without it, a box that grows past one
+  // line while someone keeps talking silently overflows the bottom of the
+  // panel (the scroll position never moves while it's just this box getting
+  // taller), and then the eventual finalize-triggered scroll has to jump
+  // several lines at once, which reads as a sudden change of location. Once
+  // this keeps the box's growth followed smoothly line by line, finalizing
+  // it into a permanent message doesn't change the panel's total height and
+  // this same effect is a no-op then -- no extra jump at the end.
+  const liveCaptionsKey = speakingMembers.map((m) => `${m.userId}:${liveCaptions.get(m.userId)?.text ?? ""}`).join("|");
   useEffect(() => {
     if (!historyReady) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length]);
+  }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length, liveCaptionsKey]);
 
   return (
     <aside className="w-80 shrink-0 h-full flex flex-col border-l bg-card">
