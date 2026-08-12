@@ -202,15 +202,38 @@ export function ModeratorChatPanel({
   // from real members (transcript/system) don't need this -- they already
   // happened live -- so only "intro" and "intervention" messages get the
   // pause; everything else reveals immediately.
+  //
+  // This ONLY applies to messages that arrive live while the panel is open.
+  // Reopening the shared space and re-fetching history that already
+  // happened should never replay that history through the typing animation
+  // one bubble at a time -- it should all just be there already, scrolled
+  // straight to the bottom, the moment history loads.
   const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
   const [typingMessageId, setTypingMessageId] = useState<number | null>(null);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const historyLoadedRef = useRef(false);
+  const [historyReady, setHistoryReady] = useState(false);
   useEffect(() => {
     return () => {
       if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
     };
   }, []);
+  // The moment the persisted history first arrives, mark everything in it
+  // (plus anything already queued from the live socket by that point) as
+  // already revealed -- instantly, no per-message delay -- so a reopened
+  // shared space shows its whole backlog at once.
   useEffect(() => {
+    if (historyLoadedRef.current || !history) return;
+    historyLoadedRef.current = true;
+    setRevealedIds((prev) => {
+      const next = new Set(prev);
+      for (const m of messages) next.add(m.id);
+      return next;
+    });
+    setHistoryReady(true);
+  }, [history, messages]);
+  useEffect(() => {
+    if (!historyLoadedRef.current) return; // wait for the instant initial reveal above
     if (revealTimerRef.current) return; // a reveal is already in flight
     const next = messages.find((m) => !revealedIds.has(m.id) && m.id !== typingMessageId);
     if (!next) return;
@@ -238,9 +261,20 @@ export function ModeratorChatPanel({
   );
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  // The initial backlog jumps straight to the bottom instantly -- it's not
+  // new activity, so an animated scroll through everything that already
+  // happened would feel like a slow replay instead of just reopening the
+  // panel where it left off. Only messages/activity from here on scroll in
+  // smoothly.
   useEffect(() => {
+    if (!historyReady) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyReady]);
+  useEffect(() => {
+    if (!historyReady) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [visibleMessages.length, isTyping, speakingMembers.length]);
+  }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length]);
 
   return (
     <aside className="w-80 shrink-0 h-full flex flex-col border-l bg-card">
