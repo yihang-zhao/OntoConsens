@@ -130,14 +130,3 @@
     @apply font-sans antialiased bg-background text-foreground selection:bg-primary/20;
   }
 }
-
-/* Animated bar height for the "X is speaking..." live indicator in the AI
-   moderator chat panel -- see SpeakingIndicatorBubble. */
-@keyframes speaking-bar {
-  0%, 100% {
-    transform: scaleY(0.4);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}

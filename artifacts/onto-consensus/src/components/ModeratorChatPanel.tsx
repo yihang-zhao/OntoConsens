@@ -232,13 +232,26 @@ export function ModeratorChatPanel({
     if (revealTimerRef.current) return; // a reveal is already in flight
     const next = messages.find((m) => !revealedIds.has(m.id) && m.id !== typingMessageId);
     if (!next) return;
-    const delay = next.type === "intro" || next.type === "intervention" ? 1100 : 0;
-    setTypingMessageId(next.id);
-    revealTimerRef.current = setTimeout(() => {
+    // Transcript/system messages reveal in the very same render, with no
+    // timer at all -- they already just sat there fully visible as a live
+    // caption bubble a moment ago (or, for system messages, never needed a
+    // typing pause to begin with). Routing them through even a 0ms
+    // setTimeout meant one extra paint where the just-arrived message was
+    // hidden and the bouncing-dots "typing" placeholder showed in its place
+    // for a single frame -- a jarring flash right as a box finalizes, with
+    // no location change to justify it. Only the moderator's own "intro"
+    // and "intervention" messages -- which are genuinely new, not something
+    // the group already watched happen live -- get the typing-pause effect.
+    if (next.type === "intro" || next.type === "intervention") {
+      setTypingMessageId(next.id);
+      revealTimerRef.current = setTimeout(() => {
+        setRevealedIds((prev) => new Set(prev).add(next.id));
+        setTypingMessageId(null);
+        revealTimerRef.current = null;
+      }, 1100);
+    } else {
       setRevealedIds((prev) => new Set(prev).add(next.id));
-      setTypingMessageId(null);
-      revealTimerRef.current = null;
-    }, delay);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, revealedIds]);
   const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
