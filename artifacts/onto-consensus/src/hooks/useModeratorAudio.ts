@@ -173,6 +173,20 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         lastSpeechAt = 0;
         finalizeIfAny(lastResults ? textFromResults(lastResults) : "");
         lastResults = null;
+        // The browser's own results array for this recognition session keeps
+        // growing for as long as the session runs -- it never forgets what
+        // was already recognized. Left alone, the NEXT onresult would rebuild
+        // its text from that same array and drag the just-finalized words
+        // back into the new message box. Restarting the recognizer here
+        // gives the next utterance a brand-new, empty results array to build
+        // from, exactly like the natural periodic restarts already do.
+        if (recognition) {
+          try {
+            recognition.abort();
+          } catch {
+            // already stopped
+          }
+        }
       }
     }, SILENCE_CHECK_INTERVAL_MS);
 
