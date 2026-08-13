@@ -138,20 +138,30 @@ export function ModeratorChatPanel({
     // message box is visible in real time while they keep talking. Nothing
     // else touches this bubble's content.
     onCaption: sendCaption,
-    // Fires once per utterance, 3 seconds after the last recognized word (or
+    // Fires once per utterance, 2 seconds after the last recognized word (or
     // immediately if the mic is turned off mid-utterance) -- this is the
     // only point where a permanent chat message gets created, so continuous
     // talking never fragments into several boxes.
     onFinalize: (text) => {
-      sendCaption(""); // clear the in-progress bubble right away, don't wait for the round trip
+      // Deliberately NOT clearing the caption here. Clearing it immediately
+      // sends an empty caption over the socket and waits on its own
+      // round trip to come back before the box disappears -- an entirely
+      // separate race against the submitTranscript round trip below, and
+      // whichever one lands first, there's a real gap between the box
+      // vanishing and the permanent message appearing (or, the other way
+      // around, a moment where both are visible at once). Either way it
+      // reads as a flash/flicker even though the two round trips carry the
+      // exact same text. Leaving the box showing its already-finalized text
+      // makes the swap invisible: the effect below clears it in the exact
+      // same tick the real message lands, never before and never after.
       submitTranscript.mutate({ id: projectId, data: { text } });
     },
   });
 
   // The instant a real transcript message lands, drop its speaker's interim
-  // caption -- otherwise the live caption bubble can sit there stale for up
-  // to its own TTL, right next to (or above) the final message it was
-  // standing in for.
+  // caption -- this is the ONLY place the interim box for a finalized
+  // utterance gets cleared, so it can never disappear before, or linger
+  // after, the permanent message it's standing in for actually shows up.
   const lastMessageIdRef = useRef<number | null>(null);
   useEffect(() => {
     const last = messages[messages.length - 1];
