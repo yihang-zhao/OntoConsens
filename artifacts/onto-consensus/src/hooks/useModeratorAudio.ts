@@ -75,11 +75,25 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
   const onFinalizeRef = useRef(onFinalize);
   onFinalizeRef.current = onFinalize;
 
+  // Lets a caller (e.g. "turn the mic off" button) synchronously pull out
+  // whatever's been recognized so far -- mid-utterance and all -- instead of
+  // relying on the effect-teardown flush below. That flush only runs once
+  // `active` actually flips to false, which can happen well after this
+  // member has already been marked inactive server-side (see the race this
+  // is guarding against in ModeratorChatPanel's handleToggleClick), so its
+  // transcript submission can arrive too late to be accepted. Calling this
+  // first lets the caller submit the text and wait for that to be accepted
+  // BEFORE deactivating, closing that race.
+  const flushRef = useRef<() => string>(() => "");
+
   // Live speech-to-text runs as its own consumer of the microphone via the
   // browser's speech recognizer -- it manages its own mic access separately
   // from the volume-metering effect below, so the two don't interfere.
   useEffect(() => {
-    if (!active) return;
+    if (!active) {
+      flushRef.current = () => "";
+      return;
+    }
     const maybeCtor = getSpeechRecognitionCtor();
     if (!maybeCtor) {
       setSpeechSupported(false);
@@ -137,6 +151,30 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       // sole responsibility of the caller's "message arrived" handling.
       if (text) onFinalizeRef.current?.(text);
     }
+
+    // Exposed to the caller via the hook's returned `flush()`. Pulls
+    // whatever's been recognized so far out of this closure's own state
+    // (bypassing the silence timer entirely) and hands it back directly
+    // instead of going through onFinalize, so the caller can await its own
+    // submission before doing anything else (like deactivating this
+    // member). Also stops the recognizer immediately so it can't keep
+    // growing the buffer this already pulled text out of, and clears local
+    // state so the effect-teardown flush below finds nothing left to
+    // (redundantly) finalize once `active` actually flips to false.
+    flushRef.current = () => {
+      const text = currentText(lastResults ? textFromResults(lastResults) : "");
+      priorSessionsText = "";
+      lastResults = null;
+      lastSpeechAt = 0;
+      if (recognition) {
+        try {
+          recognition.abort();
+        } catch {
+          // already stopped
+        }
+      }
+      return text;
+    };
 
     function start() {
       if (stopped) return;
@@ -281,5 +319,10 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, active]);
 
-  return { micError, speechSupported };
+  // Imperative escape hatch for "flush whatever's mid-utterance right now" --
+  // see flushRef's own comment above for why this exists alongside the
+  // automatic effect-teardown flush.
+  const flush = () => flushRef.current();
+
+  return { micError, speechSupported, flush };
 }

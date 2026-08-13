@@ -128,7 +128,7 @@ export function ModeratorChatPanel({
   // capturing your mic. The browser's own permission prompt is the only
   // thing the user sees the first time; if they've already granted it, the
   // mic just opens.
-  const { micError, speechSupported } = useModeratorAudio({
+  const { micError, speechSupported, flush } = useModeratorAudio({
     projectId,
     active: moderatorActive,
     lang: recognitionLang,
@@ -187,7 +187,24 @@ export function ModeratorChatPanel({
 
   const handleToggleClick = () => {
     if (moderatorActive) {
-      disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
+      // Pull out whatever's mid-utterance (if anything) and wait for its
+      // submission to settle BEFORE deactivating this member server-side.
+      // Deactivating first (the old order) would often win the race: the
+      // disable request reaches the server, flips this member inactive,
+      // and only *then* does turning the mic off trigger the audio hook's
+      // own flush -- whose transcript submission the server now rejects as
+      // coming from an inactive participant, silently dropping whatever
+      // was said right before the mic closed. Sequencing it this way (via
+      // onSettled, so a failed submission still lets disable proceed)
+      // guarantees the transcript is fully accepted or rejected before the
+      // deactivation request is even sent.
+      const pendingText = flush();
+      const proceedToDisable = () => disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
+      if (pendingText) {
+        submitTranscript.mutate({ id: projectId, data: { text: pendingText } }, { onSettled: proceedToDisable });
+      } else {
+        proceedToDisable();
+      }
     } else {
       configure.mutate(
         { id: projectId },
