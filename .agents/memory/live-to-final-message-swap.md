@@ -16,3 +16,5 @@ When a UI shows an in-progress/live version of content (e.g. a live speech-to-te
 **Why:** each of these is invisible in isolation during code review — the bug only appears at runtime, under real timing, and only intermittently. A fix for one cause looks like it "didn't work" when a different cause is still active, so all four need to be checked when this class of flicker is reported.
 
 **How to apply:** whenever a live/in-progress representation of content is meant to be seamlessly replaced by a persisted/final one, audit for all four causes together, not just the first plausible one found.
+
+**Trap for cause #2 specifically:** removing the premature "clear the live version" call from the UI component is not enough if a lower-level hook/module also independently fires that same clear as part of its own "finalize" logic (e.g. a hook's internal `finalize()` helper calling its own `onUpdate("")` callback before invoking `onFinalize(text)`). Grep the *entire* call chain — hook internals included, not just the component that consumes the hook — for every place that clears/blanks the live value, not just the most visible one.

@@ -127,7 +127,14 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     function finalizeIfAny(sessionText = "") {
       const text = currentText(sessionText);
       priorSessionsText = "";
-      onCaptionRef.current?.("");
+      // Deliberately NOT calling onCaption("") here. That would broadcast an
+      // empty caption immediately, racing the onFinalize round trip below
+      // (which persists the same text as a real message) over two entirely
+      // separate network paths -- whichever lands first either blanks the
+      // box before the real message shows up, or leaves both visible at
+      // once. The box should keep showing this same finalized text right up
+      // until the permanent message actually replaces it; that swap is the
+      // sole responsibility of the caller's "message arrived" handling.
       if (text) onFinalizeRef.current?.(text);
     }
 
