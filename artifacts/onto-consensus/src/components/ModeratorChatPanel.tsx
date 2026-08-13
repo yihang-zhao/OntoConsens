@@ -422,17 +422,21 @@ function LiveTranscriptBubble({
       <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
         {username}
       </div>
+      {/* Same container classes/box model as ChatMessageBubble's transcript
+          case below -- no w-fit, no flex row -- so finalizing this into a
+          real message swaps text content only, with the box never resizing
+          or re-laying-out at the transition point. The blinking cursor is
+          just one more inline character at the end of the text, not a
+          layout-affecting flex child. */}
       <div
-        className="rounded-xl rounded-tl-sm px-3 py-2 w-fit max-w-full flex items-center gap-2"
-        style={{ backgroundColor: color.soft }}
+        className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
+        style={{ backgroundColor: color.soft, color: color.softText }}
       >
-        <span className="text-xs leading-relaxed whitespace-pre-wrap" style={{ color: color.softText }}>
-          {caption}
-          <span
-            className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse"
-            style={{ backgroundColor: color.softText }}
-          />
-        </span>
+        {caption}
+        <span
+          className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse"
+          style={{ backgroundColor: color.softText }}
+        />
       </div>
     </div>
   );
