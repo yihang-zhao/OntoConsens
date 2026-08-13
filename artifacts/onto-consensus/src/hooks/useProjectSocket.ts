@@ -71,10 +71,17 @@ interface UseProjectSocketOptions {
 const SPEAKER_VOLUME_TTL_MS = 1_200;
 const SPEAKER_VOLUME_PRUNE_INTERVAL_MS = 500;
 
-// A live caption is cleared this long after its last update -- long enough
-// to bridge normal mid-sentence pauses, short enough that it's gone well
-// before it could be confused with a stale/wrong utterance.
-const LIVE_CAPTION_TTL_MS = 2_500;
+// A live caption is cleared this long after its last update -- but only as
+// a last-resort cleanup for a truly abandoned utterance (e.g. a tab crashed
+// mid-sentence and no finalize/clear ever arrives). It must stay well above
+// SILENCE_FINALIZE_MS (2s): once that fires, the box's last update stops
+// advancing while the finalized text makes its full round trip to the
+// server and back as a permanent message -- if this TTL were close to that
+// 2s window, a slow round trip could prune the box (making it vanish) just
+// before the real message arrives (making it reappear), a visible
+// disappear-then-reappear flash. The gap here needs to comfortably outlast
+// that whole round trip, not just the silence window that triggers it.
+const LIVE_CAPTION_TTL_MS = 12_000;
 const LIVE_CAPTION_PRUNE_INTERVAL_MS = 500;
 
 // Cursors older than this are considered stale and pruned even if no new
