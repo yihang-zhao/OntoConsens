@@ -19,7 +19,12 @@ import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
 import { logger } from "./logger";
 
-const SILENCE_TIMEOUT_MS = 60_000;
+// "Silence" means no one currently has new text filling into their live
+// caption box -- not just "no finalized message yet" (see noteSpeechActivity
+// below, which now fires on every non-empty live caption update, not only
+// on a finalized transcript POST). 5 continuous seconds of that is treated
+// as the group having stalled.
+const SILENCE_TIMEOUT_MS = 5_000;
 
 // Falls back to this if a project's own `maxMembers` is somehow unset --
 // mirrors the same fallback used by the properties routes' agreement check.
@@ -375,9 +380,13 @@ function fireWhenCooldownElapsed(projectId: number): void {
   setTimeout(() => fireWhenCooldownElapsed(projectId), remaining);
 }
 
-// Called only after recordTranscriptChunk has confirmed a durable write for
-// some active participant -- so a stale timer is never armed on the
-// strength of content that was actually rejected.
+// Called both after recordTranscriptChunk confirms a durable write for a
+// finalized utterance, AND on every non-empty live caption update (see
+// wsHub's "caption" message handling) -- the latter is what makes "silence"
+// mean "no one has new text filling into their live box right now" rather
+// than "no one has finished a whole utterance yet". A member who's mid-
+// sentence, still being recognized, must keep resetting this clock even
+// though nothing has been persisted as a real message yet.
 export function noteSpeechActivity(projectId: number): void {
   clearModeratorSilenceTimer(projectId);
   const timer = setTimeout(() => {

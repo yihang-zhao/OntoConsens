@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import crypto from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
+import { noteSpeechActivity } from "./moderatorEngine";
 
 interface Ticket {
   userId: number;
@@ -213,6 +214,14 @@ export function setupWebSocketServer(): WebSocketServer {
         // place -- one source of truth instead of a local echo that could
         // drift from what peers see.
         broadcastToProject(ticket.projectId, { type: "live_caption", userId: ticket.userId, text });
+        // Non-empty text means someone currently has words actively filling
+        // into their live box -- that counts as speech activity for the AI
+        // moderator's silence clock, even though nothing has been finalized
+        // into a real message yet. An empty string is just a box being
+        // cleared, not new activity, so it must NOT reset the clock.
+        if (text.trim()) {
+          noteSpeechActivity(ticket.projectId);
+        }
       }
     });
 
