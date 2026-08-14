@@ -638,6 +638,9 @@ async function generateIntervention(projectId: number): Promise<void> {
           "and every COUNTEREXAMPLE or objection given against it, across the whole transcript -- include " +
           "something even if it was only mentioned once early on and never repeated, but leave it out if someone " +
           "later explicitly retracted or contradicted it. For each one, note who said it. " +
+          "Do NOT copy the speaker's original sentence verbatim -- condense it down to its core point in your " +
+          "own words, as short and punchy as possible (aim for well under 10 words, phrased as a plain statement, " +
+          "no filler like \"they said\" or \"because\"). " +
           'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
           '{"examples": [{"text": string, "by": string}], "counterexamples": [{"text": string, "by": string}]}. ' +
           "Use the exact usernames as they appear as speaker labels in the transcript.",
@@ -652,22 +655,30 @@ async function generateIntervention(projectId: number): Promise<void> {
             (e): e is { text: string; by: string } =>
               Boolean(e) && typeof e === "object" && typeof (e as any).text === "string",
           )
-          .map((e) => `- ${e.text}${typeof e.by === "string" && e.by ? ` (given by ${e.by})` : ""}`)
+          .map((e) => {
+            const text = e.text.trim().replace(/[.\s]+$/, "");
+            const by = typeof e.by === "string" && e.by ? e.by : "someone";
+            return `${text}. — ${by}`;
+          })
           .join("\n");
 
       const examplesText = formatEntries(examples) || "(none given yet)";
       const counterexamplesText = formatEntries(counterexamples) || "(none given yet)";
-      const proposer = propertyById.get(propertyId);
-      const proposedByUsername = proposer ? usernameById.get(proposer.proposedByUserId) ?? "someone" : "someone";
 
+      // Fixed template: title/header lives in the client (always "AI
+      // moderator"), so the content itself only carries the stalled-property
+      // line, the two condensed pro/con lists, and the standing prompt to
+      // keep discussing or move to a vote -- no extra framing or attribution
+      // line, per the exact wording the moderator is expected to use.
       interventionContent =
-        `Stalled discussion detected on ${className}.${propertyName}.\n\n` +
-        `Examples:\n${examplesText}\n\n` +
-        `Counterexamples:\n${counterexamplesText}\n\n` +
-        `Originally proposed by: ${proposedByUsername}`;
+        `Discussion stalled — ${className}.${propertyName}\n\n` +
+        `I noticed the discussion has stalled on this property. Here's where things stand:\n\n` +
+        `For keeping it:\n\n${examplesText}\n\n` +
+        `For removing it:\n\n${counterexamplesText}\n\n` +
+        `Would you like to continue discussing, or move to a vote?`;
     } else {
       interventionContent =
-        "Stalled discussion detected, but I couldn't tell which class or property this was about. " +
+        "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
         "Try focusing the discussion on properties already in this shared workspace.";
     }
   } catch (err) {

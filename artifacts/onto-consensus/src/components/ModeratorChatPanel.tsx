@@ -468,9 +468,7 @@ function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
           <Sparkles className="w-3 h-3 text-primary" />
-          {message.type === "intervention" && message.matched && message.className && message.propertyName
-            ? `${message.className}.${message.propertyName}`
-            : "AI moderator"}
+          AI moderator
         </div>
         <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-primary/10 text-foreground">
           {message.content}
