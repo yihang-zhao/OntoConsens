@@ -31,6 +31,14 @@ const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
   { value: "ru-RU", label: "Русский" },
 ];
 const RECOGNITION_LANG_STORAGE_KEY = "onto-consensus-moderator-lang";
+// One flag per project, per browser -- flips to "seen" the first time this
+// member's panel finishes loading history for that project. Lets the intro
+// bullets (which are already sitting in "history" by the time the panel
+// mounts, since they're posted synchronously when the shared space opens)
+// still play through the one-message-at-a-time typing effect on that very
+// first load, instead of being dumped onto the screen all at once the way
+// ordinary history replay works.
+const introSeenStorageKey = (projectId: number) => `onto-consensus-moderator-intro-seen-${projectId}`;
 
 // Defaults to whichever of the supported languages best matches the
 // browser's own language setting, falling back to English -- most users
@@ -247,13 +255,25 @@ export function ModeratorChatPanel({
   useEffect(() => {
     if (historyLoadedRef.current || !history) return;
     historyLoadedRef.current = true;
+    const introAlreadySeen = localStorage.getItem(introSeenStorageKey(projectId)) === "1";
     setRevealedIds((prev) => {
       const next = new Set(prev);
-      for (const m of messages) next.add(m.id);
+      for (const m of messages) {
+        // The very first time this member's browser ever loads this
+        // project's history, leave "intro" messages out of the instant
+        // bulk-reveal -- the per-message effect below will then pick them
+        // up one at a time through the normal typing-pause path, exactly
+        // as if the moderator were live-typing them right now. Every
+        // subsequent load (or any message type besides "intro") reveals
+        // instantly as before.
+        if (!introAlreadySeen && m.type === "intro") continue;
+        next.add(m.id);
+      }
       return next;
     });
+    if (!introAlreadySeen) localStorage.setItem(introSeenStorageKey(projectId), "1");
     setHistoryReady(true);
-  }, [history, messages]);
+  }, [history, messages, projectId]);
   useEffect(() => {
     if (!historyLoadedRef.current) return; // wait for the instant initial reveal above
     if (revealTimerRef.current) return; // a reveal is already in flight
