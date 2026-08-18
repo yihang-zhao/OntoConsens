@@ -638,11 +638,17 @@ async function generateIntervention(projectId: number): Promise<void> {
           "and every COUNTEREXAMPLE or objection given against it, across the whole transcript -- include " +
           "something even if it was only mentioned once early on and never repeated, but leave it out if someone " +
           "later explicitly retracted or contradicted it. For each one, note who said it. " +
+          "If the SAME underlying point was made more than once -- whether by the same person repeating " +
+          "themselves, or by different people independently making an equivalent point -- merge it into a " +
+          "single entry rather than listing it twice, and list every person who made that point (in the order " +
+          "they first raised it, no duplicate names even if someone repeated themselves). Only merge points " +
+          "that are genuinely the same underlying reason; keep distinct reasons as separate entries even if " +
+          "they're about the same property. " +
           "Do NOT copy the speaker's original sentence verbatim -- condense it down to its core point in your " +
           "own words, as short and punchy as possible (aim for well under 10 words, phrased as a plain statement, " +
           "no filler like \"they said\" or \"because\"). " +
           'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-          '{"examples": [{"text": string, "by": string}], "counterexamples": [{"text": string, "by": string}]}. ' +
+          '{"examples": [{"text": string, "by": string[]}], "counterexamples": [{"text": string, "by": string[]}]}. ' +
           "Use the exact usernames as they appear as speaker labels in the transcript.",
         fullTranscript,
       );
@@ -652,12 +658,19 @@ async function generateIntervention(projectId: number): Promise<void> {
       const formatEntries = (entries: unknown[]) =>
         entries
           .filter(
-            (e): e is { text: string; by: string } =>
+            (e): e is { text: string; by: unknown } =>
               Boolean(e) && typeof e === "object" && typeof (e as any).text === "string",
           )
           .map((e) => {
             const text = e.text.trim().replace(/[.\s]+$/, "");
-            const by = typeof e.by === "string" && e.by ? e.by : "someone";
+            // Tolerate the model still returning a bare string for "by" --
+            // normalize both shapes to a deduplicated name list so a stray
+            // non-array response never crashes formatting.
+            const rawNames = Array.isArray(e.by) ? e.by : typeof e.by === "string" ? [e.by] : [];
+            const names = Array.from(
+              new Set(rawNames.filter((n): n is string => typeof n === "string" && n.trim().length > 0)),
+            );
+            const by = names.length > 0 ? names.join(", ") : "someone";
             return `${text}. — ${by}`;
           })
           .join("\n");
