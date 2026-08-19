@@ -10,7 +10,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sparkles, AlertTriangle, X, Mic, MicOff, Languages } from "lucide-react";
+import { Sparkles, AlertTriangle, X, Mic, MicOff, Languages, ArrowDown } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
 import type { LiveCaption, ModeratorChatMessage, SpeakerVolume } from "@/hooks/useProjectSocket";
@@ -311,6 +311,27 @@ export function ModeratorChatPanel({
   const speakingMembers = members.filter((m) => !!liveCaptions.get(m.userId)?.text);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  // Whether the user is currently parked near the bottom of the panel. Kept
+  // as a ref (not just state) so the content-driven scroll effect below can
+  // read the latest value without re-running every time it changes --  it
+  // should only fire on new content, never merely because the user scrolled.
+  const isNearBottomRef = useRef(true);
+  const [showNewMessagePill, setShowNewMessagePill] = useState(false);
+  const NEAR_BOTTOM_THRESHOLD_PX = 80;
+  const handlePanelScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX;
+    isNearBottomRef.current = nearBottom;
+    if (nearBottom) setShowNewMessagePill(false);
+  };
+  const scrollToBottom = (behavior: ScrollBehavior) => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+    isNearBottomRef.current = true;
+    setShowNewMessagePill(false);
+  };
   // The initial backlog jumps straight to the bottom instantly -- it's not
   // new activity, so an animated scroll through everything that already
   // happened would feel like a slow replay instead of just reopening the
@@ -318,7 +339,7 @@ export function ModeratorChatPanel({
   // smoothly.
   useEffect(() => {
     if (!historyReady) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    scrollToBottom("auto");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyReady]);
   // Live caption text itself -- not just a box appearing/disappearing --
@@ -330,10 +351,19 @@ export function ModeratorChatPanel({
   // this keeps the box's growth followed smoothly line by line, finalizing
   // it into a permanent message doesn't change the panel's total height and
   // this same effect is a no-op then -- no extra jump at the end.
+  //
+  // But only while the user is already parked near the bottom -- someone
+  // scrolled up to reread earlier messages should never get yanked back
+  // down by new content; they instead get a "new messages" pill they can
+  // tap once they're ready to catch up.
   const liveCaptionsKey = speakingMembers.map((m) => `${m.userId}:${liveCaptions.get(m.userId)?.text ?? ""}`).join("|");
   useEffect(() => {
     if (!historyReady) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottomRef.current) {
+      scrollToBottom("smooth");
+    } else {
+      setShowNewMessagePill(true);
+    }
   }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length, liveCaptionsKey]);
 
   return (
@@ -353,25 +383,40 @@ export function ModeratorChatPanel({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 flex flex-col gap-3">
-        {visibleMessages.length === 0 && !isTyping && (
-          <p className="text-xs text-muted-foreground text-center mt-6">
-            The AI moderator's messages will appear here once the shared workspace is open.
-          </p>
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handlePanelScroll}
+          className="h-full overflow-y-auto px-3 py-3 flex flex-col gap-3"
+        >
+          {visibleMessages.length === 0 && !isTyping && (
+            <p className="text-xs text-muted-foreground text-center mt-6">
+              The AI moderator's messages will appear here once the shared workspace is open.
+            </p>
+          )}
+          {visibleMessages.map((message) => (
+            <ChatMessageBubble key={message.id} message={message} />
+          ))}
+          {isTyping && <TypingIndicatorBubble />}
+          {speakingMembers.map((m) => (
+            <LiveTranscriptBubble
+              key={m.userId}
+              username={m.username}
+              colorSlot={m.colorSlot}
+              caption={liveCaptions.get(m.userId)?.text ?? ""}
+            />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+        {showNewMessagePill && (
+          <button
+            onClick={() => scrollToBottom("smooth")}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-primary text-primary-foreground text-xs font-medium pl-3 pr-3.5 py-1.5 rounded-full shadow-md hover:opacity-90 transition-opacity"
+          >
+            <ArrowDown className="w-3.5 h-3.5" />
+            New messages
+          </button>
         )}
-        {visibleMessages.map((message) => (
-          <ChatMessageBubble key={message.id} message={message} />
-        ))}
-        {isTyping && <TypingIndicatorBubble />}
-        {speakingMembers.map((m) => (
-          <LiveTranscriptBubble
-            key={m.userId}
-            username={m.username}
-            colorSlot={m.colorSlot}
-            caption={liveCaptions.get(m.userId)?.text ?? ""}
-          />
-        ))}
-        <div ref={messagesEndRef} />
       </div>
 
       <div className="border-t shrink-0 p-3 flex flex-col gap-2">
