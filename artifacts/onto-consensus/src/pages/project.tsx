@@ -93,7 +93,17 @@ export default function ProjectWorkspace() {
     if (moderatorStatus?.active) {
       disableModerator.mutate(
         { id: projectId },
-        { onSettled: () => navigate("/") },
+        {
+          // Without this, the query cache still holds the stale
+          // "active: true" reading from before disable landed -- so
+          // rejoining the project a moment later shows the mic toggle as ON
+          // (from cache) before the next refetch flips it back OFF, a
+          // visible flash of the wrong state.
+          onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
+            navigate("/");
+          },
+        },
       );
     } else {
       navigate("/");

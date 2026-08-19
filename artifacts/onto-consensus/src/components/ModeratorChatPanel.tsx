@@ -275,7 +275,19 @@ export function ModeratorChatPanel({
     setHistoryReady(true);
   }, [history, messages, projectId]);
   useEffect(() => {
-    if (!historyLoadedRef.current) return; // wait for the instant initial reveal above
+    // Gate on the STATE flag, not the ref. The ref flips true synchronously
+    // inside the effect above, in the same commit this effect also runs in
+    // -- so reading it here would see "already loaded" while `revealedIds`
+    // in this same closure is still the stale, pre-bulk-update value (the
+    // state update from that effect hasn't caused a re-render yet). That
+    // race let this effect grab the very first not-yet-revealed message --
+    // typically the project's original "intro" message -- and run it
+    // through the typing-pause path even on a rejoin where it should have
+    // been bulk-revealed instantly, producing a spurious typing indicator.
+    // `historyReady` is set via the same setState batch as the bulk
+    // `revealedIds` update, so by the time this effect sees it flip true,
+    // `revealedIds` here is guaranteed to already reflect that bulk update.
+    if (!historyReady) return; // wait for the instant initial reveal above
     if (revealTimerRef.current) return; // a reveal is already in flight
     const next = messages.find((m) => !revealedIds.has(m.id) && m.id !== typingMessageId);
     if (!next) return;
