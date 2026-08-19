@@ -375,9 +375,9 @@ export function ModeratorChatPanel({
       return;
     }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (el.scrollTop < lastScrollTopRef.current - 1) {
-      // Any upward movement immediately breaks auto-follow -- no threshold,
-      // no grace window.
+    if (el.scrollTop < lastScrollTopRef.current) {
+      // Any upward movement at all immediately breaks auto-follow -- no
+      // threshold, no minimum distance, no grace window.
       isNearBottomRef.current = false;
     } else if (distanceFromBottom < 4) {
       // Back at the very bottom -- resume auto-follow.
