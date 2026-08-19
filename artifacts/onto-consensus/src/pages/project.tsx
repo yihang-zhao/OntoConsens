@@ -94,15 +94,18 @@ export default function ProjectWorkspace() {
       disableModerator.mutate(
         { id: projectId },
         {
-          // Without this, the query cache still holds the stale
-          // "active: true" reading from before disable landed -- so
-          // rejoining the project a moment later shows the mic toggle as ON
-          // (from cache) before the next refetch flips it back OFF, a
-          // visible flash of the wrong state.
-          onSettled: () => {
-            queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
-            navigate("/");
+          // Write the server's response straight into the cache rather than
+          // just invalidating it. Invalidating only marks the query stale --
+          // React Query still returns the old cached "active: true" value
+          // synchronously on the next mount while it refetches in the
+          // background, so rejoining moments later would still flash the
+          // mic toggle ON before the refetch resolves and flips it OFF.
+          // Seeding the cache with the known-correct value up front means
+          // there's no stale reading to flash in the first place.
+          onSuccess: (data) => {
+            queryClient.setQueryData(getGetModeratorStatusQueryKey(projectId), data);
           },
+          onSettled: () => navigate("/"),
         },
       );
     } else {
