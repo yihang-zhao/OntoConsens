@@ -359,6 +359,41 @@ export function ModeratorChatPanel({
     if (scrollbarHideTimeoutRef.current) clearTimeout(scrollbarHideTimeoutRef.current);
     scrollbarHideTimeoutRef.current = setTimeout(() => setScrollbarVisible(false), 800);
   };
+  // Live captions can retrigger our own smooth scrollToBottom() every time a
+  // few characters come in -- while that's happening, "programmaticScrollRef"
+  // stays true almost continuously, so the resulting native "scroll" events
+  // can't be trusted to tell a real user gesture apart from our own call.
+  // Reading intent straight off the wheel/touch gesture instead sidesteps
+  // that race entirely: these events are never fired by our own JS-driven
+  // scrollIntoView, only by the user's hands, so they're a reliable signal
+  // no matter what our own in-flight scroll animation is doing.
+  const touchStartYRef = useRef<number | null>(null);
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    showScrollbarBriefly();
+    if (e.deltaY < 0) {
+      // Scrolling up, however slightly -- immediately break auto-follow and
+      // stop treating any in-flight smooth scroll as still "ours to finish".
+      isNearBottomRef.current = false;
+      programmaticScrollRef.current = false;
+    }
+  };
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    touchStartYRef.current = e.touches[0]?.clientY ?? null;
+  };
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    showScrollbarBriefly();
+    const startY = touchStartYRef.current;
+    const currentY = e.touches[0]?.clientY;
+    if (startY !== null && currentY !== undefined) {
+      // Finger moving down the screen reveals earlier content -- i.e. the
+      // view is scrolling up.
+      if (currentY - startY > 0) {
+        isNearBottomRef.current = false;
+        programmaticScrollRef.current = false;
+      }
+      touchStartYRef.current = currentY;
+    }
+  };
   useEffect(() => {
     return () => {
       if (scrollbarHideTimeoutRef.current) clearTimeout(scrollbarHideTimeoutRef.current);
@@ -456,8 +491,9 @@ export function ModeratorChatPanel({
         <div
           ref={scrollContainerRef}
           onScroll={handlePanelScroll}
-          onWheel={showScrollbarBriefly}
-          onTouchMove={showScrollbarBriefly}
+          onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
           className="h-full overflow-y-auto px-3 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           <div ref={scrollContentRef} className="flex flex-col gap-3">
