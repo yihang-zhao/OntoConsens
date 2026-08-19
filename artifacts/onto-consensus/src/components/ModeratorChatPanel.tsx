@@ -337,7 +337,7 @@ export function ModeratorChatPanel({
   }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length, liveCaptionsKey]);
 
   return (
-    <aside className="w-[34vw] min-w-[24rem] shrink-0 h-full flex flex-col border-l bg-card">
+    <aside className="w-96 shrink-0 h-full flex flex-col border-l bg-card">
       <div className="flex items-center gap-2 h-14 px-4 border-b shrink-0">
         <Sparkles className="w-4 h-4 text-primary" />
         <span className="font-semibold text-sm">AI Moderator</span>
@@ -386,36 +386,34 @@ export function ModeratorChatPanel({
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
           </p>
         )}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 bg-muted/50 border rounded-full pl-3 pr-2.5 py-2 flex-1 min-w-0">
-            {moderatorActive ? (
-              <Mic className="w-4 h-4 text-primary shrink-0" />
-            ) : (
-              <MicOff className="w-4 h-4 text-muted-foreground shrink-0" />
-            )}
-            <span className="flex-1 text-xs font-medium text-muted-foreground truncate">Microphone</span>
-            <Switch
-              checked={moderatorActive}
-              onCheckedChange={handleToggleClick}
-              disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
-            />
-          </div>
-          {speechSupported && (
-            <Select value={recognitionLang} onValueChange={handleLangChange}>
-              <SelectTrigger className="h-9 w-28 shrink-0 rounded-full bg-muted/50 border text-xs pl-3">
-                <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {RECOGNITION_LANGUAGES.map((l) => (
-                  <SelectItem key={l.value} value={l.value} className="text-xs">
-                    {l.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="flex items-center gap-2 bg-muted/50 border rounded-full pl-3 pr-2.5 py-2">
+          {moderatorActive ? (
+            <Mic className="w-4 h-4 text-primary" />
+          ) : (
+            <MicOff className="w-4 h-4 text-muted-foreground" />
           )}
+          <span className="flex-1 text-xs font-medium text-muted-foreground">Microphone</span>
+          <Switch
+            checked={moderatorActive}
+            onCheckedChange={handleToggleClick}
+            disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
+          />
         </div>
+        {speechSupported && (
+          <Select value={recognitionLang} onValueChange={handleLangChange}>
+            <SelectTrigger className="h-8 rounded-full bg-muted/50 border text-xs pl-3">
+              <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RECOGNITION_LANGUAGES.map((l) => (
+                <SelectItem key={l.value} value={l.value} className="text-xs">
+                  {l.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
     </aside>
   );
