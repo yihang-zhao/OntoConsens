@@ -292,7 +292,14 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
 
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Explicit (not just relying on browser defaults) so the mic capture
+        // reliably cancels echo from whatever's playing on this machine's
+        // speakers -- e.g. a separate voice call (Zoom/Meet/Discord) running
+        // alongside this app -- rather than transcribing it back as if the
+        // local member had said it themselves.
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true },
+        });
       } catch {
         if (!stopped) setMicError("Microphone access was denied or unavailable.");
         return;
