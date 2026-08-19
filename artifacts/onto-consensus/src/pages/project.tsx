@@ -294,7 +294,7 @@ export default function ProjectWorkspace() {
       </header>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex min-h-0 relative gap-3 p-3">
+      <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4">
         {/* Canvas Area */}
         <main className="flex-1 min-w-0 bg-background relative rounded-2xl border shadow-sm overflow-hidden">
           {me && (
