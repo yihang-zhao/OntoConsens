@@ -7,6 +7,7 @@ import {
   useGetMe,
   useListProperties,
   useGetModeratorStatus,
+  useDisableModerator,
   getGetProjectQueryKey,
   getListPropertiesQueryKey,
   getExportProjectQueryKey,
@@ -81,6 +82,23 @@ export default function ProjectWorkspace() {
       refetchInterval: 10_000,
     },
   });
+  // "Quitting" the project (heading back to the dashboard) should never
+  // leave this member's mic marked active server-side -- otherwise everyone
+  // else keeps seeing them as mic-on even though no audio/captions are
+  // coming from them anymore, and the moderator's silence tracking keeps
+  // treating their mic as "open".
+  const disableModerator = useDisableModerator();
+  const handleQuitProject = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (moderatorStatus?.active) {
+      disableModerator.mutate(
+        { id: projectId },
+        { onSettled: () => navigate("/") },
+      );
+    } else {
+      navigate("/");
+    }
+  };
   const [liveMessages, setLiveMessages] = useState<ModeratorChatMessage[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
   // The instant a matched "stalled discussion" intervention arrives,
@@ -224,10 +242,8 @@ export default function ProjectWorkspace() {
       {/* Top Bar */}
       <header className="flex items-center justify-between h-14 px-4 border-b bg-card shrink-0 shadow-sm z-10 relative">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild className="shrink-0 -ml-2">
-            <Link href="/">
-              <ChevronLeft className="w-5 h-5" />
-            </Link>
+          <Button variant="ghost" size="icon" className="shrink-0 -ml-2" onClick={handleQuitProject}>
+            <ChevronLeft className="w-5 h-5" />
           </Button>
           <div className="flex flex-col">
             <h1 className="font-semibold text-sm leading-tight">{project.name}</h1>
