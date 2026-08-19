@@ -337,7 +337,7 @@ export function ModeratorChatPanel({
   }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length, liveCaptionsKey]);
 
   return (
-    <aside className="w-80 shrink-0 h-full flex flex-col border-l bg-card">
+    <aside className="w-96 shrink-0 h-full flex flex-col border-l bg-card">
       <div className="flex items-center gap-2 h-14 px-4 border-b shrink-0">
         <Sparkles className="w-4 h-4 text-primary" />
         <span className="font-semibold text-sm">AI Moderator</span>
