@@ -375,12 +375,17 @@ export function ModeratorChatPanel({
       return;
     }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (el.scrollTop < lastScrollTopRef.current) {
+    const scrolledUp = el.scrollTop < lastScrollTopRef.current;
+    const scrolledDown = el.scrollTop > lastScrollTopRef.current;
+    if (scrolledUp) {
       // Any upward movement at all immediately breaks auto-follow -- no
       // threshold, no minimum distance, no grace window.
       isNearBottomRef.current = false;
-    } else if (distanceFromBottom < 4) {
-      // Back at the very bottom -- resume auto-follow.
+    } else if (scrolledDown && distanceFromBottom < 4) {
+      // Resume auto-follow only when a genuine downward scroll is what
+      // landed the view at the bottom -- merely sitting near the bottom
+      // (e.g. because content above shrank, or the position never moved)
+      // must not silently re-arm it.
       isNearBottomRef.current = true;
       setShowNewMessagePill(false);
     }
