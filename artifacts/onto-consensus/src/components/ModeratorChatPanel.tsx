@@ -312,25 +312,89 @@ export function ModeratorChatPanel({
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  // Whether the user is currently parked near the bottom of the panel. Kept
+  const scrollContentRef = useRef<HTMLDivElement | null>(null);
+  // Whether the user is currently parked at the bottom of the panel. Kept
   // as a ref (not just state) so the content-driven scroll effect below can
   // read the latest value without re-running every time it changes --  it
   // should only fire on new content, never merely because the user scrolled.
   const isNearBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  // Our own scroll-into-view calls also fire native "scroll" events -- this
+  // distinguishes those from a real user gesture so they don't get
+  // misread as "the user scrolled up" or flash the custom scrollbar.
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showNewMessagePill, setShowNewMessagePill] = useState(false);
-  const NEAR_BOTTOM_THRESHOLD_PX = 80;
+
+  // Custom scrollbar thumb -- the native one is hidden (see className below)
+  // so we can control exactly when it's visible: only while the user is
+  // actively scrolling, never just because new content pushed the track
+  // height around.
+  const [thumb, setThumb] = useState({ heightPct: 100, topPct: 0, canScroll: false });
+  const updateThumbMetrics = (el: HTMLDivElement) => {
+    const canScroll = el.scrollHeight > el.clientHeight + 1;
+    if (!canScroll) {
+      setThumb({ heightPct: 100, topPct: 0, canScroll: false });
+      return;
+    }
+    const heightPct = Math.max((el.clientHeight / el.scrollHeight) * 100, 10);
+    const maxScrollTop = el.scrollHeight - el.clientHeight;
+    const scrollRatio = maxScrollTop > 0 ? el.scrollTop / maxScrollTop : 0;
+    setThumb({ heightPct, topPct: scrollRatio * (100 - heightPct), canScroll: true });
+  };
+  useEffect(() => {
+    const contentEl = scrollContentRef.current;
+    const containerEl = scrollContainerRef.current;
+    if (!contentEl || !containerEl) return;
+    const observer = new ResizeObserver(() => updateThumbMetrics(containerEl));
+    observer.observe(contentEl);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [scrollbarVisible, setScrollbarVisible] = useState(false);
+  const scrollbarHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showScrollbarBriefly = () => {
+    setScrollbarVisible(true);
+    if (scrollbarHideTimeoutRef.current) clearTimeout(scrollbarHideTimeoutRef.current);
+    scrollbarHideTimeoutRef.current = setTimeout(() => setScrollbarVisible(false), 800);
+  };
+  useEffect(() => {
+    return () => {
+      if (scrollbarHideTimeoutRef.current) clearTimeout(scrollbarHideTimeoutRef.current);
+      if (programmaticScrollTimeoutRef.current) clearTimeout(programmaticScrollTimeoutRef.current);
+    };
+  }, []);
+
   const handlePanelScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
+    updateThumbMetrics(el);
+    if (programmaticScrollRef.current) {
+      lastScrollTopRef.current = el.scrollTop;
+      return;
+    }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX;
-    isNearBottomRef.current = nearBottom;
-    if (nearBottom) setShowNewMessagePill(false);
+    if (el.scrollTop < lastScrollTopRef.current - 1) {
+      // Any upward movement immediately breaks auto-follow -- no threshold,
+      // no grace window.
+      isNearBottomRef.current = false;
+    } else if (distanceFromBottom < 4) {
+      // Back at the very bottom -- resume auto-follow.
+      isNearBottomRef.current = true;
+      setShowNewMessagePill(false);
+    }
+    lastScrollTopRef.current = el.scrollTop;
   };
   const scrollToBottom = (behavior: ScrollBehavior) => {
+    programmaticScrollRef.current = true;
     messagesEndRef.current?.scrollIntoView({ behavior });
     isNearBottomRef.current = true;
     setShowNewMessagePill(false);
+    if (programmaticScrollTimeoutRef.current) clearTimeout(programmaticScrollTimeoutRef.current);
+    programmaticScrollTimeoutRef.current = setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, behavior === "smooth" ? 600 : 50);
   };
   // The initial backlog jumps straight to the bottom instantly -- it's not
   // new activity, so an animated scroll through everything that already
@@ -387,27 +451,38 @@ export function ModeratorChatPanel({
         <div
           ref={scrollContainerRef}
           onScroll={handlePanelScroll}
-          className="h-full overflow-y-auto px-3 py-3 flex flex-col gap-3"
+          onWheel={showScrollbarBriefly}
+          onTouchMove={showScrollbarBriefly}
+          className="h-full overflow-y-auto px-3 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
-          {visibleMessages.length === 0 && !isTyping && (
-            <p className="text-xs text-muted-foreground text-center mt-6">
-              The AI moderator's messages will appear here once the shared workspace is open.
-            </p>
-          )}
-          {visibleMessages.map((message) => (
-            <ChatMessageBubble key={message.id} message={message} />
-          ))}
-          {isTyping && <TypingIndicatorBubble />}
-          {speakingMembers.map((m) => (
-            <LiveTranscriptBubble
-              key={m.userId}
-              username={m.username}
-              colorSlot={m.colorSlot}
-              caption={liveCaptions.get(m.userId)?.text ?? ""}
-            />
-          ))}
-          <div ref={messagesEndRef} />
+          <div ref={scrollContentRef} className="flex flex-col gap-3">
+            {visibleMessages.length === 0 && !isTyping && (
+              <p className="text-xs text-muted-foreground text-center mt-6">
+                The AI moderator's messages will appear here once the shared workspace is open.
+              </p>
+            )}
+            {visibleMessages.map((message) => (
+              <ChatMessageBubble key={message.id} message={message} />
+            ))}
+            {isTyping && <TypingIndicatorBubble />}
+            {speakingMembers.map((m) => (
+              <LiveTranscriptBubble
+                key={m.userId}
+                username={m.username}
+                colorSlot={m.colorSlot}
+                caption={liveCaptions.get(m.userId)?.text ?? ""}
+              />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
         </div>
+        {thumb.canScroll && (
+          <div
+            aria-hidden
+            className="absolute right-1 w-1.5 rounded-full bg-foreground/25 pointer-events-none transition-opacity duration-300"
+            style={{ height: `${thumb.heightPct}%`, top: `${thumb.topPct}%`, opacity: scrollbarVisible ? 1 : 0 }}
+          />
+        )}
         {showNewMessagePill && (
           <button
             onClick={() => scrollToBottom("smooth")}
