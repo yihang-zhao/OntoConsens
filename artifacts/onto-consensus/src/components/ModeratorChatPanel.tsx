@@ -241,24 +241,48 @@ export function ModeratorChatPanel({
   const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
   const [typingMessageId, setTypingMessageId] = useState<number | null>(null);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const historyLoadedRef = useRef(false);
   const [historyReady, setHistoryReady] = useState(false);
+  // Whether this browser has EVER finished loading this project's history
+  // before -- read once, synchronously, at first render (a plain localStorage
+  // read has no side effects, so this is safe outside an effect). Read once
+  // and cached in a ref so a later history update (see below) can't flip
+  // this mid-session and re-trigger the one-time intro animation.
+  const introAlreadySeenRef = useRef<boolean | null>(null);
+  if (introAlreadySeenRef.current === null) {
+    introAlreadySeenRef.current = localStorage.getItem(introSeenStorageKey(projectId)) === "1";
+  }
+  const introSeenWrittenRef = useRef(false);
+  useEffect(() => {
+    if (!introAlreadySeenRef.current && !introSeenWrittenRef.current) {
+      introSeenWrittenRef.current = true;
+      localStorage.setItem(introSeenStorageKey(projectId), "1");
+    }
+  }, [projectId]);
   useEffect(() => {
     return () => {
       if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
     };
   }, []);
-  // The moment the persisted history first arrives, mark everything in it
-  // (plus anything already queued from the live socket by that point) as
-  // already revealed -- instantly, no per-message delay -- so a reopened
-  // shared space shows its whole backlog at once.
+  // Every time the persisted history query (re)resolves -- not just the
+  // first time -- mark every message it currently contains as already
+  // revealed, all in one update. This intentionally reruns on a background
+  // refetch too: rejoining a project after being away often serves a STALE
+  // cached history response first (missing whatever happened while gone,
+  // e.g. this member's own "turned off their microphone" message), which
+  // React Query then quietly replaces with a fresh one a moment later. If
+  // only the very first history response got this bulk treatment, that
+  // fresh refetch's newly-appeared messages would fall through to the
+  // per-message effect below and trickle in one at a time -- exactly the
+  // "already-existing messages replaying" bug this guards against,
+  // regardless of how many times the query re-resolves before settling.
   useEffect(() => {
-    if (historyLoadedRef.current || !history) return;
-    historyLoadedRef.current = true;
-    const introAlreadySeen = localStorage.getItem(introSeenStorageKey(projectId)) === "1";
+    if (!history) return;
+    const historyMessages = (history.messages as ModeratorChatMessage[] | undefined) ?? [];
     setRevealedIds((prev) => {
+      let changed = false;
       const next = new Set(prev);
-      for (const m of messages) {
+      for (const m of historyMessages) {
+        if (next.has(m.id)) continue;
         // The very first time this member's browser ever loads this
         // project's history, leave "intro" messages out of the instant
         // bulk-reveal -- the per-message effect below will then pick them
@@ -266,27 +290,15 @@ export function ModeratorChatPanel({
         // as if the moderator were live-typing them right now. Every
         // subsequent load (or any message type besides "intro") reveals
         // instantly as before.
-        if (!introAlreadySeen && m.type === "intro") continue;
+        if (!introAlreadySeenRef.current && m.type === "intro") continue;
         next.add(m.id);
+        changed = true;
       }
-      return next;
+      return changed ? next : prev;
     });
-    if (!introAlreadySeen) localStorage.setItem(introSeenStorageKey(projectId), "1");
     setHistoryReady(true);
-  }, [history, messages, projectId]);
+  }, [history]);
   useEffect(() => {
-    // Gate on the STATE flag, not the ref. The ref flips true synchronously
-    // inside the effect above, in the same commit this effect also runs in
-    // -- so reading it here would see "already loaded" while `revealedIds`
-    // in this same closure is still the stale, pre-bulk-update value (the
-    // state update from that effect hasn't caused a re-render yet). That
-    // race let this effect grab the very first not-yet-revealed message --
-    // typically the project's original "intro" message -- and run it
-    // through the typing-pause path even on a rejoin where it should have
-    // been bulk-revealed instantly, producing a spurious typing indicator.
-    // `historyReady` is set via the same setState batch as the bulk
-    // `revealedIds` update, so by the time this effect sees it flip true,
-    // `revealedIds` here is guaranteed to already reflect that bulk update.
     if (!historyReady) return; // wait for the instant initial reveal above
     if (revealTimerRef.current) return; // a reveal is already in flight
     const next = messages.find((m) => !revealedIds.has(m.id) && m.id !== typingMessageId);
