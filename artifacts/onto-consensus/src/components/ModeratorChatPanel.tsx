@@ -402,7 +402,7 @@ export function ModeratorChatPanel({
           </div>
           {speechSupported && (
             <Select value={recognitionLang} onValueChange={handleLangChange}>
-              <SelectTrigger className="h-9 w-28 shrink-0 rounded-full bg-muted/50 border text-xs pl-3">
+              <SelectTrigger className="h-9 w-1/3 shrink-0 rounded-full bg-muted/50 border text-xs pl-3">
                 <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
                 <SelectValue />
               </SelectTrigger>
