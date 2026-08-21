@@ -706,12 +706,22 @@ async function generateIntervention(projectId: number): Promise<void> {
           "\"revise\": true and put the new wording in \"text\". Never reword an existing point just because you " +
           "found a slightly different way to phrase it; if you're not certain a member explicitly asked for a " +
           "reword, leave the text untouched. " +
-          "List in \"by\" any NEW people (not already credited above) who now also back this point. List in " +
-          "\"remove\" any of the CURRENTLY credited people (from the list above) who explicitly changed their " +
-          "mind and now disagree with or retract this specific point (e.g. \"actually I don't think that's true " +
-          "anymore\", \"I take that back\", \"I disagree with that now\") -- only ever put someone in \"remove\" " +
-          "if the transcript shows them doing this explicitly; silence, or simply not repeating the point again, " +
-          "is NOT disagreement and must NOT put them in \"remove\". " +
+          "List in \"by\" any NEW people (not already credited above) who now also back this point -- including " +
+          "someone who never names the point directly but clearly implies backing it: stating a preference, " +
+          "saying what seems better to them, describing their thinking shifting that way, or proposing something " +
+          "that only makes sense if this point holds. " +
+          "List in \"remove\" any of the CURRENTLY credited people (from the list above) who no longer stand " +
+          "behind this specific point. Do NOT require explicit retraction language -- infer this from ANY clear " +
+          "signal that their stance has moved away from the point, phrased however they like: stating a " +
+          "preference for the opposite side, saying an alternative now seems better to them, describing a " +
+          "change of mind in general terms (\"actually I don't think that's true anymore\", \"I take that back\", " +
+          "\"I'm leaning the other way now\"), or proposing/backing something that directly contradicts what " +
+          "this point said -- e.g. someone credited on a counterexample for removing this property later argues " +
+          "to keep it, or backs an example that only makes sense if the property stays; that contradicts their " +
+          "earlier counterexample, so remove them from it (and the same the other way around, from an example to " +
+          "a counterexample). The bar is a genuine contradiction or a stated shift somewhere in the transcript -- " +
+          "simply not repeating the point again, or staying quiet about it, is still NOT enough on its own and " +
+          "must NOT put them in \"remove\". " +
           "Any genuinely new point not covered by an existing id above should be returned with NO \"id\" field -- " +
           "BUT merge fairly liberally: before treating something as a brand-new point, check whether it's " +
           "broadly the same underlying idea as one of the existing points listed above, just phrased " +
