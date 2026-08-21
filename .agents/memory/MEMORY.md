@@ -16,3 +16,4 @@
 - [Moderator: re-analyze full property history, not just new chunks](moderator-full-history-reanalysis.md) — retroactively tag transcript chunks by class/property so nothing said early is ever silently dropped from later summaries.
 - [Browser Web Speech API as the live transcript source](browser-speech-recognition-transcript.md) — group utterances by wall-clock silence since last word, not recognizer restart lifecycle.
 - [Live-caption-to-permanent-message swap flicker](live-to-final-message-swap.md) — 4 independent flash causes (placeholder frame, racing round trips, markup mismatch, TTL race); check all when a "swap flash" is reported.
+- [Missing effect dependency stalls reveal chain](effect-missing-dep-stalls-chain.md) — a gating flag read but not listed in an effect's deps can deadlock a "reveal one at a time" state machine; only reproduces live, masked by reload.

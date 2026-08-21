@@ -323,8 +323,7 @@ export function ModeratorChatPanel({
     } else {
       setRevealedIds((prev) => new Set(prev).add(next.id));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, revealedIds]);
+  }, [messages, revealedIds, historyReady]);
   const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
   const isTyping = typingMessageId !== null;
 
