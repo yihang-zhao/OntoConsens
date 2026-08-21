@@ -45,6 +45,19 @@ export const projectModeratorTable = pgTable("project_moderator", {
   // restart never re-sends already-summarized content. Shared across all
   // participants' chunks -- one running summary per project, not per user.
   lastSummarizedAt: timestamp("last_summarized_at", { withTimezone: true }),
+  // What the group was last understood to be discussing, so the NEXT
+  // silence-triggered topic-detection pass can infer continuity even when
+  // the new window of speech never renames the property (e.g. "yeah I
+  // agree with that", "what about when it's empty?"). Null means either
+  // nothing has been discussed yet, or the last round explicitly resolved
+  // to "not discussing anything in the catalog" -- see generateIntervention
+  // for how this is set after every round, matched or not.
+  lastTopicClassId: integer("last_topic_class_id").references(() => ontologyClassesTable.id, {
+    onDelete: "set null",
+  }),
+  lastTopicPropertyId: integer("last_topic_property_id").references(() => propertiesTable.id, {
+    onDelete: "set null",
+  }),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -207,3 +220,45 @@ export const moderatorChatMessagesTable = pgTable("moderator_chat_messages", {
 
 export type ModeratorChatMessage =
   typeof moderatorChatMessagesTable.$inferSelect;
+
+// The durable, canonical record of every distinct example/counterexample
+// point ever established for a class+property -- separate from the
+// per-message `examples`/`counterexamples` snapshots above (which just
+// freeze what a given intervention showed at the time). This is what makes
+// wording STABLE across interventions: each new intervention reconciles
+// against these rows instead of re-deriving text from scratch, so a point
+// keeps its exact original wording forever unless a member explicitly asks
+// to revise it (see moderatorEngine.ts's reconciliation step, which enforces
+// this in code -- never relies on the model simply "being told" not to
+// reword things). New members backing an already-established point still
+// get added to `by`; that's not considered a wording change.
+export const moderatorInterventionPointsTable = pgTable(
+  "moderator_intervention_points",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projectsTable.id, { onDelete: "cascade" }),
+    classId: integer("class_id")
+      .notNull()
+      .references(() => ontologyClassesTable.id, { onDelete: "cascade" }),
+    propertyId: integer("property_id")
+      .notNull()
+      .references(() => propertiesTable.id, { onDelete: "cascade" }),
+    tone: text("tone").notNull().$type<"example" | "counterexample">(),
+    // Frozen once created; only ever overwritten by the explicit-revision
+    // path (a member asking to reword this specific point), never by a
+    // routine re-extraction pass turning up the same point again.
+    text: text("text").notNull(),
+    by: jsonb("by").notNull().$type<string[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
+export type ModeratorInterventionPoint =
+  typeof moderatorInterventionPointsTable.$inferSelect;
