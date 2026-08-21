@@ -81,21 +81,7 @@ export type ServerEvent =
         createdAt: string;
       };
     }
-  | { type: "moderator_error"; message: string }
-  // Fired the instant 5 continuous seconds of silence are detected -- well
-  // before the real intervention content (which needs an LLM round trip,
-  // plus whatever's left of the cooldown) is ready. Lets the client show
-  // the moderator's fixed starter line immediately, followed by a typing
-  // indicator, instead of leaving the panel looking idle during that wait.
-  | { type: "moderator_intervention_starter"; content: string }
-  // Fired once the attempt that "moderator_intervention_starter" announced
-  // has fully resolved WITHOUT producing a real intervention message (e.g.
-  // nothing new was said since the last checkpoint, or the result would
-  // have been identical to the previous intervention) -- tells the client
-  // to drop the starter/typing placeholder since no message is coming to
-  // replace it. Not sent when a real "moderator_chat_message" intervention
-  // follows -- that message arriving is itself the signal to swap it in.
-  | { type: "moderator_intervention_cleared" };
+  | { type: "moderator_error"; message: string };
 
 function onlineUserIds(projectId: number): number[] {
   const ids = new Set<number>();

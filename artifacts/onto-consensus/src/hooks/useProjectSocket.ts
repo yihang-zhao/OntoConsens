@@ -56,9 +56,7 @@ type ServerEvent =
   | { type: "speaker_volume"; userId: number; level: number }
   | { type: "live_caption"; userId: number; text: string }
   | { type: "moderator_chat_message"; message: ModeratorChatMessage }
-  | { type: "moderator_error"; message: string }
-  | { type: "moderator_intervention_starter"; content: string }
-  | { type: "moderator_intervention_cleared" };
+  | { type: "moderator_error"; message: string };
 
 export interface LiveCaption {
   userId: number;
@@ -74,8 +72,6 @@ interface UseProjectSocketOptions {
   onProjectDeleted?: () => void;
   onModeratorChatMessage?: (message: ModeratorChatMessage) => void;
   onModeratorError?: (message: string) => void;
-  onModeratorInterventionStarter?: (content: string) => void;
-  onModeratorInterventionCleared?: () => void;
 }
 
 // Speaker volume readings older than this are dropped even if no new
@@ -119,8 +115,6 @@ export function useProjectSocket({
   onProjectDeleted,
   onModeratorChatMessage,
   onModeratorError,
-  onModeratorInterventionStarter,
-  onModeratorInterventionCleared,
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
   const socketRef = useRef<WebSocket | null>(null);
@@ -135,8 +129,6 @@ export function useProjectSocket({
     onProjectDeleted,
     onModeratorChatMessage,
     onModeratorError,
-    onModeratorInterventionStarter,
-    onModeratorInterventionCleared,
   });
   callbacksRef.current = {
     onProjectChanged,
@@ -144,8 +136,6 @@ export function useProjectSocket({
     onProjectDeleted,
     onModeratorChatMessage,
     onModeratorError,
-    onModeratorInterventionStarter,
-    onModeratorInterventionCleared,
   };
 
   useEffect(() => {
@@ -269,12 +259,6 @@ export function useProjectSocket({
             break;
           case "moderator_error":
             callbacksRef.current.onModeratorError?.(data.message);
-            break;
-          case "moderator_intervention_starter":
-            callbacksRef.current.onModeratorInterventionStarter?.(data.content);
-            break;
-          case "moderator_intervention_cleared":
-            callbacksRef.current.onModeratorInterventionCleared?.();
             break;
         }
       });
