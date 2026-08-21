@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import {
   db,
   moderatorChatMessagesTable,
@@ -921,6 +921,30 @@ async function generateIntervention(projectId: number): Promise<void> {
       .where(eq(projectModeratorTable.projectId, projectId))
       .for("update");
     if (!current) return [undefined, false] as const;
+
+    // Never post the exact same intervention text back-to-back -- e.g. the
+    // group falls silent again without adding anything new, and pass 1/2
+    // land on the identical "still stalled on the same property, same
+    // examples" wording, or two consecutive rounds both fall through to the
+    // same generic "couldn't tell what this was about" reminder. Either way
+    // showing it again adds nothing and just reads as the moderator
+    // repeating itself. The checkpoint still advances (these chunks WERE
+    // considered) so the group doesn't get stuck being re-summarized
+    // forever; only the redundant chat message is suppressed.
+    const [previousIntervention] = await tx
+      .select({ content: moderatorChatMessagesTable.content })
+      .from(moderatorChatMessagesTable)
+      .where(and(eq(moderatorChatMessagesTable.projectId, projectId), eq(moderatorChatMessagesTable.type, "intervention")))
+      .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+      .limit(1);
+    if (previousIntervention && previousIntervention.content === interventionContent) {
+      await tx
+        .update(projectModeratorTable)
+        .set({ lastSummarizedAt: maxCreatedAt })
+        .where(eq(projectModeratorTable.projectId, projectId));
+      return [undefined, false] as const;
+    }
+
     const [row] = await tx
       .insert(moderatorChatMessagesTable)
       .values({
