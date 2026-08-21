@@ -79,6 +79,11 @@ interface ModeratorChatPanelProps {
   members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
+  /** The moderator's fixed "may be stalling" line, shown the instant 5s of
+   *  silence is detected -- well before the real intervention (still an
+   *  LLM round trip, plus whatever's left of the cooldown, away) is ready.
+   *  Null means no attempt is currently in flight. */
+  pendingInterventionStarter: string | null;
 }
 
 // Deduplicate by id: the persisted-history fetch and live socket messages can
@@ -105,6 +110,7 @@ export function ModeratorChatPanel({
   members,
   moderatorErrorMessage,
   onDismissError,
+  pendingInterventionStarter,
 }: ModeratorChatPanelProps) {
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
@@ -491,7 +497,7 @@ export function ModeratorChatPanel({
     } else {
       setShowNewMessagePill(true);
     }
-  }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length, liveCaptionsKey]);
+  }, [historyReady, visibleMessages.length, isTyping, pendingInterventionStarter, speakingMembers.length, liveCaptionsKey]);
 
   return (
     <aside className="w-[28vw] min-w-[22rem] shrink-0 h-full flex flex-col border rounded-2xl shadow-sm bg-card overflow-hidden">
@@ -520,7 +526,7 @@ export function ModeratorChatPanel({
           className="h-full overflow-y-auto px-3 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           <div ref={scrollContentRef} className="flex flex-col gap-3">
-            {visibleMessages.length === 0 && !isTyping && (
+            {visibleMessages.length === 0 && !isTyping && pendingInterventionStarter === null && (
               <p className="text-xs text-muted-foreground text-center mt-6">
                 The AI moderator's messages will appear here once the shared workspace is open.
               </p>
@@ -529,6 +535,19 @@ export function ModeratorChatPanel({
               <ChatMessageBubble key={message.id} message={message} members={members} />
             ))}
             {isTyping && <TypingIndicatorBubble />}
+            {/* The instant 5s of silence is detected, the fixed starter
+                line appears immediately, followed by the typing indicator,
+                for however long the real intervention (an LLM round trip,
+                plus whatever's left of the cooldown) takes to arrive --
+                which either replaces this whole block (a real
+                "intervention" message arriving clears it, see project.tsx)
+                or removes it outright if nothing ends up being said. */}
+            {pendingInterventionStarter !== null && !isTyping && (
+              <>
+                <PendingInterventionStarterBubble content={pendingInterventionStarter} />
+                <TypingIndicatorBubble />
+              </>
+            )}
             {speakingMembers.map((m) => (
               <LiveTranscriptBubble
                 key={m.userId}
@@ -602,6 +621,24 @@ export function ModeratorChatPanel({
         </div>
       </div>
     </aside>
+  );
+}
+
+// The moderator's fixed "may be stalling" line -- styled identically to a
+// real ChatMessageBubble intervention (same label, same bubble shape) so
+// the swap into the real content, once it arrives, never jumps or resizes
+// unexpectedly.
+function PendingInterventionStarterBubble({ content }: { content: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+        <Sparkles className="w-3 h-3 text-muted-foreground" />
+        AI moderator
+      </div>
+      <div className="rounded-xl rounded-tl-sm px-3 py-2.5 bg-muted text-xs leading-relaxed whitespace-pre-wrap w-fit">
+        {content}
+      </div>
+    </div>
   );
 }
 

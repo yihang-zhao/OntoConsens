@@ -28,6 +28,13 @@ import { logger } from "./logger";
 // as the group having stalled.
 const SILENCE_TIMEOUT_MS = 5_000;
 
+// Broadcast the instant the silence timeout above fires, well before any
+// real intervention content can possibly be ready (that still needs
+// whatever's left of INTERVENTION_COOLDOWN_MS, plus an LLM round trip) --
+// gives the client something to show immediately instead of a dead panel.
+const INTERVENTION_STARTER_TEXT =
+  "Discussion may stalled — I noticed the discussion may stalled on this property. Here's where things stand:";
+
 // Minimum spacing between two AI moderator interventions (i.e. two
 // "stalled discussion" chat messages actually posted to the group, whether
 // they resolved to a real class/property or just a "focus on the
@@ -395,6 +402,14 @@ export function noteSpeechActivity(projectId: number): void {
   clearModeratorSilenceTimer(projectId);
   const timer = setTimeout(() => {
     silenceTimers.delete(projectId);
+    // Announce the stall immediately -- generateIntervention (via
+    // fireWhenCooldownElapsed, which may itself still be waiting out the
+    // rest of the cooldown) can take several more seconds before any real
+    // content is ready.
+    broadcastToProject(projectId, {
+      type: "moderator_intervention_starter",
+      content: INTERVENTION_STARTER_TEXT,
+    });
     fireWhenCooldownElapsed(projectId);
   }, SILENCE_TIMEOUT_MS);
   silenceTimers.set(projectId, timer);
@@ -492,6 +507,23 @@ function formatChunksAsTranscript(
 //   and the summary always reflects the complete, current state of the
 //   discussion rather than an incremental delta.
 async function generateIntervention(projectId: number): Promise<void> {
+  // Tracks whether this attempt actually posted a real intervention chat
+  // message. Every exit path below (early return, dedup-suppressed, or an
+  // error) leaves this false, and the finally block turns that into a
+  // "moderator_intervention_cleared" broadcast -- so the starter/typing
+  // placeholder shown the instant silence was detected (see
+  // noteSpeechActivity) never lingers forever when no message ends up
+  // following it.
+  let posted = false;
+  try {
+    await runGenerateIntervention();
+  } finally {
+    if (!posted) {
+      broadcastToProject(projectId, { type: "moderator_intervention_cleared" });
+    }
+  }
+
+  async function runGenerateIntervention(): Promise<void> {
   const config = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
   });
@@ -978,4 +1010,6 @@ async function generateIntervention(projectId: number): Promise<void> {
 
   const message = await serializeChatMessage(insertedRow);
   broadcastToProject(projectId, { type: "moderator_chat_message", message });
+  posted = true;
+  }
 }
