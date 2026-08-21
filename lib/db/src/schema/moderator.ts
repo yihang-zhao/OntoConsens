@@ -1,6 +1,7 @@
 import {
   boolean,
   integer,
+  jsonb,
   pgTable,
   serial,
   text,
@@ -147,9 +148,12 @@ export type ModeratorTranscriptChunk =
 //     `userId`. Visible to every member regardless of their own mic state.
 //   - "intervention": a stalled-discussion message. `matched` false means
 //     it's a plain reminder that no class/property could be confidently
-//     identified; `matched` true means `content` carries the full
-//     examples/counterexamples/proposed-by summary, and `classId`/
-//     `propertyId`/`className`/`propertyName` identify what it was about.
+//     identified; `matched` true means `examples`/`counterexamples` carry
+//     the structured pro/con breakdown (rendered as the green/red card in
+//     the UI, not as prose), and `classId`/`propertyId`/`className`/
+//     `propertyName` identify what it was about. `content` is always kept
+//     as a plain-text fallback summary (e.g. for anything that only reads
+//     the raw message log), even when the structured fields are present.
 // A user's own "reject the mic" reminder is deliberately NOT a row here --
 // it's a purely local, ephemeral nudge to that one member, not part of the
 // shared discussion record.
@@ -158,6 +162,16 @@ export type ModeratorChatMessageType =
   | "system"
   | "transcript"
   | "intervention";
+
+// One entry per distinct point raised about a property -- "by" lists every
+// member (by username) who made that same underlying point, in the order
+// they first raised it, deduplicated. Length of `by` is what the UI uses to
+// shade an entry darker the more members independently back it, mirroring
+// the reference design's "more supporters = more saturated" pill stack.
+export interface ModeratorInterventionEntry {
+  text: string;
+  by: string[];
+}
 
 export const moderatorChatMessagesTable = pgTable("moderator_chat_messages", {
   id: serial("id").primaryKey(),
@@ -179,6 +193,13 @@ export const moderatorChatMessagesTable = pgTable("moderator_chat_messages", {
   propertyId: integer("property_id").references(() => propertiesTable.id, {
     onDelete: "set null",
   }),
+  // Structured pro/con breakdown for a matched intervention -- see
+  // ModeratorInterventionEntry above. Null for every other message type,
+  // and for an unmatched intervention (nothing to visualize).
+  examples: jsonb("examples").$type<ModeratorInterventionEntry[]>(),
+  counterexamples: jsonb(
+    "counterexamples",
+  ).$type<ModeratorInterventionEntry[]>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

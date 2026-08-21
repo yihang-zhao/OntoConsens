@@ -469,6 +469,14 @@ export const ListModeratorChatMessagesResponse = zod.object({
   "propertyName": zod.string().nullable(),
   "classId": zod.number().int().nullable(),
   "propertyId": zod.number().int().nullable(),
+  "examples": zod.array(zod.object({
+  "text": zod.string(),
+  "by": zod.array(zod.string()).describe('Usernames of every member who made this same point, in the order first raised.')
+})).nullable().describe('Structured \"for keeping it\" points, only for a matched intervention message -- what the UI renders as the green supporter-pill card.'),
+  "counterexamples": zod.array(zod.object({
+  "text": zod.string(),
+  "by": zod.array(zod.string()).describe('Usernames of every member who made this same point, in the order first raised.')
+})).nullable().describe('Structured \"for removing it\" points, only for a matched intervention message -- what the UI renders as the red supporter-pill card.'),
   "createdAt": zod.coerce.date()
 }))
 })

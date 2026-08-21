@@ -14,6 +14,13 @@ export interface SpeakerVolume {
   updatedAt: number;
 }
 
+// One point raised for/against a property, plus everyone who made it --
+// mirrors ModeratorInterventionEntry in the OpenAPI schema.
+export interface ModeratorInterventionEntry {
+  text: string;
+  by: string[];
+}
+
 // One entry in the persistent moderator chat log -- mirrors
 // SerializedChatMessage on the server (see moderatorEngine.ts) and the
 // ModeratorChatMessage OpenAPI schema, so a live-broadcast message and one
@@ -30,6 +37,8 @@ export interface ModeratorChatMessage {
   propertyName: string | null;
   classId: number | null;
   propertyId: number | null;
+  examples: ModeratorInterventionEntry[] | null;
+  counterexamples: ModeratorInterventionEntry[] | null;
   createdAt: string;
 }
 

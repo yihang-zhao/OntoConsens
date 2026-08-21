@@ -122,6 +122,12 @@ export interface ModeratorTranscriptInput {
   text: string;
 }
 
+export interface ModeratorInterventionEntry {
+  text: string;
+  /** Usernames of every member who made this same point, in the order first raised. */
+  by: string[];
+}
+
 /**
  * "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself.
  */
@@ -150,6 +156,10 @@ export interface ModeratorChatMessage {
   propertyName: string | null;
   classId: number | null;
   propertyId: number | null;
+  /** Structured "for keeping it" points, only for a matched intervention message -- what the UI renders as the green supporter-pill card. */
+  examples: ModeratorInterventionEntry[] | null;
+  /** Structured "for removing it" points, only for a matched intervention message -- what the UI renders as the red supporter-pill card. */
+  counterexamples: ModeratorInterventionEntry[] | null;
   createdAt: string;
 }
 

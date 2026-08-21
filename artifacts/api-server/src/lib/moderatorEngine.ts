@@ -14,6 +14,7 @@ import {
   usersTable,
   type ModeratorChatMessage,
   type ModeratorChatMessageType,
+  type ModeratorInterventionEntry,
 } from "@workspace/db";
 import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
@@ -204,6 +205,8 @@ export interface SerializedChatMessage {
   propertyName: string | null;
   classId: number | null;
   propertyId: number | null;
+  examples: ModeratorInterventionEntry[] | null;
+  counterexamples: ModeratorInterventionEntry[] | null;
   createdAt: string;
 }
 
@@ -235,6 +238,8 @@ async function serializeChatMessage(row: ModeratorChatMessage): Promise<Serializ
     propertyName: row.propertyName,
     classId: row.classId,
     propertyId: row.propertyId,
+    examples: row.examples ?? null,
+    counterexamples: row.counterexamples ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -258,6 +263,8 @@ async function postChatMessage(
     propertyName?: string | null;
     classId?: number | null;
     propertyId?: number | null;
+    examples?: ModeratorInterventionEntry[] | null;
+    counterexamples?: ModeratorInterventionEntry[] | null;
   },
 ): Promise<void> {
   const [row] = await db
@@ -567,6 +574,8 @@ async function generateIntervention(projectId: number): Promise<void> {
   let matchedEntry: CatalogEntry | undefined;
   let interventionContent: string;
   let matched: boolean;
+  let interventionExamples: ModeratorInterventionEntry[] | null = null;
+  let interventionCounterexamples: ModeratorInterventionEntry[] | null = null;
 
   try {
     // --- Pass 1: what is the group discussing right now? ---
@@ -653,9 +662,13 @@ async function generateIntervention(projectId: number): Promise<void> {
         fullTranscript,
       );
 
-      const examples = Array.isArray(extraction?.examples) ? extraction.examples : [];
-      const counterexamples = Array.isArray(extraction?.counterexamples) ? extraction.counterexamples : [];
-      const formatEntries = (entries: unknown[]) =>
+      const rawExamples = Array.isArray(extraction?.examples) ? extraction.examples : [];
+      const rawCounterexamples = Array.isArray(extraction?.counterexamples) ? extraction.counterexamples : [];
+      // Structured entries are what the UI actually renders (the green/red
+      // supporter-pill card) -- `content` below is kept only as a plain-text
+      // fallback for anything that reads the raw message log without
+      // rendering the card (e.g. a notification, an export).
+      const toEntries = (entries: unknown[]): ModeratorInterventionEntry[] =>
         entries
           .filter(
             (e): e is { text: string; by: unknown } =>
@@ -667,16 +680,19 @@ async function generateIntervention(projectId: number): Promise<void> {
             // normalize both shapes to a deduplicated name list so a stray
             // non-array response never crashes formatting.
             const rawNames = Array.isArray(e.by) ? e.by : typeof e.by === "string" ? [e.by] : [];
-            const names = Array.from(
+            const by = Array.from(
               new Set(rawNames.filter((n): n is string => typeof n === "string" && n.trim().length > 0)),
             );
-            const by = names.length > 0 ? names.join(", ") : "someone";
-            return `${text}. — ${by}`;
+            return { text, by };
           })
-          .join("\n");
+          .filter((e) => e.text.length > 0);
 
-      const examplesText = formatEntries(examples) || "(none given yet)";
-      const counterexamplesText = formatEntries(counterexamples) || "(none given yet)";
+      const exampleEntries = toEntries(rawExamples);
+      const counterexampleEntries = toEntries(rawCounterexamples);
+
+      const formatEntriesText = (entries: ModeratorInterventionEntry[]) =>
+        entries.map((e) => `${e.text}. — ${e.by.length > 0 ? e.by.join(", ") : "someone"}`).join("\n") ||
+        "(none given yet)";
 
       // Fixed template: title/header lives in the client (always "AI
       // moderator"), so the content itself only carries the stalled-property
@@ -686,9 +702,11 @@ async function generateIntervention(projectId: number): Promise<void> {
       interventionContent =
         `Discussion stalled — ${className}.${propertyName}\n\n` +
         `I noticed the discussion has stalled on this property. Here's where things stand:\n\n` +
-        `For keeping it:\n\n${examplesText}\n\n` +
-        `For removing it:\n\n${counterexamplesText}\n\n` +
+        `For keeping it:\n\n${formatEntriesText(exampleEntries)}\n\n` +
+        `For removing it:\n\n${formatEntriesText(counterexampleEntries)}\n\n` +
         `Would you like to continue discussing, or move to a vote?`;
+      interventionExamples = exampleEntries;
+      interventionCounterexamples = counterexampleEntries;
     } else {
       interventionContent =
         "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
@@ -725,6 +743,8 @@ async function generateIntervention(projectId: number): Promise<void> {
         propertyName: matchedEntry?.propertyName ?? null,
         classId: matchedEntry?.classId ?? null,
         propertyId: matchedEntry?.propertyId ?? null,
+        examples: interventionExamples,
+        counterexamples: interventionCounterexamples,
       })
       .returning();
     await tx

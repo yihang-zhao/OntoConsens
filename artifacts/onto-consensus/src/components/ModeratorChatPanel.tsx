@@ -527,7 +527,7 @@ export function ModeratorChatPanel({
               </p>
             )}
             {visibleMessages.map((message) => (
-              <ChatMessageBubble key={message.id} message={message} />
+              <ChatMessageBubble key={message.id} message={message} members={members} />
             ))}
             {isTyping && <TypingIndicatorBubble />}
             {speakingMembers.map((m) => (
@@ -666,7 +666,34 @@ function LiveTranscriptBubble({
   );
 }
 
-function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
+function ChatMessageBubble({
+  message,
+  members,
+}: {
+  message: ModeratorChatMessage;
+  members: { userId: number; username: string; colorSlot: number }[];
+}) {
+  // A matched intervention with an actual pro/con breakdown gets the
+  // supporter-pill visualization instead of a wall of text -- see
+  // InterventionSummary below. Everything else the moderator says (intro,
+  // mic on/off announcements, an unmatched "couldn't tell what this was
+  // about" reminder) keeps the plain bubble.
+  if (
+    message.type === "intervention" &&
+    message.matched &&
+    ((message.examples?.length ?? 0) > 0 || (message.counterexamples?.length ?? 0) > 0)
+  ) {
+    return (
+      <InterventionSummary
+        className={message.className}
+        propertyName={message.propertyName}
+        examples={message.examples ?? []}
+        counterexamples={message.counterexamples ?? []}
+        members={members}
+      />
+    );
+  }
+
   // Intro / mic on-off announcements / stalled-discussion interventions are
   // all things the AI moderator itself is saying -- same title, icon, and
   // color regardless of which member the announcement is about.
@@ -698,6 +725,111 @@ function ChatMessageBubble({ message }: { message: ModeratorChatMessage }) {
       >
         {message.content}
       </div>
+    </div>
+  );
+}
+
+// A stalled-discussion intervention that resolved to a real class/property:
+// two stacked "supporter pill" cards -- green for reasons to keep the
+// property, red for reasons to remove it -- instead of a wall of prose.
+// Each row is one distinct point, weighted by how many members
+// independently made it: more supporters means a more saturated pill and
+// more colored dots (one per supporter, in that member's own workspace
+// color) stacked to its left, mirroring the reference design's "darker and
+// more dots = more agreement" visual language.
+function InterventionSummary({
+  className,
+  propertyName,
+  examples,
+  counterexamples,
+  members,
+}: {
+  className: string | null;
+  propertyName: string | null;
+  examples: { text: string; by: string[] }[];
+  counterexamples: { text: string; by: string[] }[];
+  members: { userId: number; username: string; colorSlot: number }[];
+}) {
+  const membersByName = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of members) map.set(m.username.trim().toLowerCase(), m.colorSlot);
+    return map;
+  }, [members]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+        <Sparkles className="w-3 h-3 text-primary" />
+        AI moderator
+      </div>
+      <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed bg-primary/10 text-foreground">
+        <span className="font-semibold">Discussion stalled — {className}.{propertyName}</span>
+        <p className="mt-1 text-muted-foreground">
+          I noticed the discussion has stalled on this property. Here's where things stand:
+        </p>
+      </div>
+      <InterventionEntryCard label="For keeping it" tone="positive" entries={examples} membersByName={membersByName} />
+      <InterventionEntryCard label="For removing it" tone="negative" entries={counterexamples} membersByName={membersByName} />
+      <div className="rounded-xl px-3 py-2 text-xs leading-relaxed bg-primary/10 text-foreground">
+        Would you like to continue discussing, or move to a vote?
+      </div>
+    </div>
+  );
+}
+
+const INTERVENTION_TONE_STYLES = {
+  positive: {
+    border: "border-emerald-500/70",
+    label: "text-emerald-600 dark:text-emerald-400",
+    // Index 0 = fewest supporters (lightest) -> last = all members (darkest).
+    // Only three members can ever back a point in this app, so three shades
+    // is always enough -- entries with more supporters than shades defined
+    // here just clamp to the darkest one.
+    shades: ["bg-emerald-100 text-emerald-900", "bg-emerald-300 text-emerald-950", "bg-emerald-500 text-white"],
+  },
+  negative: {
+    border: "border-red-500/70",
+    label: "text-red-600 dark:text-red-400",
+    shades: ["bg-red-100 text-red-900", "bg-red-300 text-red-950", "bg-red-500 text-white"],
+  },
+} as const;
+
+function InterventionEntryCard({
+  label,
+  tone,
+  entries,
+  membersByName,
+}: {
+  label: string;
+  tone: "positive" | "negative";
+  entries: { text: string; by: string[] }[];
+  membersByName: Map<string, number>;
+}) {
+  const styles = INTERVENTION_TONE_STYLES[tone];
+  return (
+    <div className={`rounded-2xl border-2 ${styles.border} p-2.5 flex flex-col gap-2`}>
+      <div className={`text-[11px] font-semibold ${styles.label}`}>{label}</div>
+      {entries.length === 0 ? (
+        <div className="text-[11px] text-muted-foreground italic px-1">(none given yet)</div>
+      ) : (
+        entries.map((entry, i) => {
+          const shadeIndex = Math.min(Math.max(entry.by.length, 1), styles.shades.length) - 1;
+          return (
+            <div key={i} className="flex items-center gap-2">
+              <div className="flex flex-col items-center gap-0.5 w-2 shrink-0">
+                {(entry.by.length > 0 ? entry.by : ["?"]).map((name, j) => {
+                  const slot = membersByName.get(name.trim().toLowerCase());
+                  const dotColor = slot !== undefined ? colorForSlot(slot).solid : "hsl(var(--muted-foreground))";
+                  return <span key={j} className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />;
+                })}
+              </div>
+              <div className={`flex-1 rounded-full px-3 py-1.5 text-xs leading-tight ${styles.shades[shadeIndex]}`}>
+                {entry.text}
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }

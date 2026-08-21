@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ModeratorChatMessageType } from './moderatorChatMessageType';
+import type { ModeratorInterventionEntry } from './moderatorInterventionEntry';
 
 export interface ModeratorChatMessage {
   id: number;
@@ -22,5 +23,9 @@ export interface ModeratorChatMessage {
   propertyName: string | null;
   classId: number | null;
   propertyId: number | null;
+  /** Structured "for keeping it" points, only for a matched intervention message -- what the UI renders as the green supporter-pill card. */
+  examples: ModeratorInterventionEntry[] | null;
+  /** Structured "for removing it" points, only for a matched intervention message -- what the UI renders as the red supporter-pill card. */
+  counterexamples: ModeratorInterventionEntry[] | null;
   createdAt: Date;
 }

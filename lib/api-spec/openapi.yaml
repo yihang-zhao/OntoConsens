@@ -718,9 +718,21 @@ components:
         text:
           type: string
 
+    ModeratorInterventionEntry:
+      type: object
+      required: [text, by]
+      properties:
+        text:
+          type: string
+        by:
+          type: array
+          items:
+            type: string
+          description: Usernames of every member who made this same point, in the order first raised.
+
     ModeratorChatMessage:
       type: object
-      required: [id, type, userId, username, colorSlot, content, matched, className, propertyName, classId, propertyId, createdAt]
+      required: [id, type, userId, username, colorSlot, content, matched, className, propertyName, classId, propertyId, examples, counterexamples, createdAt]
       properties:
         id:
           type: integer
@@ -764,6 +776,24 @@ components:
         propertyId:
           type: integer
           nullable: true
+        examples:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ModeratorInterventionEntry"
+          description: >-
+            Structured "for keeping it" points, only for a matched
+            intervention message -- what the UI renders as the green
+            supporter-pill card.
+        counterexamples:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ModeratorInterventionEntry"
+          description: >-
+            Structured "for removing it" points, only for a matched
+            intervention message -- what the UI renders as the red
+            supporter-pill card.
         createdAt:
           type: string
           format: date-time

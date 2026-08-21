@@ -19,6 +19,7 @@ export * from './member';
 export * from './moderatorChatMessage';
 export * from './moderatorChatMessageType';
 export * from './moderatorConfigInput';
+export * from './moderatorInterventionEntry';
 export * from './moderatorStatus';
 export * from './moderatorTranscriptInput';
 export * from './ontologyClass';
