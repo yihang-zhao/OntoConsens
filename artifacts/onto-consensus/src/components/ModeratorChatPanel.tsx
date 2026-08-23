@@ -642,24 +642,19 @@ function LiveTranscriptBubble({
   const color = colorForSlot(colorSlot);
   return (
     <div className="flex flex-col gap-1">
-      <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: color.solid }}>
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color.solid }} />
         {username}
       </div>
-      {/* Same container classes/box model as ChatMessageBubble's transcript
-          case below -- no w-fit, no flex row -- so finalizing this into a
-          real message swaps text content only, with the box never resizing
-          or re-laying-out at the transition point. The blinking cursor is
-          just one more inline character at the end of the text, not a
-          layout-affecting flex child. */}
-      <div
-        className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
-        style={{ backgroundColor: color.soft, color: color.softText }}
-      >
+      {/* Same container classes/box model AND colors as ChatMessageBubble's
+          transcript case below -- no w-fit, no flex row -- so finalizing
+          this into a real message swaps text content only, with the box
+          never resizing, recoloring, or re-laying-out at the transition
+          point. The blinking cursor is just one more inline character at
+          the end of the text, not a layout-affecting flex child. */}
+      <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-primary/10 text-foreground">
         {caption}
-        <span
-          className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse"
-          style={{ backgroundColor: color.softText }}
-        />
+        <span className="inline-block w-[2px] h-3 ml-0.5 align-middle animate-pulse bg-foreground" />
       </div>
     </div>
   );
@@ -710,18 +705,20 @@ function ChatMessageBubble({
     );
   }
 
-  // transcript -- styled entirely in the speaker's own workspace color, so
-  // it's immediately clear who said what without re-reading the name.
+  // transcript -- same neutral bubble as the AI moderator's own messages
+  // (so the panel isn't a wall of clashing per-member tints), but the
+  // username keeps its workspace color plus a small colored dot -- the
+  // same dot size used for supporters in the intervention pro/con cards
+  // (InterventionEntryCard below) -- so who said what is still identifiable
+  // at a glance.
   const color = colorForSlot(message.colorSlot ?? 0);
   return (
     <div className="flex flex-col gap-1">
-      <div className="text-[11px] font-semibold" style={{ color: color.solid }}>
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: color.solid }}>
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color.solid }} />
         {message.username ?? "unknown"}
       </div>
-      <div
-        className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
-        style={{ backgroundColor: color.soft, color: color.softText }}
-      >
+      <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-primary/10 text-foreground">
         {message.content}
       </div>
     </div>
