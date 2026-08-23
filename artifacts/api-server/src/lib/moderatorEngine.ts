@@ -425,6 +425,13 @@ async function callOpenAiJson(apiKey: string, model: string, systemPrompt: strin
     },
     body: JSON.stringify({
       model,
+      // Deterministic (temperature 0) on purpose: this same transcript is
+      // re-analyzed from scratch every round (see generateIntervention),
+      // so any run-to-run randomness here would itself be a source of
+      // spurious wording/attribution churn between consecutive
+      // interventions, independent of anything actually said. Consistency
+      // with the previous round's phrasing matters more than variety.
+      temperature: 0,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
@@ -714,6 +721,15 @@ async function generateIntervention(projectId: number): Promise<void> {
           "a counterexample). The bar is a genuine contradiction or a stated shift somewhere in the transcript -- " +
           "simply not repeating the point again, or staying quiet about it, is still NOT enough on its own and " +
           "must NOT put them in \"remove\". " +
+          "The overall goal across rounds is MAXIMUM STABILITY: this exact list, in this exact wording, is what " +
+          "was shown to the group last time, and it should come back looking as close to identical as possible " +
+          "this time, changing only where the transcript has genuinely, unambiguously moved. When a remark is " +
+          "vague or general -- a bare \"I agree\", \"that's right\", \"I'm satisfied now\", or similar -- and it " +
+          "is not clear from context which SPECIFIC existing point (by id) it endorses or contradicts, that " +
+          "ambiguity is NOT evidence of anything: do not add the speaker to \"by\" and do not put them in " +
+          "\"remove\" for ANY existing point on the strength of it alone. Whenever genuinely unsure whether " +
+          "something clears the bar for \"remove\" or \"revise\", resolve the uncertainty by leaving the " +
+          "existing point exactly as it was credited before, rather than changing it. " +
           "Any genuinely new point not covered by an existing id above should be returned with NO \"id\" field -- " +
           "BUT merge fairly liberally: before treating something as a brand-new point, check whether it's " +
           "broadly the same underlying idea as one of the existing points listed above, just phrased " +
@@ -937,18 +953,24 @@ async function generateIntervention(projectId: number): Promise<void> {
     // Comparing the literal formatted content string is too fragile a
     // safeguard: the extraction pass re-derives examples/counterexamples
     // from scratch every round, so even when nothing meaningfully changed,
-    // small non-substantive artifacts of that re-derivation -- an extra
-    // supporter's name landing in "by", entries coming back in a different
-    // order, incidental whitespace -- would each register as "new content"
-    // and defeat this guard. Instead compare a canonical SIGNATURE: for a
-    // matched property, the same class/property plus the same SET of
-    // example/counterexample point texts (sorted, case/whitespace-
-    // normalized) regardless of order, supporters, or formatting. Only an
-    // actual point being added, removed, or reworded changes the
-    // signature.
+    // purely incidental artifacts of that re-derivation -- entries coming
+    // back in a different order, stray whitespace -- would each register
+    // as "new content" and defeat this guard. Instead compare a canonical
+    // SIGNATURE: for a matched property, the same class/property plus the
+    // same SET of example/counterexample points (sorted, case/whitespace-
+    // normalized), where each point is its text together with its full,
+    // order-independent set of supporters. A point being added or removed,
+    // its wording changing, OR its supporter list changing (someone newly
+    // backing it, or someone dropping off it) all count as a substantive
+    // shift and change the signature -- only reordering/formatting is
+    // ignored.
     const canonicalTextSet = (entries: ModeratorInterventionEntry[] | null) =>
       (entries ?? [])
-        .map((e) => e.text.trim().toLowerCase().replace(/\s+/g, " "))
+        .map((e) => {
+          const text = e.text.trim().toLowerCase().replace(/\s+/g, " ");
+          const by = [...e.by].map((n) => n.trim().toLowerCase()).sort().join("\u0002");
+          return `${text}\u0003${by}`;
+        })
         .sort()
         .join("\u0001");
     const [previousIntervention] = await tx
