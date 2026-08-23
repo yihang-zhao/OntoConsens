@@ -925,22 +925,61 @@ async function generateIntervention(projectId: number): Promise<void> {
       .for("update");
     if (!current) return [undefined, false] as const;
 
-    // Never post the exact same intervention text back-to-back -- e.g. the
-    // group falls silent again without adding anything new, and pass 1/2
-    // land on the identical "still stalled on the same property, same
-    // examples" wording, or two consecutive rounds both fall through to the
-    // same generic "couldn't tell what this was about" reminder. Either way
-    // showing it again adds nothing and just reads as the moderator
-    // repeating itself. The checkpoint still advances (these chunks WERE
-    // considered) so the group doesn't get stuck being re-summarized
-    // forever; only the redundant chat message is suppressed.
+    // Never re-post over the same underlying content back-to-back -- e.g.
+    // the group falls silent again without adding anything substantive,
+    // or two consecutive rounds both fall through to the same generic
+    // "couldn't tell what this was about" reminder. Either way showing it
+    // again adds nothing and just reads as the moderator repeating itself.
+    // The checkpoint still advances (these chunks WERE considered) so the
+    // group doesn't get stuck being re-summarized forever; only the
+    // redundant chat message is suppressed.
+    //
+    // Comparing the literal formatted content string is too fragile a
+    // safeguard: the extraction pass re-derives examples/counterexamples
+    // from scratch every round, so even when nothing meaningfully changed,
+    // small non-substantive artifacts of that re-derivation -- an extra
+    // supporter's name landing in "by", entries coming back in a different
+    // order, incidental whitespace -- would each register as "new content"
+    // and defeat this guard. Instead compare a canonical SIGNATURE: for a
+    // matched property, the same class/property plus the same SET of
+    // example/counterexample point texts (sorted, case/whitespace-
+    // normalized) regardless of order, supporters, or formatting. Only an
+    // actual point being added, removed, or reworded changes the
+    // signature.
+    const canonicalTextSet = (entries: ModeratorInterventionEntry[] | null) =>
+      (entries ?? [])
+        .map((e) => e.text.trim().toLowerCase().replace(/\s+/g, " "))
+        .sort()
+        .join("\u0001");
     const [previousIntervention] = await tx
-      .select({ content: moderatorChatMessagesTable.content })
+      .select({
+        content: moderatorChatMessagesTable.content,
+        matched: moderatorChatMessagesTable.matched,
+        classId: moderatorChatMessagesTable.classId,
+        propertyId: moderatorChatMessagesTable.propertyId,
+        examples: moderatorChatMessagesTable.examples,
+        counterexamples: moderatorChatMessagesTable.counterexamples,
+      })
       .from(moderatorChatMessagesTable)
       .where(and(eq(moderatorChatMessagesTable.projectId, projectId), eq(moderatorChatMessagesTable.type, "intervention")))
       .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
       .limit(1);
-    if (previousIntervention && previousIntervention.content === interventionContent) {
+    const isSameAsPrevious = (() => {
+      if (!previousIntervention) return false;
+      if (!matched) {
+        // Unmatched rounds only ever produce one fixed generic reminder
+        // string, so literal equality is already exact here.
+        return !previousIntervention.matched && previousIntervention.content === interventionContent;
+      }
+      return (
+        previousIntervention.matched === true &&
+        previousIntervention.classId === (matchedEntry?.classId ?? null) &&
+        previousIntervention.propertyId === (matchedEntry?.propertyId ?? null) &&
+        canonicalTextSet(previousIntervention.examples) === canonicalTextSet(interventionExamples) &&
+        canonicalTextSet(previousIntervention.counterexamples) === canonicalTextSet(interventionCounterexamples)
+      );
+    })();
+    if (isSameAsPrevious) {
       await tx
         .update(projectModeratorTable)
         .set({ lastSummarizedAt: maxCreatedAt })
