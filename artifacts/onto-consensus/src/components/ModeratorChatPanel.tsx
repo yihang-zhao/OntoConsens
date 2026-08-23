@@ -759,10 +759,10 @@ function InterventionSummary({
         AI moderator
       </div>
       <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed bg-primary/10 text-foreground">
-        <span className="font-semibold">Discussion stalled — {className}.{propertyName}</span>
-        <p className="mt-1 text-muted-foreground">
-          I noticed the discussion has stalled on this property. Here's where things stand:
-        </p>
+        <span className="font-semibold">
+          Discussion may have stalled – {className}.{propertyName}
+        </span>
+        <p className="mt-1 text-muted-foreground">Here's where things stand:</p>
       </div>
       <InterventionEntryCard label="For keeping it" tone="positive" entries={examples} membersByName={membersByName} />
       <InterventionEntryCard label="For removing it" tone="negative" entries={counterexamples} membersByName={membersByName} />
