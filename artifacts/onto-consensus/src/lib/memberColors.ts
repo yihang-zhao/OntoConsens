@@ -15,7 +15,11 @@ function memberColor(slot: number): MemberColor {
   return {
     solid: `hsl(var(${varName}))`,
     soft: `hsl(var(${varName}) / 0.14)`,
-    softText: `hsl(var(${varName}))`,
+    // Deliberately NOT the same vivid hue as `solid` -- see the
+    // --member-N-text doc comment in index.css. Text drawn directly on a
+    // light `soft` background needs a darker variant to stay readable,
+    // most noticeably for the yellow slot which was previously illegible.
+    softText: `hsl(var(${varName}-text))`,
     ring: `hsl(var(${varName}) / 0.5)`,
   };
 }
