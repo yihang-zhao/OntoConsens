@@ -27,6 +27,7 @@ import type {
   HealthStatus,
   JoinProjectInput,
   ListModeratorChatMessages200,
+  ListModeratorChatMessagesParams,
   Member,
   ModeratorConfigInput,
   ModeratorStatus,
@@ -1834,20 +1835,29 @@ export const useSubmitModeratorTranscript = <TError = ErrorType<ErrorResponse>,
       return useMutation(getSubmitModeratorTranscriptMutationOptions(options));
     }
 
-export const getListModeratorChatMessagesUrl = (id: number,) => {
+export const getListModeratorChatMessagesUrl = (id: number,
+    params?: ListModeratorChatMessagesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/projects/${id}/moderator/messages`
+  return stringifiedParams.length > 0 ? `/api/projects/${id}/moderator/messages?${stringifiedParams}` : `/api/projects/${id}/moderator/messages`
 }
 
 /**
  * @summary Full persisted moderator chat history for this project (intro, system, transcript, and intervention messages), visible to every member regardless of their own mic state.
  */
-export const listModeratorChatMessages = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ListModeratorChatMessages200> => {
+export const listModeratorChatMessages = async (id: number,
+    params?: ListModeratorChatMessagesParams, options?: Parameters<typeof customFetch>[1]): Promise<ListModeratorChatMessages200> => {
 
-  return customFetch<ListModeratorChatMessages200>(getListModeratorChatMessagesUrl(id),
+  return customFetch<ListModeratorChatMessages200>(getListModeratorChatMessagesUrl(id,params),
   {
     ...options,
     method: 'GET'
@@ -1860,23 +1870,25 @@ export const listModeratorChatMessages = async (id: number, options?: Parameters
 
 
 
-export const getListModeratorChatMessagesQueryKey = (id: number,) => {
+export const getListModeratorChatMessagesQueryKey = (id: number,
+    params?: ListModeratorChatMessagesParams,) => {
     return [
-    `/api/projects/${id}/moderator/messages`
+    `/api/projects/${id}/moderator/messages`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListModeratorChatMessagesQueryOptions = <TData = Awaited<ReturnType<typeof listModeratorChatMessages>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listModeratorChatMessages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListModeratorChatMessagesQueryOptions = <TData = Awaited<ReturnType<typeof listModeratorChatMessages>>, TError = ErrorType<unknown>>(id: number,
+    params?: ListModeratorChatMessagesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listModeratorChatMessages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListModeratorChatMessagesQueryKey(id);
+  const queryKey =  queryOptions?.queryKey ?? getListModeratorChatMessagesQueryKey(id,params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listModeratorChatMessages>>> = ({ signal }) => listModeratorChatMessages(id, { signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listModeratorChatMessages>>> = ({ signal }) => listModeratorChatMessages(id,params, { signal, ...requestOptions });
 
 
 
@@ -1894,11 +1906,12 @@ export type ListModeratorChatMessagesQueryError = ErrorType<unknown>
  */
 
 export function useListModeratorChatMessages<TData = Awaited<ReturnType<typeof listModeratorChatMessages>>, TError = ErrorType<unknown>>(
- id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listModeratorChatMessages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ id: number,
+    params?: ListModeratorChatMessagesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listModeratorChatMessages>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListModeratorChatMessagesQueryOptions(id,options)
+  const queryOptions = getListModeratorChatMessagesQueryOptions(id,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

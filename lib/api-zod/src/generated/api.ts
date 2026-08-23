@@ -456,6 +456,10 @@ export const ListModeratorChatMessagesParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
+export const ListModeratorChatMessagesQueryParams = zod.object({
+  "lang": zod.coerce.string().optional().describe('BCP-47 language tag (e.g. \"es-ES\") the requesting member has selected for the AI moderator. When set to a non-English language, \"intervention\"-type messages are translated into it (cached server-side); every other message type is always returned in the language it was originally said\/written in.')
+})
+
 export const ListModeratorChatMessagesResponse = zod.object({
   "messages": zod.array(zod.object({
   "id": zod.number().int(),

@@ -246,6 +246,13 @@ export interface ExportPayload {
   classes: ExportClass[];
 }
 
+export type ListModeratorChatMessagesParams = {
+/**
+ * BCP-47 language tag (e.g. "es-ES") the requesting member has selected for the AI moderator. When set to a non-English language, "intervention"-type messages are translated into it (cached server-side); every other message type is always returned in the language it was originally said/written in.
+ */
+lang?: string;
+};
+
 export type ListModeratorChatMessages200 = {
   messages: ModeratorChatMessage[];
 };

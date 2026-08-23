@@ -3,6 +3,7 @@ import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import {
   db,
   moderatorChatMessagesTable,
+  moderatorChatMessageTranslationsTable,
   moderatorInterventionPointsTable,
   moderatorTranscriptChunksTable,
   moderatorParticipantsTable,
@@ -18,8 +19,31 @@ import {
   type ModeratorInterventionPoint,
 } from "@workspace/db";
 import { decryptApiKey } from "./moderatorCrypto";
-import { broadcastToProject } from "./wsHub";
+import { broadcastToProject, broadcastToProjectLang, getProjectLanguages } from "./wsHub";
 import { logger } from "./logger";
+
+// Mirrors the label list in ModeratorChatPanel.tsx's RECOGNITION_LANGUAGES
+// -- the only language picker in the app. A member's selection there is
+// also what drives which language they see the AI moderator's intervention
+// messages in (see translateInterventionMessage below); everything else
+// the moderator or a member says stays in whatever language it was
+// originally authored/spoken in. "en" (any en-* tag, or anything not in
+// this map) is always treated as "no translation needed".
+const LANGUAGE_NAMES: Record<string, string> = {
+  "zh-CN": "Chinese (Simplified)",
+  "es-ES": "Spanish",
+  "fr-FR": "French",
+  "de-DE": "German",
+  "ja-JP": "Japanese",
+  "ko-KR": "Korean",
+  "hi-IN": "Hindi",
+  "pt-BR": "Brazilian Portuguese",
+  "ru-RU": "Russian",
+};
+
+function isTranslatable(lang: string): boolean {
+  return !lang.toLowerCase().startsWith("en") && lang in LANGUAGE_NAMES;
+}
 
 // "Silence" means no one currently has new text filling into their live
 // caption box -- not just "no finalized message yet" (see noteSpeechActivity
@@ -241,12 +265,115 @@ async function serializeChatMessage(row: ModeratorChatMessage): Promise<Serializ
   };
 }
 
-export async function listChatMessages(projectId: number): Promise<SerializedChatMessage[]> {
+// `lang` is the REQUESTING member's own selected display language (see the
+// mic language selector) -- not a project-wide setting. When set to a
+// translatable language, every "intervention" row (and ONLY that type --
+// see the doc comment on moderatorChatMessageTranslationsTable) is
+// translated for this response; everything else is returned exactly as
+// authored/spoken, matching what a live broadcast would also send this
+// member (see translateInterventionMessage's call site in
+// generateIntervention below).
+export async function listChatMessages(projectId: number, lang?: string): Promise<SerializedChatMessage[]> {
   const rows = await db.query.moderatorChatMessagesTable.findMany({
     where: eq(moderatorChatMessagesTable.projectId, projectId),
     orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
   });
-  return Promise.all(rows.map(serializeChatMessage));
+  const messages = await Promise.all(rows.map(serializeChatMessage));
+  if (!lang || !isTranslatable(lang)) return messages;
+
+  const [apiKey, config] = await Promise.all([
+    getProjectOwnerApiKey(projectId),
+    db.query.projectModeratorTable.findFirst({ where: eq(projectModeratorTable.projectId, projectId) }),
+  ]);
+  // No key/config configured yet means no intervention could have ever been
+  // generated for this project either -- nothing to translate either way.
+  if (!apiKey || !config) return messages;
+
+  return Promise.all(messages.map((m) => translateInterventionMessage(m, lang, apiKey, config.model)));
+}
+
+// Translates ONLY "intervention" messages (see moderatorChatMessageTranslationsTable's
+// doc comment for why) into `lang`, caching the result so the same
+// (message, language) pair is never sent to OpenAI twice. Falls back to
+// returning the message untouched -- rather than throwing -- if the
+// translation call fails, so one bad OpenAI response never breaks history
+// loading or a live broadcast for everyone else.
+async function translateInterventionMessage(
+  message: SerializedChatMessage,
+  lang: string,
+  apiKey: string,
+  model: string,
+): Promise<SerializedChatMessage> {
+  if (message.type !== "intervention" || !isTranslatable(lang)) return message;
+
+  const cached = await db.query.moderatorChatMessageTranslationsTable.findFirst({
+    where: and(
+      eq(moderatorChatMessageTranslationsTable.messageId, message.id),
+      eq(moderatorChatMessageTranslationsTable.language, lang),
+    ),
+  });
+  if (cached) {
+    return {
+      ...message,
+      content: cached.content,
+      examples: cached.examples ?? message.examples,
+      counterexamples: cached.counterexamples ?? message.counterexamples,
+    };
+  }
+
+  const languageName = LANGUAGE_NAMES[lang] ?? lang;
+  const payload = {
+    content: message.content,
+    examples: (message.examples ?? []).map((e) => e.text),
+    counterexamples: (message.counterexamples ?? []).map((e) => e.text),
+  };
+  let translated: { content?: unknown; examples?: unknown; counterexamples?: unknown } | null = null;
+  try {
+    translated = await callOpenAiJson(
+      apiKey,
+      model,
+      `Translate the string values in the given JSON object into ${languageName}, preserving meaning and tone ` +
+        "exactly -- this is a moderator's summary of a live discussion, not creative writing, so stay literal " +
+        "rather than paraphrasing. Do not translate person names. Keep the exact same JSON shape and the exact " +
+        "same array lengths and order -- translate each array entry in place, item for item; never merge, " +
+        "reorder, drop, or add entries. " +
+        'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+        '{"content": string, "examples": string[], "counterexamples": string[]}.',
+      JSON.stringify(payload),
+    );
+  } catch (err) {
+    logger.error({ err, messageId: message.id, lang }, "Moderator message translation failed");
+    return message;
+  }
+
+  const translatedContent =
+    typeof translated?.content === "string" && translated.content.trim() ? translated.content : message.content;
+  const translateEntries = (
+    original: ModeratorInterventionEntry[] | null,
+    translatedTexts: unknown,
+  ): ModeratorInterventionEntry[] | null => {
+    if (!original) return null;
+    if (!Array.isArray(translatedTexts) || translatedTexts.length !== original.length) return original;
+    return original.map((entry, i) => ({
+      text: typeof translatedTexts[i] === "string" && (translatedTexts[i] as string).trim() ? (translatedTexts[i] as string) : entry.text,
+      by: entry.by,
+    }));
+  };
+  const translatedExamples = translateEntries(message.examples, translated?.examples);
+  const translatedCounterexamples = translateEntries(message.counterexamples, translated?.counterexamples);
+
+  await db
+    .insert(moderatorChatMessageTranslationsTable)
+    .values({
+      messageId: message.id,
+      language: lang,
+      content: translatedContent,
+      examples: translatedExamples,
+      counterexamples: translatedCounterexamples,
+    })
+    .onConflictDoNothing();
+
+  return { ...message, content: translatedContent, examples: translatedExamples, counterexamples: translatedCounterexamples };
 }
 
 async function postChatMessage(
@@ -987,5 +1114,17 @@ async function generateIntervention(projectId: number): Promise<void> {
   lastInterventionAt.set(projectId, Date.now());
 
   const message = await serializeChatMessage(insertedRow);
-  broadcastToProject(projectId, { type: "moderator_chat_message", message });
+  // Per-viewer translation: each connected member sees this SAME
+  // intervention in whichever language they've selected (see the mic
+  // language selector) -- not one shared language for the whole project.
+  // Only the distinct languages actually in use among currently connected
+  // sockets are translated, and only once each (translateInterventionMessage
+  // itself caches per (message, language), so a member reconnecting or a
+  // second member picking the same language never re-spends an OpenAI call).
+  for (const lang of getProjectLanguages(projectId)) {
+    const outgoing = isTranslatable(lang)
+      ? await translateInterventionMessage(message, lang, apiKey, config.model)
+      : message;
+    broadcastToProjectLang(projectId, lang, { type: "moderator_chat_message", message: outgoing });
+  }
 }

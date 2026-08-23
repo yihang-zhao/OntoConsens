@@ -17,3 +17,4 @@
 - [Browser Web Speech API as the live transcript source](browser-speech-recognition-transcript.md) — group utterances by wall-clock silence since last word, not recognizer restart lifecycle.
 - [Live-caption-to-permanent-message swap flicker](live-to-final-message-swap.md) — 4 independent flash causes (placeholder frame, racing round trips, markup mismatch, TTL race); check all when a "swap flash" is reported.
 - [Missing effect dependency stalls reveal chain](effect-missing-dep-stalls-chain.md) — a gating flag read but not listed in an effect's deps can deadlock a "reveal one at a time" state machine; only reproduces live, masked by reload.
+- [Per-viewer WS broadcast + orval query-param collision](per-viewer-lang-broadcast.md) — tag each socket with viewer state and broadcast per-group; watch for orval's params-type/zod-const name clash on the first query-param endpoint.

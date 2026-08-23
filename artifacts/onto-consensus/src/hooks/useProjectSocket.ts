@@ -67,6 +67,13 @@ export interface LiveCaption {
 interface UseProjectSocketOptions {
   projectId: number;
   enabled: boolean;
+  // This member's own selected display language (BCP-47, e.g. "es-ES") --
+  // sent to the server as a "set_language" message so LIVE
+  // "moderator_chat_message" intervention broadcasts arrive already
+  // translated for them (see wsHub.ts/moderatorEngine.ts). Purely
+  // per-connection state on the server; changing it takes effect
+  // immediately without a reconnect.
+  lang: string;
   onProjectChanged?: () => void;
   onPropertiesChanged?: () => void;
   onProjectDeleted?: () => void;
@@ -110,6 +117,7 @@ export type SocketStatus = "connected" | "reconnecting" | "disconnected";
 export function useProjectSocket({
   projectId,
   enabled,
+  lang,
   onProjectChanged,
   onPropertiesChanged,
   onProjectDeleted,
@@ -118,6 +126,12 @@ export function useProjectSocket({
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
   const socketRef = useRef<WebSocket | null>(null);
+  // Always read from a ref (not the `lang` closure variable) inside the
+  // connect effect below, so a language change mid-session doesn't need to
+  // tear down and reopen the whole socket -- it's just a new message sent
+  // over the existing connection.
+  const langRef = useRef(lang);
+  langRef.current = lang;
   const [cursors, setCursors] = useState<Map<number, RemoteCursor>>(new Map());
   const [status, setStatus] = useState<SocketStatus>("reconnecting");
   const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(new Set());
@@ -186,6 +200,11 @@ export function useProjectSocket({
         if (stopped) return;
         reconnectAttempt = 0;
         setStatus("connected");
+        // Announce this member's currently-selected display language right
+        // away, so any live intervention broadcast from this point on
+        // arrives already translated for them -- a fresh connection
+        // otherwise defaults to English server-side.
+        socket?.send(JSON.stringify({ type: "set_language", lang: langRef.current }));
         // Reconnecting after a drop means we may have missed events while
         // offline (a new member joined, someone marked ready, a property
         // changed) — catch up immediately rather than waiting for the next
@@ -352,6 +371,17 @@ export function useProjectSocket({
     }, LIVE_CAPTION_PRUNE_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [enabled]);
+
+  // Re-announces the language whenever it changes while already connected
+  // (e.g. the member switches the dropdown mid-session) -- langRef alone
+  // only covers the initial "open" announcement or a later reconnect.
+  useEffect(() => {
+    if (!enabled) return;
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "set_language", lang }));
+    }
+  }, [lang, enabled]);
 
   const sendCursor = useCallback((x: number, y: number) => {
     const socket = socketRef.current;

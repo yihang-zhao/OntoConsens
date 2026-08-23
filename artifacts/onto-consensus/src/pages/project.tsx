@@ -26,7 +26,7 @@ import {
   Network, 
 } from "lucide-react";
 import { useProjectSocket, type ModeratorChatMessage } from "@/hooks/useProjectSocket";
-import { ModeratorChatPanel } from "@/components/ModeratorChatPanel";
+import { ModeratorChatPanel, RECOGNITION_LANG_STORAGE_KEY, defaultRecognitionLang } from "@/components/ModeratorChatPanel";
 
 export default function ProjectWorkspace() {
   const { id: idStr } = useParams();
@@ -112,6 +112,15 @@ export default function ProjectWorkspace() {
       navigate("/");
     }
   };
+  // Lifted up from ModeratorChatPanel (rather than local state there) since
+  // it also drives what useProjectSocket announces to the server for live
+  // "moderator_chat_message" intervention translation, not just the mic
+  // language picker's own display.
+  const [recognitionLang, setRecognitionLang] = useState(defaultRecognitionLang);
+  const handleRecognitionLangChange = (value: string) => {
+    setRecognitionLang(value);
+    localStorage.setItem(RECOGNITION_LANG_STORAGE_KEY, value);
+  };
   const [liveMessages, setLiveMessages] = useState<ModeratorChatMessage[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
   // The instant a matched "stalled discussion" intervention arrives,
@@ -142,6 +151,7 @@ export default function ProjectWorkspace() {
   } = useProjectSocket({
     projectId,
     enabled: Boolean(project && meMember),
+    lang: recognitionLang,
     onProjectChanged: () => queryClient.invalidateQueries({ queryKey: getGetProjectQueryKey(projectId) }),
     onPropertiesChanged: () => queryClient.invalidateQueries({ queryKey: getListPropertiesQueryKey(projectId) }),
     // The owner deleting the project removes it for everyone — every other
@@ -371,6 +381,8 @@ export default function ProjectWorkspace() {
             members={project.members}
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
+            recognitionLang={recognitionLang}
+            onRecognitionLangChange={handleRecognitionLangChange}
           />
         )}
       </div>
