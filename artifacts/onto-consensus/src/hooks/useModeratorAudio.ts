@@ -52,7 +52,7 @@ const VOLUME_SEND_INTERVAL_MS = 120;
 
 // How long an utterance can go without any new recognized word before it's
 // considered over and gets finalized into its own permanent message.
-const SILENCE_FINALIZE_MS = 2_000;
+const SILENCE_FINALIZE_MS = 1_000;
 const SILENCE_CHECK_INTERVAL_MS = 300;
 // Browsers periodically end a "continuous" recognition session on their own
 // even while the user keeps talking -- this restarts it quickly so that
