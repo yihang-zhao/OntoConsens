@@ -18,7 +18,7 @@ import type { LiveCaption, ModeratorChatMessage, SpeakerVolume } from "@/hooks/u
 // Languages the live transcript can recognize -- each member picks their own
 // independently of everyone else's, since the mic and recognizer are
 // per-browser. BCP-47 tags are passed straight to the Web Speech API.
-export const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
+const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
   { value: "en-US", label: "English" },
   { value: "zh-CN", label: "中文" },
   { value: "es-ES", label: "Español" },
@@ -30,7 +30,7 @@ export const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
   { value: "pt-BR", label: "Português" },
   { value: "ru-RU", label: "Русский" },
 ];
-export const RECOGNITION_LANG_STORAGE_KEY = "onto-consensus-moderator-lang";
+const RECOGNITION_LANG_STORAGE_KEY = "onto-consensus-moderator-lang";
 // One flag per project, per browser -- flips to "seen" the first time this
 // member's panel finishes loading history for that project. Lets the intro
 // bullets (which are already sitting in "history" by the time the panel
@@ -43,7 +43,7 @@ const introSeenStorageKey = (projectId: number) => `onto-consensus-moderator-int
 // Defaults to whichever of the supported languages best matches the
 // browser's own language setting, falling back to English -- most users
 // never need to touch the picker at all.
-export function defaultRecognitionLang(): string {
+function defaultRecognitionLang(): string {
   const stored = localStorage.getItem(RECOGNITION_LANG_STORAGE_KEY);
   if (stored && RECOGNITION_LANGUAGES.some((l) => l.value === stored)) return stored;
   const browserLang = (navigator.language || "en-US").toLowerCase();
@@ -79,12 +79,6 @@ interface ModeratorChatPanelProps {
   members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
-  /** This member's own selected display language (BCP-47) -- lifted up to
-   *  the page level (rather than local state here) because it also drives
-   *  what useProjectSocket announces to the server for live intervention
-   *  translation; see project.tsx. */
-  recognitionLang: string;
-  onRecognitionLangChange: (value: string) => void;
 }
 
 // Deduplicate by id: the persisted-history fetch and live socket messages can
@@ -111,24 +105,15 @@ export function ModeratorChatPanel({
   members,
   moderatorErrorMessage,
   onDismissError,
-  recognitionLang,
-  onRecognitionLangChange,
 }: ModeratorChatPanelProps) {
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
   const disable = useDisableModerator();
   const submitTranscript = useSubmitModeratorTranscript();
 
-  // Persistence + the corresponding useProjectSocket "set_language"
-  // announcement both live in project.tsx now (see recognitionLang there) --
-  // this just forwards the picker's change up.
-  const handleLangChange = onRecognitionLangChange;
-
-  const { data: history } = useListModeratorChatMessages(
-    projectId,
-    { lang: recognitionLang },
-    { query: { queryKey: getListModeratorChatMessagesQueryKey(projectId, { lang: recognitionLang }) } },
-  );
+  const { data: history } = useListModeratorChatMessages(projectId, {
+    query: { queryKey: getListModeratorChatMessagesQueryKey(projectId) },
+  });
 
   const messages = useMemo(
     () => mergeMessages((history?.messages as ModeratorChatMessage[] | undefined) ?? [], liveMessages),
@@ -137,6 +122,15 @@ export function ModeratorChatPanel({
 
   const invalidateStatus = () =>
     queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
+
+  // Which language THIS member's mic is recognized in -- purely a local,
+  // per-browser choice (each member can speak a different language), so it
+  // lives in localStorage rather than anywhere shared/synced.
+  const [recognitionLang, setRecognitionLang] = useState(defaultRecognitionLang);
+  const handleLangChange = (value: string) => {
+    setRecognitionLang(value);
+    localStorage.setItem(RECOGNITION_LANG_STORAGE_KEY, value);
+  };
 
   // Turning the moderator on for yourself is the same click that starts
   // capturing your mic. The browser's own permission prompt is the only

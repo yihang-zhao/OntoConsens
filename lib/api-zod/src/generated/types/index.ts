@@ -15,7 +15,6 @@ export * from './exportPayload';
 export * from './healthStatus';
 export * from './joinProjectInput';
 export * from './listModeratorChatMessages200';
-export * from './listModeratorChatMessagesParams';
 export * from './member';
 export * from './moderatorChatMessage';
 export * from './moderatorChatMessageType';

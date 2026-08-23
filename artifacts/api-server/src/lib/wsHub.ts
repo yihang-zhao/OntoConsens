@@ -42,15 +42,7 @@ interface ClientInfo {
   // Absent for a dashboard (user-scoped) connection.
   projectId?: number;
   isAlive: boolean;
-  // BCP-47 tag this connection wants the AI moderator's intervention
-  // messages translated into (see the mic language selector in
-  // ModeratorChatPanel.tsx). Defaults to English -- i.e. untranslated --
-  // until the client sends a "set_language" message; there is no ticket
-  // field for this because it can change mid-session without reconnecting.
-  lang: string;
 }
-
-const DEFAULT_LANG = "en-US";
 
 const clients = new Map<WebSocket, ClientInfo>();
 
@@ -97,30 +89,6 @@ function onlineUserIds(projectId: number): number[] {
     if (info.projectId === projectId) ids.add(info.userId);
   }
   return Array.from(ids);
-}
-
-// Every distinct display language currently in use by someone connected to
-// this project -- lets the caller translate an intervention message once
-// per language actually needed instead of once per connection.
-export function getProjectLanguages(projectId: number): Set<string> {
-  const langs = new Set<string>();
-  for (const info of clients.values()) {
-    if (info.projectId === projectId) langs.add(info.lang);
-  }
-  return langs;
-}
-
-// Like broadcastToProject, but only to connections currently set to `lang`
-// -- used for per-viewer moderator translation, where different members in
-// the SAME project can be looking at different translated text for the
-// exact same underlying message.
-export function broadcastToProjectLang(projectId: number, lang: string, event: ServerEvent) {
-  const payload = JSON.stringify(event);
-  for (const [socket, info] of clients) {
-    if (info.projectId === projectId && info.lang === lang && socket.readyState === socket.OPEN) {
-      socket.send(payload);
-    }
-  }
 }
 
 function broadcastPresence(projectId: number) {
@@ -184,7 +152,7 @@ export function setupWebSocketServer(): WebSocketServer {
       return;
     }
 
-    clients.set(socket, { userId: ticket.userId, projectId: ticket.projectId, isAlive: true, lang: DEFAULT_LANG });
+    clients.set(socket, { userId: ticket.userId, projectId: ticket.projectId, isAlive: true });
     if (ticket.projectId !== undefined) {
       // Tell everyone (including this new connection) who's currently online,
       // so avatar "in this project now" rings update live with no refresh.
@@ -254,21 +222,6 @@ export function setupWebSocketServer(): WebSocketServer {
         if (text.trim()) {
           noteSpeechActivity(ticket.projectId);
         }
-      } else if (
-        data &&
-        typeof data === "object" &&
-        "type" in data &&
-        (data as { type: unknown }).type === "set_language" &&
-        "lang" in data &&
-        typeof (data as { lang: unknown }).lang === "string"
-      ) {
-        // Takes effect immediately for this connection -- no reconnect
-        // needed. Sent once right after the socket opens (to announce
-        // whatever the client currently has selected) and again any time
-        // the member changes their language dropdown mid-session.
-        const { lang } = data as { lang: string };
-        const info = clients.get(socket);
-        if (info && lang.trim()) info.lang = lang.trim();
       }
     });
 

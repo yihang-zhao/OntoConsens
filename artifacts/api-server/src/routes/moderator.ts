@@ -123,8 +123,7 @@ router.get("/projects/:id/moderator/messages", async (req, res) => {
     return;
   }
 
-  const lang = typeof req.query.lang === "string" ? req.query.lang : undefined;
-  const messages = await listChatMessages(projectId, lang);
+  const messages = await listChatMessages(projectId);
   res.json({ messages });
 });
 
