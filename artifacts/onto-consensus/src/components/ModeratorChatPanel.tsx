@@ -79,6 +79,11 @@ interface ModeratorChatPanelProps {
   members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
+  /** True once the backend has confirmed all three intervention conditions
+   *  (silence, a new finalized message, genuinely new content) and already
+   *  durably committed the message -- it's exactly INTERVENTION_TYPING_DELAY_MS
+   *  away, guaranteed. Cleared the moment that real message arrives. */
+  moderatorTyping: boolean;
 }
 
 // Deduplicate by id: the persisted-history fetch and live socket messages can
@@ -105,6 +110,7 @@ export function ModeratorChatPanel({
   members,
   moderatorErrorMessage,
   onDismissError,
+  moderatorTyping,
 }: ModeratorChatPanelProps) {
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
@@ -491,7 +497,7 @@ export function ModeratorChatPanel({
     } else {
       setShowNewMessagePill(true);
     }
-  }, [historyReady, visibleMessages.length, isTyping, speakingMembers.length, liveCaptionsKey]);
+  }, [historyReady, visibleMessages.length, isTyping, moderatorTyping, speakingMembers.length, liveCaptionsKey]);
 
   return (
     <aside className="w-[28vw] min-w-[22rem] shrink-0 h-full flex flex-col border rounded-2xl shadow-sm bg-card overflow-hidden">
@@ -520,7 +526,7 @@ export function ModeratorChatPanel({
           className="h-full overflow-y-auto px-3 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           <div ref={scrollContentRef} className="flex flex-col gap-3">
-            {visibleMessages.length === 0 && !isTyping && (
+            {visibleMessages.length === 0 && !isTyping && !moderatorTyping && (
               <p className="text-xs text-muted-foreground text-center mt-6">
                 The AI moderator's messages will appear here once the shared workspace is open.
               </p>
@@ -528,7 +534,11 @@ export function ModeratorChatPanel({
             {visibleMessages.map((message) => (
               <ChatMessageBubble key={message.id} message={message} members={members} />
             ))}
-            {isTyping && <TypingIndicatorBubble />}
+            {/* The backend only ever sends this once it has already
+                confirmed all 3 intervention conditions and durably
+                committed the message -- so this indicator is a guarantee,
+                not a guess, that real content follows shortly. */}
+            {(isTyping || moderatorTyping) && <TypingIndicatorBubble />}
             {speakingMembers.map((m) => (
               <LiveTranscriptBubble
                 key={m.userId}

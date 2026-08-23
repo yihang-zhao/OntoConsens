@@ -114,6 +114,12 @@ export default function ProjectWorkspace() {
   };
   const [liveMessages, setLiveMessages] = useState<ModeratorChatMessage[]>([]);
   const [moderatorErrorMessage, setModeratorErrorMessage] = useState<string | null>(null);
+  // Set true the instant the backend confirms all three intervention
+  // conditions (silence, a new finalized message, genuinely new content)
+  // and has already durably committed the message -- it's exactly
+  // INTERVENTION_TYPING_DELAY_MS away, guaranteed. Cleared the moment that
+  // real "intervention" message actually arrives.
+  const [moderatorTyping, setModeratorTyping] = useState(false);
   // The instant a matched "stalled discussion" intervention arrives,
   // briefly highlight the class/property it was actually about in the
   // shared graph -- gives the moderator's message somewhere to land in the
@@ -156,6 +162,11 @@ export default function ProjectWorkspace() {
     },
     onModeratorChatMessage: (message) => {
       setLiveMessages((prev) => [...prev, message]);
+      if (message.type === "intervention") {
+        // The real content just arrived -- it's itself the signal to swap
+        // out the typing indicator.
+        setModeratorTyping(false);
+      }
       if (message.type === "intervention" && message.matched && message.classId !== null && message.propertyId !== null) {
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         setHighlightedProperty({ classId: message.classId, propertyId: message.propertyId });
@@ -164,6 +175,10 @@ export default function ProjectWorkspace() {
     },
     onModeratorError: (message) => {
       setModeratorErrorMessage(message);
+      setModeratorTyping(false);
+    },
+    onModeratorInterventionTyping: () => {
+      setModeratorTyping(true);
     },
   });
 
@@ -371,6 +386,7 @@ export default function ProjectWorkspace() {
             members={project.members}
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
+            moderatorTyping={moderatorTyping}
           />
         )}
       </div>

@@ -21,22 +21,20 @@ import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
 import { logger } from "./logger";
 
-// "Silence" means no one currently has new text filling into their live
-// caption box -- not just "no finalized message yet" (see noteSpeechActivity
-// below, which now fires on every non-empty live caption update, not only
-// on a finalized transcript POST). 5 continuous seconds of that is treated
-// as the group having stalled.
+// Condition 1 of the intervention trigger: "silence" means no one currently
+// has new TEXT TRANSCRIPTION filling into their live caption box -- not
+// "no finalized message yet" (see noteSpeechActivity below, which fires on
+// every non-empty live caption update, i.e. raw/partial recognized speech
+// as it streams in, not only on a finalized transcript POST). 2 continuous
+// seconds of that is condition 1. This is deliberately distinct from
+// condition 2 (a NEW, finalized message) below -- see generateIntervention.
 const SILENCE_TIMEOUT_MS = 2_000;
 
-// Minimum spacing between two AI moderator interventions (i.e. two
-// "stalled discussion" chat messages actually posted to the group, whether
-// they resolved to a real class/property or just a "focus on the
-// workspace" reminder) -- keeps the moderator from interrupting
-// back-to-back even if the group keeps pausing and resuming within a few
-// seconds of each other. The next eligible silence-check only starts being
-// honored INTERVENTION_COOLDOWN_MS after the last one actually posted.
-const INTERVENTION_COOLDOWN_MS = 15_000;
-const lastInterventionAt = new Map<number, number>();
+// How long the "AI moderator is typing" indicator shows before the actual
+// intervention message appears, once conditions 1-3 have all already been
+// confirmed true (see generateIntervention) -- purely a display delay, the
+// message itself is already generated and durably committed by this point.
+const INTERVENTION_TYPING_DELAY_MS = 1_000;
 
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
@@ -366,36 +364,22 @@ export async function recordTranscriptChunk(
   return committed;
 }
 
-// Fires an intervention attempt after the usual silence timeout, but never
-// sooner than INTERVENTION_COOLDOWN_MS after the last one actually posted
-// to the group -- if the cooldown hasn't elapsed yet, it reschedules itself
-// for the remainder rather than firing immediately or dropping the
-// attempt. Content isn't lost either way: generateIntervention always
-// re-analyzes everything accumulated since the last checkpoint (plus, for a
-// matched property, its ENTIRE prior history -- see generateIntervention),
-// whenever it does run.
-function fireWhenCooldownElapsed(projectId: number): void {
-  const last = lastInterventionAt.get(projectId) ?? 0;
-  const remaining = INTERVENTION_COOLDOWN_MS - (Date.now() - last);
-  if (remaining <= 0) {
-    enqueueIntervention(projectId);
-    return;
-  }
-  setTimeout(() => fireWhenCooldownElapsed(projectId), remaining);
-}
-
 // Called both after recordTranscriptChunk confirms a durable write for a
 // finalized utterance, AND on every non-empty live caption update (see
 // wsHub's "caption" message handling) -- the latter is what makes "silence"
-// mean "no one has new text filling into their live box right now" rather
-// than "no one has finished a whole utterance yet". A member who's mid-
-// sentence, still being recognized, must keep resetting this clock even
-// though nothing has been persisted as a real message yet.
+// (condition 1) mean "no one has new TEXT TRANSCRIPTION filling into their
+// live box right now" rather than "no one has finished a whole utterance
+// yet". A member who's mid-sentence, still being recognized, must keep
+// resetting this clock even though nothing has been persisted as a real
+// message yet. Once condition 1's timer fires, it hands off straight to
+// generateIntervention (via enqueueIntervention), which itself checks
+// condition 2 (a new finalized message since the last checkpoint) before
+// doing anything else -- there is no separate cooldown or other gate here.
 export function noteSpeechActivity(projectId: number): void {
   clearModeratorSilenceTimer(projectId);
   const timer = setTimeout(() => {
     silenceTimers.delete(projectId);
-    fireWhenCooldownElapsed(projectId);
+    enqueueIntervention(projectId);
   }, SILENCE_TIMEOUT_MS);
   silenceTimers.set(projectId, timer);
 }
@@ -980,12 +964,14 @@ async function generateIntervention(projectId: number): Promise<void> {
 
   if (!committed || !insertedRow) return;
 
-  // Marks this as the most recent intervention shown to the group -- gates
-  // fireWhenCooldownElapsed for the NEXT one, whether or not this round
-  // matched a real class/property (a "focus on the workspace" reminder is
-  // still an intervention the group just saw).
-  lastInterventionAt.set(projectId, Date.now());
-
+  // All three conditions are now confirmed true: (1) silence, checked
+  // before this function was even queued; (2) a new finalized message,
+  // checked via newChunks above; (3) genuinely new content, just confirmed
+  // by the dedup check above. The message is already durably committed --
+  // everything from here on is purely a display sequence: show the typing
+  // indicator now, then reveal the message itself a beat later.
+  broadcastToProject(projectId, { type: "moderator_intervention_typing" });
   const message = await serializeChatMessage(insertedRow);
+  await new Promise((resolve) => setTimeout(resolve, INTERVENTION_TYPING_DELAY_MS));
   broadcastToProject(projectId, { type: "moderator_chat_message", message });
 }

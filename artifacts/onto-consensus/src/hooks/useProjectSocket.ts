@@ -56,7 +56,8 @@ type ServerEvent =
   | { type: "speaker_volume"; userId: number; level: number }
   | { type: "live_caption"; userId: number; text: string }
   | { type: "moderator_chat_message"; message: ModeratorChatMessage }
-  | { type: "moderator_error"; message: string };
+  | { type: "moderator_error"; message: string }
+  | { type: "moderator_intervention_typing" };
 
 export interface LiveCaption {
   userId: number;
@@ -72,6 +73,7 @@ interface UseProjectSocketOptions {
   onProjectDeleted?: () => void;
   onModeratorChatMessage?: (message: ModeratorChatMessage) => void;
   onModeratorError?: (message: string) => void;
+  onModeratorInterventionTyping?: () => void;
 }
 
 // Speaker volume readings older than this are dropped even if no new
@@ -115,6 +117,7 @@ export function useProjectSocket({
   onProjectDeleted,
   onModeratorChatMessage,
   onModeratorError,
+  onModeratorInterventionTyping,
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
   const socketRef = useRef<WebSocket | null>(null);
@@ -129,6 +132,7 @@ export function useProjectSocket({
     onProjectDeleted,
     onModeratorChatMessage,
     onModeratorError,
+    onModeratorInterventionTyping,
   });
   callbacksRef.current = {
     onProjectChanged,
@@ -136,6 +140,7 @@ export function useProjectSocket({
     onProjectDeleted,
     onModeratorChatMessage,
     onModeratorError,
+    onModeratorInterventionTyping,
   };
 
   useEffect(() => {
@@ -259,6 +264,9 @@ export function useProjectSocket({
             break;
           case "moderator_error":
             callbacksRef.current.onModeratorError?.(data.message);
+            break;
+          case "moderator_intervention_typing":
+            callbacksRef.current.onModeratorInterventionTyping?.();
             break;
         }
       });

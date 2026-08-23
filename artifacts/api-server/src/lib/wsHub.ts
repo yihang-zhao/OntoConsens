@@ -81,7 +81,14 @@ export type ServerEvent =
         createdAt: string;
       };
     }
-  | { type: "moderator_error"; message: string };
+  | { type: "moderator_error"; message: string }
+  // Broadcast once all three intervention conditions (silence, a new
+  // finalized message, and genuinely new content) are already confirmed
+  // true and the message itself is durably committed -- purely tells
+  // clients to show the "AI moderator is typing" indicator for the short
+  // beat before the real "moderator_chat_message" (type "intervention")
+  // follows. See generateIntervention in moderatorEngine.ts.
+  | { type: "moderator_intervention_typing" };
 
 function onlineUserIds(projectId: number): number[] {
   const ids = new Set<number>();
