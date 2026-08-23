@@ -3,7 +3,6 @@ import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import {
   db,
   moderatorChatMessagesTable,
-  moderatorInterventionPointsTable,
   moderatorTranscriptChunksTable,
   moderatorParticipantsTable,
   ontologyClassesTable,
@@ -15,7 +14,6 @@ import {
   type ModeratorChatMessage,
   type ModeratorChatMessageType,
   type ModeratorInterventionEntry,
-  type ModeratorInterventionPoint,
 } from "@workspace/db";
 import { decryptApiKey } from "./moderatorCrypto";
 import { broadcastToProject } from "./wsHub";
@@ -519,15 +517,13 @@ async function generateIntervention(projectId: number): Promise<void> {
   // Every property in the workspace is eligible here, INCLUDING ones that
   // already reached full agreement -- a group can reopen discussion on a
   // settled property at any point (e.g. reconsidering it later), and when
-  // they do, the moderator must recognize that and pick back up from the
-  // property's existing examples/counterexamples (persisted durably in
-  // moderatorInterventionPointsTable, keyed by class+property, independent
-  // of agreement state) rather than silently ignoring the conversation.
-  // This is safe from "re-litigating" an untouched property on a passing
-  // mention alone: an intervention only ever fires after real accumulated
-  // speech followed by silence (see fireWhenCooldownElapsed/
-  // noteSpeechActivity above), never from topic-detection matching by
-  // itself.
+  // they do, the moderator must recognize that and pick back up from
+  // wherever its own last intervention message left off (see Pass 2 below)
+  // rather than silently ignoring the conversation. This is safe from
+  // "re-litigating" an untouched property on a passing mention alone: an
+  // intervention only ever fires after real accumulated speech followed by
+  // silence (see noteSpeechActivity above), never from topic-detection
+  // matching by itself.
   const [classes, properties] = await Promise.all([
     db.query.ontologyClassesTable.findMany({ where: eq(ontologyClassesTable.projectId, projectId) }),
     db.query.propertiesTable.findMany({ where: eq(propertiesTable.projectId, projectId) }),
@@ -651,31 +647,69 @@ async function generateIntervention(projectId: number): Promise<void> {
           );
       }
 
-      // --- Pass 2: re-analyze the COMPLETE history tied to this property. ---
-      const historicalChunks = await db.query.moderatorTranscriptChunksTable.findMany({
+      // --- Pass 2: update from the last intervention message + what's new. ---
+      // By design this uses ONLY two sources, nothing else: the actual
+      // content of the last intervention message this moderator posted for
+      // this specific class/property (its established, group-visible
+      // record of where things stood), and the transcript of user messages
+      // exchanged since that message. It deliberately does NOT re-read the
+      // property's entire speech history from the start -- the previous
+      // intervention message already IS the durable summary of everything
+      // before it, so re-scanning all of that raw history again would be
+      // redundant and would reopen the door to re-deriving slightly
+      // different wording/attributions each round purely from re-reading
+      // the same old lines (see the "MAXIMUM STABILITY" instruction below).
+      const [previousPropertyIntervention] = await db
+        .select({
+          content: moderatorChatMessagesTable.content,
+          examples: moderatorChatMessagesTable.examples,
+          counterexamples: moderatorChatMessagesTable.counterexamples,
+          createdAt: moderatorChatMessagesTable.createdAt,
+        })
+        .from(moderatorChatMessagesTable)
+        .where(
+          and(
+            eq(moderatorChatMessagesTable.projectId, projectId),
+            eq(moderatorChatMessagesTable.type, "intervention"),
+            eq(moderatorChatMessagesTable.matched, true),
+            eq(moderatorChatMessagesTable.classId, classId),
+            eq(moderatorChatMessagesTable.propertyId, propertyId),
+          ),
+        )
+        .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+        .limit(1);
+
+      // "Messages exchanged since that last intervention" -- if this is the
+      // very first intervention for this property, that's every chunk ever
+      // tagged to it (there's no previous message to have already covered
+      // any of them).
+      const deltaChunks = await db.query.moderatorTranscriptChunksTable.findMany({
         where: and(
           eq(moderatorTranscriptChunksTable.projectId, projectId),
           eq(moderatorTranscriptChunksTable.classId, classId),
           eq(moderatorTranscriptChunksTable.propertyId, propertyId),
+          previousPropertyIntervention
+            ? gt(moderatorTranscriptChunksTable.createdAt, previousPropertyIntervention.createdAt)
+            : undefined,
         ),
       });
-      const fullTranscript = formatChunksAsTranscript(historicalChunks, usernameById);
+      const deltaTranscript = formatChunksAsTranscript(deltaChunks, usernameById);
 
-      // Load the durable, already-established points for this property so
-      // the extraction prompt can be told to leave their wording alone --
-      // see moderatorInterventionPointsTable's doc comment for why this
-      // must also be enforced in code below, not just requested here.
-      const existingPoints = await db.query.moderatorInterventionPointsTable.findMany({
-        where: and(
-          eq(moderatorInterventionPointsTable.projectId, projectId),
-          eq(moderatorInterventionPointsTable.classId, classId),
-          eq(moderatorInterventionPointsTable.propertyId, propertyId),
-        ),
-        orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
-      });
-      const existingExamplePoints = existingPoints.filter((p) => p.tone === "example");
-      const existingCounterexamplePoints = existingPoints.filter((p) => p.tone === "counterexample");
-      const describeExisting = (points: ModeratorInterventionPoint[]) =>
+      // Transient, this-round-only ids (just the array position) assigned
+      // to whatever examples/counterexamples the previous intervention
+      // message actually showed -- there's no separate persisted point
+      // store anymore, so these ids only need to be stable within this one
+      // prompt/response round-trip, not across rounds.
+      interface TransientPoint {
+        id: number;
+        text: string;
+        by: string[];
+      }
+      const toTransientPoints = (entries: ModeratorInterventionEntry[] | null): TransientPoint[] =>
+        (entries ?? []).map((e, i) => ({ id: i + 1, text: e.text, by: e.by }));
+      const existingExamplePoints = toTransientPoints(previousPropertyIntervention?.examples ?? null);
+      const existingCounterexamplePoints = toTransientPoints(previousPropertyIntervention?.counterexamples ?? null);
+      const describeExisting = (points: TransientPoint[]) =>
         points.length === 0
           ? "(none yet)"
           : points.map((p) => `- id ${p.id}: "${p.text}" (currently credited to: ${p.by.join(", ") || "no one"})`).join("\n");
@@ -684,11 +718,13 @@ async function generateIntervention(projectId: number): Promise<void> {
         apiKey,
         config.model,
         `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
-          "Below is the ENTIRE transcript of everything said about this specific property so far (not just the " +
-          "most recent portion). Extract every concrete EXAMPLE given in support of keeping/adding this property, " +
-          "and every COUNTEREXAMPLE or objection given against it, across the whole transcript -- include " +
-          "something even if it was only mentioned once early on and never repeated, but leave it out if someone " +
-          "later explicitly retracted or contradicted it. For each one, note who said it. " +
+          "Below is the PREVIOUS INTERVENTION MESSAGE you already sent the group about this property (if any), " +
+          "followed by every user message exchanged SINCE that message. Base your answer ONLY on these two " +
+          "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
+          "message itself already states. Extract every concrete EXAMPLE given in support of keeping/adding this " +
+          "property, and every COUNTEREXAMPLE or objection given against it -- include something even if it was " +
+          "only mentioned once and never repeated, but leave it out if someone explicitly retracted or " +
+          "contradicted it. For each one, note who said it. " +
           "If the SAME underlying point was made more than once -- whether by the same person repeating " +
           "themselves, or by different people independently making an equivalent point -- merge it into a " +
           "single entry rather than listing it twice, and list every person who made that point (in the order " +
@@ -750,7 +786,8 @@ async function generateIntervention(projectId: number): Promise<void> {
           '{"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
           '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
           "Use the exact usernames as they appear as speaker labels in the transcript.",
-        fullTranscript,
+        `PREVIOUS INTERVENTION MESSAGE:\n${previousPropertyIntervention?.content ?? "(none yet -- this is the first intervention for this property)"}` +
+          `\n\nMESSAGES SINCE THEN:\n${deltaTranscript || "(none)"}`,
       );
 
       const rawExamples = Array.isArray(extraction?.examples) ? extraction.examples : [];
@@ -787,21 +824,21 @@ async function generateIntervention(projectId: number): Promise<void> {
           })
           .filter((e) => e.text.length > 0);
 
-      // Reconcile the model's response against the durable canonical points
-      // for this tone, enforcing in code -- not just by asking the model --
-      // that an existing point's wording can only change via an explicit
-      // "revise" flag, and that a supporter is only ever dropped via an
-      // explicit "remove" flag naming them. Anything else about an existing
-      // id (silent rewording, or simply not being repeated this round) is
-      // ignored: absence of evidence is never treated as disagreement, so a
-      // user's prior position is retained by default. A point that loses
-      // its last supporter this way is deleted outright -- see the caller's
-      // doc comment on "all users disagree" behavior.
-      async function reconcile(
-        tone: "example" | "counterexample",
-        existing: ModeratorInterventionPoint[],
-        responseEntries: ParsedResponseEntry[],
-      ): Promise<ModeratorInterventionEntry[]> {
+      // Reconcile the model's response against the previous round's points
+      // (existing, from the previous intervention message -- see
+      // TransientPoint above), enforcing in code -- not just by asking the
+      // model -- that an existing point's wording can only change via an
+      // explicit "revise" flag, and that a supporter is only ever dropped
+      // via an explicit "remove" flag naming them. Anything else about an
+      // existing id (silent rewording, or simply not being repeated this
+      // round) is ignored: absence of evidence is never treated as
+      // disagreement, so a user's prior position is retained by default. A
+      // point that loses its last supporter this way is dropped outright.
+      // Purely an in-memory merge -- there's no separate persisted point
+      // store to write back to; the result becomes part of the new
+      // intervention message row itself, which in turn becomes "existing"
+      // for the NEXT round.
+      function reconcile(existing: TransientPoint[], responseEntries: ParsedResponseEntry[]): ModeratorInterventionEntry[] {
         const byId = new Map(existing.map((p) => [p.id, p]));
 
         // --- Fold merges first, before doing anything else. ---
@@ -844,10 +881,7 @@ async function generateIntervention(projectId: number): Promise<void> {
         // Existing points first, in their original stable order, so the
         // card's row order never reshuffles between interventions.
         for (const point of existing) {
-          if (mergedAwayIds.has(point.id)) {
-            await db.delete(moderatorInterventionPointsTable).where(eq(moderatorInterventionPointsTable.id, point.id));
-            continue;
-          }
+          if (mergedAwayIds.has(point.id)) continue;
           const response = normalResponses.find((r) => r.id === point.id);
           const extra = extraById.get(point.id);
           let text = point.text;
@@ -865,40 +899,25 @@ async function generateIntervention(projectId: number): Promise<void> {
             // Every current supporter explicitly disagreed -- the point no
             // longer has anyone standing behind it, so it's dropped rather
             // than shown as an orphaned, unsupported row.
-            await db.delete(moderatorInterventionPointsTable).where(eq(moderatorInterventionPointsTable.id, point.id));
             continue;
-          }
-          if (text !== point.text || by.length !== point.by.length || by.some((n, i) => n !== point.by[i])) {
-            await db
-              .update(moderatorInterventionPointsTable)
-              .set({ text, by, updatedAt: new Date() })
-              .where(eq(moderatorInterventionPointsTable.id, point.id));
           }
           result.push({ text, by });
         }
 
         // Anything the model returned with no id (or an id that doesn't
         // match any existing point, e.g. a stale id from a previous prompt)
-        // is a brand-new point -- insert it as a new canonical row.
+        // is a brand-new point.
         for (const response of normalResponses) {
           if (response.id !== null && byId.has(response.id)) continue;
           if (response.by.length === 0) continue;
-          const [inserted] = await db
-            .insert(moderatorInterventionPointsTable)
-            .values({ projectId, classId, propertyId, tone, text: response.text, by: response.by })
-            .returning();
-          if (inserted) result.push({ text: inserted.text, by: inserted.by });
+          result.push({ text: response.text, by: response.by });
         }
 
         return result;
       }
 
-      const exampleEntries = await reconcile("example", existingExamplePoints, toResponseEntries(rawExamples));
-      const counterexampleEntries = await reconcile(
-        "counterexample",
-        existingCounterexamplePoints,
-        toResponseEntries(rawCounterexamples),
-      );
+      const exampleEntries = reconcile(existingExamplePoints, toResponseEntries(rawExamples));
+      const counterexampleEntries = reconcile(existingCounterexamplePoints, toResponseEntries(rawCounterexamples));
 
       const formatEntriesText = (entries: ModeratorInterventionEntry[]) =>
         entries.map((e) => `${e.text}. — ${e.by.length > 0 ? e.by.join(", ") : "someone"}`).join("\n") ||
