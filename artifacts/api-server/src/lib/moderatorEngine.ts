@@ -26,7 +26,7 @@ import { logger } from "./logger";
 // below, which now fires on every non-empty live caption update, not only
 // on a finalized transcript POST). 5 continuous seconds of that is treated
 // as the group having stalled.
-const SILENCE_TIMEOUT_MS = 3_000;
+const SILENCE_TIMEOUT_MS = 2_000;
 
 // Minimum spacing between two AI moderator interventions (i.e. two
 // "stalled discussion" chat messages actually posted to the group, whether
