@@ -550,6 +550,14 @@ async function generateIntervention(projectId: number): Promise<void> {
   let matched: boolean;
   let interventionExamples: ModeratorInterventionEntry[] | null = null;
   let interventionCounterexamples: ModeratorInterventionEntry[] | null = null;
+  // True only for a matched property whose examples AND counterexamples
+  // both came back completely empty -- i.e. the extraction pass has
+  // nothing at all to show the group (this can happen when a supporter's
+  // stance is misread as a full retraction on an ambiguous remark). An
+  // interruption with nothing to say is worse than no interruption, so
+  // this is treated the same as the exact-duplicate-content case below:
+  // silently advance the checkpoint, never post.
+  let hasNothingToShow = false;
 
   // What the previous round resolved to, if anything -- lets pass 1 infer
   // that an unlabeled continuation ("yeah I agree", "what about when it's
@@ -891,6 +899,7 @@ async function generateIntervention(projectId: number): Promise<void> {
         `Would you like to continue discussing, or move to a vote?`;
       interventionExamples = exampleEntries;
       interventionCounterexamples = counterexampleEntries;
+      hasNothingToShow = exampleEntries.length === 0 && counterexampleEntries.length === 0;
     } else {
       interventionContent =
         "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
@@ -932,6 +941,18 @@ async function generateIntervention(projectId: number): Promise<void> {
       .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
       .limit(1);
     if (previousIntervention && previousIntervention.content === interventionContent) {
+      await tx
+        .update(projectModeratorTable)
+        .set({ lastSummarizedAt: maxCreatedAt })
+        .where(eq(projectModeratorTable.projectId, projectId));
+      return [undefined, false] as const;
+    }
+
+    // Nothing to actually show the group (see hasNothingToShow's doc
+    // comment above) -- same treatment as the duplicate-content case:
+    // advance the checkpoint so these chunks aren't re-processed forever,
+    // but don't interrupt the group with an empty-handed message.
+    if (hasNothingToShow) {
       await tx
         .update(projectModeratorTable)
         .set({ lastSummarizedAt: maxCreatedAt })
