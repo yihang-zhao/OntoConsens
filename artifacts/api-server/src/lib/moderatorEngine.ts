@@ -424,14 +424,16 @@ async function callOpenAiJson(apiKey: string, model: string, systemPrompt: strin
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      // Not passing "temperature" here on purpose -- some models (e.g.
+      // reasoning models like o1/gpt-5) reject any non-default value
+      // outright, and since `model` is user-configurable per project, a
+      // hardcoded override isn't safe across all of them. Stability of
+      // wording/attribution across rounds is instead enforced by the
+      // prompt itself (see the extraction prompt's "MAXIMUM STABILITY"
+      // instructions below) and the canonical-signature dedup in
+      // generateIntervention's commit transaction, not by sampling
+      // settings.
       model,
-      // Deterministic (temperature 0) on purpose: this same transcript is
-      // re-analyzed from scratch every round (see generateIntervention),
-      // so any run-to-run randomness here would itself be a source of
-      // spurious wording/attribution churn between consecutive
-      // interventions, independent of anything actually said. Consistency
-      // with the previous round's phrasing matters more than variety.
-      temperature: 0,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
