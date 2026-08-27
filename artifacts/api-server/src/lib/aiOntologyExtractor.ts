@@ -87,8 +87,11 @@ const EXTRACTION_INSTRUCTIONS =
   '"relations": [{"child": "<id of the more specific subclass>", "parent": "<id of the more general class>"}]}. ' +
   "Every id used in \"relations\" must also appear in \"classes\". Use short, stable, lowercase slug ids " +
   "(letters/digits/underscores only) generated from each class's label. Do not include instances, properties, " +
-  "or any relation type other than subclass-of. If nothing resembling a class hierarchy is present, respond " +
-  'with {"classes": [], "relations": []}.';
+  "or any relation type other than subclass-of. Each class's \"label\" must be plain, space-separated words " +
+  "(e.g. \"Postgraduate Student\") -- never a concatenated naming style such as camelCase " +
+  "(\"PostgraduateStudent\"), underscore-joined (\"Postgraduate_Student\"), hyphen-joined " +
+  "(\"Postgraduate-Student\"), or any other joined-without-spaces form, even if the source material names it " +
+  "that way. If nothing resembling a class hierarchy is present, respond with {\"classes\": [], \"relations\": []}.";
 
 interface RawAiOntology {
   classes?: { id?: unknown; label?: unknown }[];

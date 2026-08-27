@@ -1272,10 +1272,27 @@ export function GraphCanvas({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span
-                        className="line-clamp-4 break-words text-sm font-semibold text-card-foreground"
-                        style={{ width: CLASS_LABEL_BOX_SIZE, maxHeight: CLASS_LABEL_BOX_SIZE }}
+                        lang="en"
+                        className="line-clamp-4 text-sm font-semibold text-card-foreground"
+                        style={{
+                          width: CLASS_LABEL_BOX_SIZE,
+                          maxHeight: CLASS_LABEL_BOX_SIZE,
+                          // Each word of the label gets its own line (see the
+                          // \n join below) rather than flowing together like
+                          // normal wrapped text; whiteSpace: "pre-line" is
+                          // what makes those \n characters actually break the
+                          // line instead of collapsing like regular
+                          // whitespace. A word that's too wide on its own
+                          // still wraps mid-word with a hyphen (hyphens:
+                          // "auto" needs the `lang` attribute above to know
+                          // which language's hyphenation rules to use).
+                          whiteSpace: "pre-line",
+                          overflowWrap: "break-word",
+                          wordBreak: "break-word",
+                          hyphens: "auto",
+                        }}
                       >
-                        {cls.label}
+                        {cls.label.split(/\s+/).filter(Boolean).join("\n")}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent className="max-w-64 break-words">{cls.label}</TooltipContent>
