@@ -675,6 +675,10 @@ async function generateIntervention(projectId: number): Promise<void> {
       "sounds similar but isn't what was actually said. When a message doesn't quite make sense as written, " +
       "don't take it at face value -- sound it out and interpret the speaker's actual intended meaning from " +
       "context before deciding whether it's an example, a counterexample, an agreement, or a disagreement. " +
+      "Write every piece of text you produce -- the condensed example/counterexample statements below -- in the " +
+      "SAME language the transcript itself is written in. Never translate into English or any other language; " +
+      "match whatever language the speakers are actually using (keep it in English only if that's what the " +
+      "transcript already is). " +
       `Extract every concrete EXAMPLE given in support of keeping/adding ${className}.${propertyName}, and every ` +
       "COUNTEREXAMPLE or objection given against it -- include something even if it was only mentioned once and " +
       "never repeated, but leave it out if someone explicitly retracted or contradicted it. For each one, note " +
@@ -770,6 +774,45 @@ async function generateIntervention(projectId: number): Promise<void> {
       .replace("EXISTING_EXAMPLES_PLACEHOLDER", `Examples:\n${describeExisting(existing)}`)
       .replace("EXISTING_COUNTEREXAMPLES_PLACEHOLDER", `Counterexamples:\n${describeExisting(existingCounter)}`);
 
+  // The intervention message is otherwise built from fixed English template
+  // strings in code (see interventionContent below). So the whole message
+  // -- not just the model-authored example/counterexample text above --
+  // matches the language the group is actually speaking, every
+  // topic-deciding/extracting call is also asked to translate these same
+  // six fixed strings into that detected language and return them under
+  // "labels"; interventionContent then prefers those over the English
+  // defaults, falling back to English only if a call didn't return them.
+  const defaultLabels = {
+    stalledHeader: "Discussion stalled",
+    noticedIntro: "I noticed the discussion has stalled on this property. Here's where things stand:",
+    forKeeping: "For keeping it:",
+    forRemoving: "For removing it:",
+    continueOrVote: "Would you like to continue discussing, or move to a vote?",
+    noMatchMessage:
+      "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
+      "Try focusing the discussion on properties already in this shared workspace.",
+  };
+  type Labels = typeof defaultLabels;
+  const labelsInstruction =
+    "Also detect the primary language the transcript above is actually written in (not the language of this " +
+    "prompt), and naturally translate the following six fixed UI strings into that SAME language -- keep them " +
+    "in English only if the transcript itself is already in English. Return all six under \"labels\" regardless " +
+    `of your className/propertyName answer: ${JSON.stringify(defaultLabels)}. `;
+  const labelsSchemaFragment =
+    '"labels": {"stalledHeader": string, "noticedIntro": string, "forKeeping": string, "forRemoving": string, "continueOrVote": string, "noMatchMessage": string}';
+  const pickLabels = (raw: unknown): Labels => {
+    const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const pick = (key: keyof Labels) => (typeof r[key] === "string" && r[key].trim().length > 0 ? (r[key] as string) : defaultLabels[key]);
+    return {
+      stalledHeader: pick("stalledHeader"),
+      noticedIntro: pick("noticedIntro"),
+      forKeeping: pick("forKeeping"),
+      forRemoving: pick("forRemoving"),
+      continueOrVote: pick("continueOrVote"),
+      noMatchMessage: pick("noMatchMessage"),
+    };
+  };
+
   const normalize = (s: string) => s.trim().toLowerCase();
   const resolveMatch = (rawClassName: string | null, rawPropertyName: string | null) =>
     rawClassName && rawPropertyName
@@ -788,6 +831,9 @@ async function generateIntervention(projectId: number): Promise<void> {
   let inlineExtraction: { examples: unknown[]; counterexamples: unknown[] } | null = null;
   let existingExamplePoints: TransientPoint[] = [];
   let existingCounterexamplePoints: TransientPoint[] = [];
+  // Whichever call last ran (topic-only or extraction) supplies the labels
+  // used to build the displayed message -- see labelsInstruction above.
+  let responseLabels: Labels = defaultLabels;
 
   try {
     let rawClassName: string | null;
@@ -852,16 +898,19 @@ async function generateIntervention(projectId: number): Promise<void> {
             priorExamples,
             priorCounterexamples,
           ) +
+          labelsInstruction +
           'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
           '{"className": string | null, "propertyName": string | null, ' +
           '"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
-          '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
+          '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
+          `${labelsSchemaFragment}}. ` +
           "Use the exact usernames as they appear as speaker labels in the transcript.",
         `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention.content}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`,
       );
 
       rawClassName = typeof combined?.className === "string" ? combined.className : null;
       rawPropertyName = typeof combined?.propertyName === "string" ? combined.propertyName : null;
+      responseLabels = pickLabels(combined?.labels);
 
       const isConfirmedContinuation =
         rawClassName !== null &&
@@ -901,12 +950,14 @@ async function generateIntervention(projectId: number): Promise<void> {
           "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
           "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
           "list. " +
+          labelsInstruction +
           'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-          '{"className": string | null, "propertyName": string | null}.',
+          `{"className": string | null, "propertyName": string | null, ${labelsSchemaFragment}}.`,
         sinceLastInterventionTranscript,
       );
       rawClassName = typeof topicResult?.className === "string" ? topicResult.className : null;
       rawPropertyName = typeof topicResult?.propertyName === "string" ? topicResult.propertyName : null;
+      responseLabels = pickLabels(topicResult?.labels);
     }
 
     matchedEntry = resolveMatch(rawClassName, rawPropertyName);
@@ -951,7 +1002,7 @@ async function generateIntervention(projectId: number): Promise<void> {
       // re-deriving slightly different wording/attributions each round
       // purely from re-reading the same old lines (see the "MAXIMUM
       // STABILITY" instruction above).
-      let extraction: { examples: unknown[]; counterexamples: unknown[] };
+      let extraction: { examples: unknown[]; counterexamples: unknown[]; labels?: unknown };
       if (inlineExtraction) {
         extraction = inlineExtraction;
       } else {
@@ -1003,13 +1054,16 @@ async function generateIntervention(projectId: number): Promise<void> {
             "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
             "message itself already states.\n\n" +
             fillExtractionRules(className, propertyName, existingExamplePoints, existingCounterexamplePoints) +
+            labelsInstruction +
             'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
             '{"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
-            '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
+            '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
+            `${labelsSchemaFragment}}. ` +
             "Use the exact usernames as they appear as speaker labels in the transcript.",
           `PREVIOUS INTERVENTION MESSAGE:\n${previousPropertyIntervention?.content ?? "(none yet -- this is the first intervention for this property)"}` +
             `\n\nMESSAGES SINCE THEN:\n${deltaTranscript || "(none)"}`,
         );
+        responseLabels = pickLabels(extraction?.labels);
       }
 
       const rawExamples = Array.isArray(extraction?.examples) ? extraction.examples : [];
@@ -1151,18 +1205,16 @@ async function generateIntervention(projectId: number): Promise<void> {
       // keep discussing or move to a vote -- no extra framing or attribution
       // line, per the exact wording the moderator is expected to use.
       interventionContent =
-        `Discussion stalled — ${className}.${propertyName}\n\n` +
-        `I noticed the discussion has stalled on this property. Here's where things stand:\n\n` +
-        `For keeping it:\n\n${formatEntriesText(exampleEntries)}\n\n` +
-        `For removing it:\n\n${formatEntriesText(counterexampleEntries)}\n\n` +
-        `Would you like to continue discussing, or move to a vote?`;
+        `${responseLabels.stalledHeader} — ${className}.${propertyName}\n\n` +
+        `${responseLabels.noticedIntro}\n\n` +
+        `${responseLabels.forKeeping}\n\n${formatEntriesText(exampleEntries)}\n\n` +
+        `${responseLabels.forRemoving}\n\n${formatEntriesText(counterexampleEntries)}\n\n` +
+        `${responseLabels.continueOrVote}`;
       interventionExamples = exampleEntries;
       interventionCounterexamples = counterexampleEntries;
       hasNothingToShow = exampleEntries.length === 0 && counterexampleEntries.length === 0;
     } else {
-      interventionContent =
-        "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
-        "Try focusing the discussion on properties already in this shared workspace.";
+      interventionContent = responseLabels.noMatchMessage;
     }
   } catch (err) {
     logger.error({ err, projectId }, "Moderator intervention generation errored");
