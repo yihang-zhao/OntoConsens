@@ -312,23 +312,17 @@ export function ModeratorChatPanel({
     // Transcript/system messages reveal in the very same render, with no
     // timer at all -- they already just sat there fully visible as a live
     // caption bubble a moment ago (or, for system messages, never needed a
-    // typing pause to begin with). Routing them through even a 0ms
-    // setTimeout meant one extra paint where the just-arrived message was
-    // hidden and the bouncing-dots "typing" placeholder showed in its place
-    // for a single frame -- a jarring flash right as a box finalizes, with
-    // no location change to justify it. Only the moderator's own "intro"
-    // and "intervention" messages -- which are genuinely new, not something
-    // the group already watched happen live -- get the typing-pause effect.
-    if (next.type === "intro" || next.type === "intervention") {
-      setTypingMessageId(next.id);
-      revealTimerRef.current = setTimeout(() => {
-        setRevealedIds((prev) => new Set(prev).add(next.id));
-        setTypingMessageId(null);
-        revealTimerRef.current = null;
-      }, 1100);
-    } else {
-      setRevealedIds((prev) => new Set(prev).add(next.id));
-    }
+    // typing pause to begin with). The moderator's own "intro" and
+    // "intervention" messages used to get an EXTRA client-side typing-pause
+    // hold here on top of that -- but the backend already shows its own
+    // "moderator is typing" indicator (moderatorTyping prop) for the whole
+    // stretch between the message being ready and it being broadcast, so
+    // this second hold was pure redundant latency stacked on top of the
+    // backend's: the message is fully generated and already sitting in
+    // `messages` by the time this effect runs. Reveal it immediately, same
+    // as every other message type, to keep the visible delay down to just
+    // the backend's own (now much shorter) typing-indicator window.
+    setRevealedIds((prev) => new Set(prev).add(next.id));
   }, [messages, revealedIds, historyReady]);
   const visibleMessages = messages.filter((m) => revealedIds.has(m.id));
   const isTyping = typingMessageId !== null;

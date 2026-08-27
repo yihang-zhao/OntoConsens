@@ -32,7 +32,11 @@ const SILENCE_TIMEOUT_MS = 2_000;
 // intervention message appears, once conditions 1-3 have all already been
 // confirmed true (see generateIntervention) -- purely a display delay, the
 // message itself is already generated and durably committed by this point.
-const INTERVENTION_TYPING_DELAY_MS = 1_000;
+// Kept short and non-zero (rather than removed outright) so the indicator
+// still gets one visible frame instead of being replaced by the real
+// message in the same tick -- minimal latency is the priority here, not a
+// naturalistic typing simulation.
+const INTERVENTION_TYPING_DELAY_MS = 250;
 
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
@@ -493,12 +497,17 @@ function formatChunksAsTranscript(
 //   and the summary always reflects the complete, current state of the
 //   discussion rather than an incremental delta.
 async function generateIntervention(projectId: number): Promise<void> {
-  const config = await db.query.projectModeratorTable.findFirst({
-    where: eq(projectModeratorTable.projectId, projectId),
-  });
+  // Config and the owner's API key are independent lookups -- run them
+  // together instead of one after another to shave a DB round trip off
+  // the latency between "silence threshold met" and the intervention
+  // actually being generated.
+  const [config, apiKey] = await Promise.all([
+    db.query.projectModeratorTable.findFirst({
+      where: eq(projectModeratorTable.projectId, projectId),
+    }),
+    getProjectOwnerApiKey(projectId),
+  ]);
   if (!config) return;
-
-  const apiKey = await getProjectOwnerApiKey(projectId);
   if (!apiKey) return;
 
   // lastSummarizedAt is a DB column (not in-memory), so this checkpoint
@@ -510,12 +519,43 @@ async function generateIntervention(projectId: number): Promise<void> {
     ? gt(moderatorTranscriptChunksTable.createdAt, config.lastSummarizedAt)
     : undefined;
 
-  const newChunks = await db.query.moderatorTranscriptChunksTable.findMany({
-    where: and(eq(moderatorTranscriptChunksTable.projectId, projectId), sinceClause),
-  });
+  // None of these five reads depend on each other -- they only need
+  // `config` (for the checkpoint clause) and `projectId`. Firing them
+  // together instead of sequentially is a straightforward latency win on
+  // every single intervention attempt.
+  const [newChunks, users, projectMembers, [classes, properties], lastPostedIntervention] = await Promise.all([
+    db.query.moderatorTranscriptChunksTable.findMany({
+      where: and(eq(moderatorTranscriptChunksTable.projectId, projectId), sinceClause),
+    }),
+    db.query.usersTable.findMany(),
+    db.query.projectMembersTable.findMany({
+      where: eq(projectMembersTable.projectId, projectId),
+    }),
+    Promise.all([
+      db.query.ontologyClassesTable.findMany({ where: eq(ontologyClassesTable.projectId, projectId) }),
+      db.query.propertiesTable.findMany({ where: eq(propertiesTable.projectId, projectId) }),
+    ]),
+    db
+      .select({
+        content: moderatorChatMessagesTable.content,
+        classId: moderatorChatMessagesTable.classId,
+        propertyId: moderatorChatMessagesTable.propertyId,
+        createdAt: moderatorChatMessagesTable.createdAt,
+      })
+      .from(moderatorChatMessagesTable)
+      .where(
+        and(
+          eq(moderatorChatMessagesTable.projectId, projectId),
+          eq(moderatorChatMessagesTable.type, "intervention"),
+          eq(moderatorChatMessagesTable.matched, true),
+        ),
+      )
+      .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+      .limit(1)
+      .then((rows) => rows[0]),
+  ]);
   if (newChunks.length === 0) return; // Silence with nothing new to say — nothing to summarize.
 
-  const users = await db.query.usersTable.findMany();
   const usernameById = new Map(users.map((u) => [u.id, u.username]));
 
   // Members commonly refer to each other by their assigned color instead of
@@ -523,9 +563,6 @@ async function generateIntervention(projectId: number): Promise<void> {
   // the color-legend usage in the Pass 2 extraction prompt below. Build the
   // username -> color-name mapping for THIS project specifically, since
   // colorSlot is per-membership, not global.
-  const projectMembers = await db.query.projectMembersTable.findMany({
-    where: eq(projectMembersTable.projectId, projectId),
-  });
   const colorNameByUsername = new Map<string, string>();
   for (const m of projectMembers) {
     const uname = usernameById.get(m.userId);
@@ -552,10 +589,6 @@ async function generateIntervention(projectId: number): Promise<void> {
   // intervention only ever fires after real accumulated speech followed by
   // silence (see noteSpeechActivity above), never from topic-detection
   // matching by itself.
-  const [classes, properties] = await Promise.all([
-    db.query.ontologyClassesTable.findMany({ where: eq(ontologyClassesTable.projectId, projectId) }),
-    db.query.propertiesTable.findMany({ where: eq(propertiesTable.projectId, projectId) }),
-  ]);
   const propertyById = new Map(properties.map((p) => [p.id, p]));
   const classLabelById = new Map(classes.map((c) => [c.id, c.label]));
   const catalog: CatalogEntry[] = properties
@@ -602,25 +635,7 @@ async function generateIntervention(projectId: number): Promise<void> {
   // checkpoint advanced without ever posting, e.g. a duplicate-content or
   // hasNothingToShow skip) -- never the raw pre-intervention history, and
   // never a same-topic guess from a round that itself never got shown to
-  // the group.
-  const [lastPostedIntervention] = await db
-    .select({
-      content: moderatorChatMessagesTable.content,
-      classId: moderatorChatMessagesTable.classId,
-      propertyId: moderatorChatMessagesTable.propertyId,
-      createdAt: moderatorChatMessagesTable.createdAt,
-    })
-    .from(moderatorChatMessagesTable)
-    .where(
-      and(
-        eq(moderatorChatMessagesTable.projectId, projectId),
-        eq(moderatorChatMessagesTable.type, "intervention"),
-        eq(moderatorChatMessagesTable.matched, true),
-      ),
-    )
-    .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
-    .limit(1);
-
+  // the group. (Fetched together with the other independent reads above.)
   const previousInterventionTopic = lastPostedIntervention
     ? catalog.find(
         (entry) => entry.classId === lastPostedIntervention.classId && entry.propertyId === lastPostedIntervention.propertyId,
