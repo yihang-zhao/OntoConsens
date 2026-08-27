@@ -260,7 +260,18 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         // of what was just said.
         if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset));
         lastResults = null;
-        restartTimer = setTimeout(start, RECOGNITION_RESTART_DELAY_MS);
+        // Restart IMMEDIATELY, not after an artificial delay. The browser
+        // stops delivering audio to this session the instant onend fires --
+        // that mic-capture gap is real and unavoidable (re-acquiring the
+        // recognizer takes the browser some inherent setup time on its own),
+        // but any extra delay WE add on top of that is pure lost listening
+        // time, and it's exactly what was swallowing the first word or two
+        // of whatever the user said right as they resumed talking. start()
+        // already falls back to a delayed retry via its own catch block if
+        // calling it this soon genuinely throws (the underlying session
+        // hasn't fully released yet), so trying immediately first can only
+        // help, never hurt.
+        start();
       };
       try {
         rec.start();

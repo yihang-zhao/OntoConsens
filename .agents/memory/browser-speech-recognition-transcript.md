@@ -24,3 +24,18 @@ finalized + interim text across those instance restarts in refs outside the
 recognizer, and only emit the "finalize into a permanent message" callback
 after a real silence timeout (or the mic being turned off), never on
 `onend`.
+
+**Restart gap drops the first word(s) of the next utterance:** the browser
+stops capturing audio the instant `onend` fires and only resumes once a new
+`SpeechRecognition` instance's `start()` actually takes effect; any extra
+artificial delay (e.g. a `setTimeout` before calling `start()` again) is pure
+additional lost-listening time stacked on top of that unavoidable gap, and
+shows up as "the first few words of every utterance aren't recognized" since
+`onend` fires at most speech pauses (i.e. utterance boundaries), not rarely.
+Call `start()` again immediately/synchronously inside `onend`; only fall back
+to a delayed retry from `start()`'s own catch block if the immediate call
+throws (session not fully released yet). Also add a stuck-recognizer
+watchdog (compare last recognized-word time against actual mic audio energy
+from a separate volume meter) to force-abort+restart if the recognizer goes
+quiet with no `onresult`/`onerror`/`onend` at all despite audible sound —
+otherwise transcription can silently stop forever with zero events firing.
