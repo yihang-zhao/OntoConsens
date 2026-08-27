@@ -61,31 +61,6 @@ const SILENCE_CHECK_INTERVAL_MS = 300;
 // does that; see lastSpeechAt below).
 const RECOGNITION_RESTART_DELAY_MS = 250;
 
-// Chrome (the only real-world implementation of this API) has a
-// long-standing bug where, after a pause of varying length, the recognizer
-// can silently stop delivering ANY results -- no onresult, no onerror, no
-// onend -- while otherwise looking like it's still running. Because nothing
-// fires, the existing onend-triggered restart above never kicks in, and the
-// user's next speech is simply never recognized until the mic is toggled
-// off and back on. This watchdog is the fix: it cross-checks the
-// recognizer's own activity against ACTUAL mic audio energy (measured
-// independently by the volume-metering effect below, via lastLoudAtRef) --
-// if there has clearly been audible sound very recently but the recognizer
-// hasn't produced a single result in far longer than that ever takes when
-// it's working, it's stuck, so it's force-aborted (which reliably fires
-// onend and hands off to the normal carry-forward restart path) rather than
-// waited on indefinitely. Genuine silence never trips this -- with no
-// audio energy, "no results" is just correctly recognizing nothing was
-// said.
-const RECOGNIZER_STUCK_AUDIO_GRACE_MS = 900;
-const RECOGNIZER_STUCK_NO_RESULT_MS = 1_800;
-const MIN_SESSION_AGE_BEFORE_FORCED_RESTART_MS = 1_000;
-// Raw (unscaled) RMS floor above which incoming audio counts as "someone is
-// plausibly making speech-level sound right now" for the watchdog above --
-// deliberately above typical room-noise/hiss RMS so it doesn't fire on
-// ambient noise alone, but well below what normal speech volume reaches.
-const SPEECH_ENERGY_RMS_THRESHOLD = 0.03;
-
 // Handles the two audio jobs the AI moderator needs, both driven off the
 // mic: (1) a continuous volume level, sent to everyone as a fallback
 // "someone is speaking" signal, and (2) live speech-to-text via the
@@ -99,14 +74,6 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
   onCaptionRef.current = onCaption;
   const onFinalizeRef = useRef(onFinalize);
   onFinalizeRef.current = onFinalize;
-
-  // Timestamp of the last audio sample loud enough to plausibly be speech,
-  // set by the volume-metering effect below and read by the speech
-  // recognizer's stuck-watchdog above -- shared via a ref (not effect
-  // dependencies) since the two effects run and re-run independently of
-  // each other, and this only ever needs to be read as of "right now", not
-  // reacted to.
-  const lastLoudAtRef = useRef(0);
 
   // Lets a caller (e.g. "turn the mic off" button) synchronously pull out
   // whatever's been recognized so far -- mid-utterance and all -- instead of
@@ -157,17 +124,6 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     let priorSessionsText = "";
     let lastSpeechAt = 0;
     let lastResults: any = null;
-    // When the CURRENT recognition session actually started -- used by the
-    // stuck-recognizer watchdog below to (a) give a freshly (re)started
-    // session a moment before judging it unresponsive, and (b) naturally
-    // rate-limit repeated forced restarts, since it's reset every time
-    // start() runs.
-    let sessionStartedAt = 0;
-    // Set the moment the watchdog force-aborts a session it believes is
-    // stuck, cleared again once a new session actually starts -- prevents
-    // the watchdog from calling abort() again on every tick while it waits
-    // for that abort to actually take effect and hand off to onend.
-    let forcedRestartPending = false;
     // Index into the CURRENT recognition session's `results` array from
     // which words belong to the utterance-in-progress. Advanced (not the
     // recognizer restarted) every time an utterance is finalized on silence
@@ -236,8 +192,6 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       // array from the browser's side -- the offset only ever makes sense
       // relative to the session it was measured against.
       resultsOffset = 0;
-      sessionStartedAt = Date.now();
-      forcedRestartPending = false;
       const rec = new Ctor();
       rec.continuous = true;
       rec.interimResults = true;
@@ -273,9 +227,8 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     start();
 
     silenceTimer = setInterval(() => {
-      const now = Date.now();
-
-      if (lastSpeechAt && now - lastSpeechAt >= SILENCE_FINALIZE_MS) {
+      if (!lastSpeechAt) return;
+      if (Date.now() - lastSpeechAt >= SILENCE_FINALIZE_MS) {
         lastSpeechAt = 0;
         finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset) : "");
         // The browser's own results array for this recognition session keeps
@@ -291,44 +244,6 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         // results array is simply ignored from now on.
         resultsOffset = lastResults ? lastResults.length : resultsOffset;
         lastResults = null;
-      }
-
-      // Stuck-recognizer watchdog (see RECOGNIZER_STUCK_* docs above): fires
-      // independently of the finalize check above, since a stuck recognizer
-      // can just as easily be discovered right after a finalize (lastSpeechAt
-      // reset to 0) as mid-utterance. "Last known activity" falls back to
-      // when this session started if it hasn't produced a single result yet.
-      if (!forcedRestartPending && recognition) {
-        const lastActivityAt = lastSpeechAt || sessionStartedAt;
-        const audioActiveRecently = now - lastLoudAtRef.current < RECOGNIZER_STUCK_AUDIO_GRACE_MS;
-        const sessionOldEnough = now - sessionStartedAt >= MIN_SESSION_AGE_BEFORE_FORCED_RESTART_MS;
-        const recognizerUnresponsive = now - lastActivityAt >= RECOGNIZER_STUCK_NO_RESULT_MS;
-        if (audioActiveRecently && sessionOldEnough && recognizerUnresponsive) {
-          forcedRestartPending = true;
-          const staleRecognition = recognition;
-          try {
-            staleRecognition.abort();
-          } catch {
-            // Already stopped -- the fallback timer below covers this too.
-          }
-          // Belt-and-suspenders: the whole reason this watchdog exists is
-          // that this exact recognizer can go quiet without firing ANY
-          // event, including possibly onend after an abort() call. If
-          // onend hasn't fired shortly after we asked it to stop, don't
-          // keep waiting on it -- tear the dead object down and start a
-          // fresh session directly.
-          setTimeout(() => {
-            if (!forcedRestartPending || stopped) return;
-            forcedRestartPending = false;
-            staleRecognition.onend = null;
-            staleRecognition.onerror = null;
-            staleRecognition.onresult = null;
-            if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset));
-            lastResults = null;
-            recognition = null;
-            start();
-          }, RECOGNITION_RESTART_DELAY_MS + 800);
-        }
       }
     }, SILENCE_CHECK_INTERVAL_MS);
 
@@ -377,11 +292,6 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       const rms = Math.sqrt(sumSquares / data.length);
 
       const now = Date.now();
-      // Ground truth for the speech-recognition effect's stuck-recognizer
-      // watchdog above: independent of whatever the recognizer itself is
-      // doing, this is measured straight off the mic, so it still reflects
-      // reality even in exactly the failure mode being guarded against.
-      if (rms > SPEECH_ENERGY_RMS_THRESHOLD) lastLoudAtRef.current = now;
       if (now - lastVolumeSentAt >= VOLUME_SEND_INTERVAL_MS) {
         lastVolumeSentAt = now;
         // Normal speech RMS is a small fraction of full scale — scale up so
