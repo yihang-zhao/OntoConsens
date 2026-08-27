@@ -76,7 +76,7 @@ router.put("/projects/:id/moderator", async (req, res) => {
   }
   if (!(await projectOwnerHasApiKey(projectId, project.ownerId))) {
     res.status(400).json({
-      error: "The project creator hasn't saved an OpenAI API key yet. Ask them to add one from the dashboard.",
+      error: "The project creator hasn't saved a Claude API key yet. Ask them to add one from the dashboard.",
     });
     return;
   }
@@ -154,7 +154,7 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
 // The client recognizes speech entirely in the member's own browser (Web
 // Speech API) and only calls this once an utterance is finalized (2s of
 // silence, or the mic being turned off) -- there is no server-side
-// transcription step and no OpenAI audio call involved here at all.
+// transcription step and no AI audio call involved here at all.
 router.post("/projects/:id/moderator/transcript", async (req, res) => {
   const userId = req.userId!;
   const projectId = Number(req.params.id);

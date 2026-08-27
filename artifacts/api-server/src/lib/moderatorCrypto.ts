@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
-// The moderator feature lets a project creator paste their own OpenAI API
-// key, scoped to that project only. It's stored encrypted at rest rather
+// The moderator feature lets a project creator paste their own Claude
+// (Anthropic) API key, scoped to that project only. It's stored encrypted at rest rather
 // than in plaintext, and is never sent back to any client once saved.
 //
 // Rather than provisioning a brand-new secret just for this, the encryption

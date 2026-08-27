@@ -29,7 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check, KeyRound, Loader2 } from "lucide-react";
 
 const apiKeySchema = z.object({
-  apiKey: z.string().min(1, "An OpenAI API key is required"),
+  apiKey: z.string().min(1, "A Claude API key is required"),
 });
 
 const createSchema = z.object({
@@ -374,7 +374,7 @@ export default function Dashboard() {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Update your OpenAI API key</DialogTitle>
+                  <DialogTitle>Update your Claude API key</DialogTitle>
                 </DialogHeader>
                 <Form {...apiKeyForm}>
                   <form onSubmit={apiKeyForm.handleSubmit(onApiKeySubmit)} className="space-y-4">
@@ -384,7 +384,7 @@ export default function Dashboard() {
                       render={({ field }) => (
                         <FormItem>
                           <FormControl>
-                            <Input type="password" placeholder="sk-..." autoComplete="off" {...field} />
+                            <Input type="password" placeholder="sk-ant-..." autoComplete="off" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>

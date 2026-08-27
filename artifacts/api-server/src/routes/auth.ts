@@ -13,8 +13,8 @@ import { encryptApiKey } from "../lib/moderatorCrypto";
 
 const router: IRouter = Router();
 
-function hasApiKey(user: { openaiApiKeyEncrypted: string | null }): boolean {
-  return Boolean(user.openaiApiKeyEncrypted);
+function hasApiKey(user: { claudeApiKeyEncrypted: string | null }): boolean {
+  return Boolean(user.claudeApiKeyEncrypted);
 }
 
 router.post("/auth/register", async (req, res) => {
@@ -26,7 +26,7 @@ router.post("/auth/register", async (req, res) => {
   const { username, password } = parsed.data;
   const apiKey = parsed.data.apiKey.trim();
   if (!apiKey) {
-    res.status(400).json({ error: "An OpenAI API key is required" });
+    res.status(400).json({ error: "A Claude API key is required" });
     return;
   }
 
@@ -45,9 +45,9 @@ router.post("/auth/register", async (req, res) => {
     .values({
       username,
       passwordHash,
-      openaiApiKeyEncrypted: encrypted.encryptedApiKey,
-      openaiApiKeyIv: encrypted.apiKeyIv,
-      openaiApiKeyAuthTag: encrypted.apiKeyAuthTag,
+      claudeApiKeyEncrypted: encrypted.encryptedApiKey,
+      claudeApiKeyIv: encrypted.apiKeyIv,
+      claudeApiKeyAuthTag: encrypted.apiKeyAuthTag,
     })
     .returning();
 
@@ -99,7 +99,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
   res.json({ id: user.id, username: user.username, apiKeyConfigured: hasApiKey(user) });
 });
 
-// Lets a signed-in user view/replace the OpenAI API key on their own
+// Lets a signed-in user view/replace the Claude API key on their own
 // account. Every project they create uses this key for its AI moderator, so
 // this is the one place that key is ever entered after registration.
 router.put("/auth/api-key", requireAuth, async (req, res) => {
@@ -110,7 +110,7 @@ router.put("/auth/api-key", requireAuth, async (req, res) => {
   }
   const apiKey = parsed.data.apiKey.trim();
   if (!apiKey) {
-    res.status(400).json({ error: "An OpenAI API key is required" });
+    res.status(400).json({ error: "A Claude API key is required" });
     return;
   }
 
@@ -118,9 +118,9 @@ router.put("/auth/api-key", requireAuth, async (req, res) => {
   const [user] = await db
     .update(usersTable)
     .set({
-      openaiApiKeyEncrypted: encrypted.encryptedApiKey,
-      openaiApiKeyIv: encrypted.apiKeyIv,
-      openaiApiKeyAuthTag: encrypted.apiKeyAuthTag,
+      claudeApiKeyEncrypted: encrypted.encryptedApiKey,
+      claudeApiKeyIv: encrypted.apiKeyIv,
+      claudeApiKeyAuthTag: encrypted.apiKeyAuthTag,
     })
     .where(eq(usersTable.id, req.userId!))
     .returning();
