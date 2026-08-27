@@ -47,6 +47,16 @@ export function generateActivationId(): string {
   return crypto.randomUUID();
 }
 
+// Fixed per-slot color names, in the same order as the --member-N hues
+// defined in artifacts/onto-consensus/src/index.css (0 = Blue, 1 = Purple,
+// 2 = Yellow) -- keep these two lists in sync if a color slot's hue ever
+// changes, since members refer to each other by these color names in chat
+// (see generateIntervention's color-legend usage below).
+const COLOR_SLOT_NAMES = ["Blue", "Purple", "Yellow"];
+function colorNameForSlot(slot: number): string {
+  return COLOR_SLOT_NAMES[slot % COLOR_SLOT_NAMES.length] ?? COLOR_SLOT_NAMES[0]!;
+}
+
 // One silence timer per project, shared across every active participant --
 // the AI moderator produces one running discussion per project (not one per
 // person), so "60 seconds since the last chunk from ANYONE currently on" is
@@ -508,6 +518,24 @@ async function generateIntervention(projectId: number): Promise<void> {
   const users = await db.query.usersTable.findMany();
   const usernameById = new Map(users.map((u) => [u.id, u.username]));
 
+  // Members commonly refer to each other by their assigned color instead of
+  // by name or by restating an opinion (e.g. "I agree with Blue") -- see
+  // the color-legend usage in the Pass 2 extraction prompt below. Build the
+  // username -> color-name mapping for THIS project specifically, since
+  // colorSlot is per-membership, not global.
+  const projectMembers = await db.query.projectMembersTable.findMany({
+    where: eq(projectMembersTable.projectId, projectId),
+  });
+  const colorNameByUsername = new Map<string, string>();
+  for (const m of projectMembers) {
+    const uname = usernameById.get(m.userId);
+    if (uname) colorNameByUsername.set(uname, colorNameForSlot(m.colorSlot));
+  }
+  const colorLegendText =
+    colorNameByUsername.size > 0
+      ? Array.from(colorNameByUsername.entries()).map(([name, color]) => `${name} (${color})`).join(", ")
+      : "(no members yet)";
+
   // The model must only ever report a class/property that genuinely exists
   // in THIS project's shared workspace right now, using the exact same
   // spelling shown here -- never invent or paraphrase a name. This catalog
@@ -792,6 +820,21 @@ async function generateIntervention(projectId: number): Promise<void> {
           "a counterexample). The bar is a genuine contradiction or a stated shift somewhere in the transcript -- " +
           "simply not repeating the point again, or staying quiet about it, is still NOT enough on its own and " +
           "must NOT put them in \"remove\". " +
+          "A member often expresses agreement or disagreement by referring to ANOTHER member -- by name, or by " +
+          "that member's assigned COLOR -- instead of restating the opinion itself (e.g. \"I agree with Blue\", " +
+          "\"disagree with what Alice said\", \"the purple one has a point\", \"same as him\" replying to a " +
+          "colored/named mention). Each project member has exactly one fixed color; resolve any such name/color " +
+          `reference using this legend: ${colorLegendText}. Once resolved to a specific member, find which of ` +
+          "the point(s) that SPECIFIC member is currently credited on (from the existing lists above, or newly " +
+          "raised earlier in this same batch of messages) is being reacted to -- if they have only one, it's " +
+          "that one; if they have several, use the surrounding context (what was just being discussed) to tell " +
+          "which one, and if it's genuinely ambiguous which of their points is meant, do not guess -- treat it " +
+          "the same as any other ambiguous remark (see below) and leave things as they were. Once resolved, " +
+          "treat it exactly like directly restating that point: add the responding member to \"by\" if they now " +
+          "agree with it, or to \"remove\" (naming the ORIGINAL member, not the responder) only if the responder " +
+          "is the original author disagreeing with their own past point -- agreeing/disagreeing FROM one member " +
+          "ABOUT another member's point never removes the original author, it only adds or withholds the " +
+          "responder's own name in \"by\". " +
           "The overall goal across rounds is MAXIMUM STABILITY: this exact list, in this exact wording, is what " +
           "was shown to the group last time, and it should come back looking as close to identical as possible " +
           "this time, changing only where the transcript has genuinely, unambiguously moved. When a remark is " +
