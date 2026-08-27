@@ -541,6 +541,13 @@ async function generateIntervention(projectId: number): Promise<void> {
         classId: moderatorChatMessagesTable.classId,
         propertyId: moderatorChatMessagesTable.propertyId,
         createdAt: moderatorChatMessagesTable.createdAt,
+        // Pulled along with the rest of this row (not just content/ids) so
+        // the combined topic+extraction call below can reuse it directly as
+        // "the existing points" when the round turns out to be a plain
+        // continuation -- see isContinuation below -- without a second
+        // round trip to re-fetch the exact same row by classId/propertyId.
+        examples: moderatorChatMessagesTable.examples,
+        counterexamples: moderatorChatMessagesTable.counterexamples,
       })
       .from(moderatorChatMessagesTable)
       .where(
@@ -655,60 +662,254 @@ async function generateIntervention(projectId: number): Promise<void> {
     : newChunks;
   const sinceLastInterventionTranscript = formatChunksAsTranscript(sinceLastInterventionChunks, usernameById);
 
-  try {
-    // --- Pass 1: what is the group discussing right now? ---
-    const topicResult = await callOpenAiJson(
-      apiKey,
-      config.model,
-      "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
-        "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
-        "retained, removed, or how it should be defined). " +
-        "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
-        "near-homophone transcription errors -- words or names that sound similar to what was actually said but " +
-        "were transcribed wrong (e.g. a class or property name mis-heard as an ordinary word or a different " +
-        "name that sounds alike, or small mangled phrasing around it). Do not take the literal text at face " +
-        "value when it doesn't quite make sense; sound out the words and infer the speaker's actual intended " +
-        "meaning, matching it against the real catalog names below by sound and context, not just exact " +
-        "spelling. " +
-        "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
-        catalogText +
-        (previousInterventionTopic
-          ? `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, about ` +
-            `${previousInterventionTopic.className}.${previousInterventionTopic.propertyName}, followed by every ` +
-            "user message exchanged since then. Base your answer ONLY on these two things -- not on any earlier " +
-            "history beyond what that previous intervention message itself already states. Conversation commonly " +
-            "continues about the same property without re-stating its name -- via pronouns (\"it\", \"that\"), " +
-            "direct replies/agreement/disagreement/reactions, or follow-up refinements, even across several more " +
-            "messages. If the messages since that intervention read as a natural continuation of the same " +
-            `discussion, report that SAME className/propertyName (${previousInterventionTopic.className}.` +
-            `${previousInterventionTopic.propertyName}) again even though it isn't explicitly named. Only report ` +
-            "a DIFFERENT property if a message clearly and specifically names or unambiguously describes a " +
-            "different one. Only report null/null if the messages have moved on to something unrelated to any " +
-            "listed property entirely (small talk, a topic outside the catalog, etc)."
-          : "\n\nThere is no previous intervention yet, so below is simply the transcript of what's been said so " +
-            "far. Only report a className/propertyName if a message clearly names or unambiguously describes " +
-            "one from the list; report null/null if nothing in the workspace catalog is being discussed.") +
-        "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
-        "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
-        "list. " +
-        'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-        '{"className": string | null, "propertyName": string | null}.',
-      lastPostedIntervention
-        ? `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention.content}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`
-        : sinceLastInterventionTranscript,
+  // The bulk of the extraction rules (merge/stability/color-reference logic)
+  // is identical whether it runs as its own standalone call (a genuine topic
+  // switch, or the very first intervention ever) or folded into the single
+  // combined call below (the common case: plain continuation of the last
+  // posted topic) -- shared here so both paths stay in sync instead of two
+  // copies silently drifting apart.
+  function extractionRules(className: string, propertyName: string): string {
+    return (
+      `IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain ` +
+      "near-homophone transcription errors -- words, names, or short phrases mis-heard as something that " +
+      "sounds similar but isn't what was actually said. When a message doesn't quite make sense as written, " +
+      "don't take it at face value -- sound it out and interpret the speaker's actual intended meaning from " +
+      "context before deciding whether it's an example, a counterexample, an agreement, or a disagreement. " +
+      `Extract every concrete EXAMPLE given in support of keeping/adding ${className}.${propertyName}, and every ` +
+      "COUNTEREXAMPLE or objection given against it -- include something even if it was only mentioned once and " +
+      "never repeated, but leave it out if someone explicitly retracted or contradicted it. For each one, note " +
+      "who said it. " +
+      "If the SAME underlying point was made more than once -- whether by the same person repeating " +
+      "themselves, or by different people independently making an equivalent point -- merge it into a " +
+      "single entry rather than listing it twice, and list every person who made that point (in the order " +
+      "they first raised it, no duplicate names even if someone repeated themselves). Only merge points " +
+      "that are genuinely the same underlying reason; keep distinct reasons as separate entries even if " +
+      "they're about the same property.\n\n" +
+      "These points were ALREADY ESTABLISHED in a previous round -- you MUST treat their wording as frozen, " +
+      "and each current supporter's agreement is assumed to STILL STAND unless the transcript shows " +
+      "otherwise:\n" +
+      "EXISTING_EXAMPLES_PLACEHOLDER\n\n" +
+      "EXISTING_COUNTEREXAMPLES_PLACEHOLDER\n\n" +
+      "For each one: if the transcript still supports it (repeated or not), return it with its EXACT SAME id " +
+      "and EXACT SAME text (copy the text verbatim, do not rephrase it even slightly). ONLY change an " +
+      "existing id's text if a member EXPLICITLY asks to reword, correct, or replace that specific existing " +
+      "point in the transcript (e.g. \"can we change that example to say X instead\") -- in that case set " +
+      "\"revise\": true and put the new wording in \"text\". Never reword an existing point just because you " +
+      "found a slightly different way to phrase it; if you're not certain a member explicitly asked for a " +
+      "reword, leave the text untouched. " +
+      "List in \"by\" any NEW people (not already credited above) who now also back this point -- including " +
+      "someone who never names the point directly but clearly implies backing it: stating a preference, " +
+      "saying what seems better to them, describing their thinking shifting that way, or proposing something " +
+      "that only makes sense if this point holds. " +
+      "List in \"remove\" any of the CURRENTLY credited people (from the list above) who no longer stand " +
+      "behind this specific point. Do NOT require explicit retraction language -- infer this from ANY clear " +
+      "signal that their stance has moved away from the point, phrased however they like: stating a " +
+      "preference for the opposite side, saying an alternative now seems better to them, describing a " +
+      "change of mind in general terms (\"actually I don't think that's true anymore\", \"I take that back\", " +
+      "\"I'm leaning the other way now\"), or proposing/backing something that directly contradicts what " +
+      "this point said -- e.g. someone credited on a counterexample for removing this property later argues " +
+      "to keep it, or backs an example that only makes sense if the property stays; that contradicts their " +
+      "earlier counterexample, so remove them from it (and the same the other way around, from an example to " +
+      "a counterexample). The bar is a genuine contradiction or a stated shift somewhere in the transcript -- " +
+      "simply not repeating the point again, or staying quiet about it, is still NOT enough on its own and " +
+      "must NOT put them in \"remove\". " +
+      "A member often expresses agreement or disagreement by referring to ANOTHER member -- by name, or by " +
+      "that member's assigned COLOR -- instead of restating the opinion itself (e.g. \"I agree with Blue\", " +
+      "\"disagree with what Alice said\", \"the purple one has a point\", \"same as him\" replying to a " +
+      "colored/named mention). Each project member has exactly one fixed color; resolve any such name/color " +
+      `reference using this legend: ${colorLegendText}. Once resolved to a specific member, find which of ` +
+      "the point(s) that SPECIFIC member is currently credited on (from the existing lists above, or newly " +
+      "raised earlier in this same batch of messages) is being reacted to -- if they have only one, it's " +
+      "that one; if they have several, use the surrounding context (what was just being discussed) to tell " +
+      "which one, and if it's genuinely ambiguous which of their points is meant, do not guess -- treat it " +
+      "the same as any other ambiguous remark (see below) and leave things as they were. Once resolved, " +
+      "treat it exactly like directly restating that point: add the responding member to \"by\" if they now " +
+      "agree with it, or to \"remove\" (naming the ORIGINAL member, not the responder) only if the responder " +
+      "is the original author disagreeing with their own past point -- agreeing/disagreeing FROM one member " +
+      "ABOUT another member's point never removes the original author, it only adds or withholds the " +
+      "responder's own name in \"by\". " +
+      "The overall goal across rounds is MAXIMUM STABILITY: this exact list, in this exact wording, is what " +
+      "was shown to the group last time, and it should come back looking as close to identical as possible " +
+      "this time, changing only where the transcript has genuinely, unambiguously moved. When a remark is " +
+      "vague or general -- a bare \"I agree\", \"that's right\", \"I'm satisfied now\", or similar -- and it " +
+      "is not clear from context which SPECIFIC existing point (by id) it endorses or contradicts, that " +
+      "ambiguity is NOT evidence of anything: do not add the speaker to \"by\" and do not put them in " +
+      "\"remove\" for ANY existing point on the strength of it alone. Whenever genuinely unsure whether " +
+      "something clears the bar for \"remove\" or \"revise\", resolve the uncertainty by leaving the " +
+      "existing point exactly as it was credited before, rather than changing it. " +
+      "Any genuinely new point not covered by an existing id above should be returned with NO \"id\" field -- " +
+      "BUT merge fairly liberally: before treating something as a brand-new point, check whether it's " +
+      "broadly the same underlying idea as one of the existing points listed above, just phrased " +
+      "differently (not necessarily word-for-word identical, close enough in meaning is enough). If so, " +
+      "don't create a new point -- instead set \"mergeWithId\" to that existing point's id and put the new " +
+      "speaker(s) in \"by\"; the merged-in wording is discarded and the existing point's frozen text wins. " +
+      "This also applies to two of the EXISTING points above if you notice they're actually the same " +
+      "underlying idea (this can happen from earlier rounds before this rule) -- return the newer/less-" +
+      "supported one with its own \"id\" and \"mergeWithId\" set to the other's id, and its supporters will " +
+      "be folded into that other point automatically; when merging two existing points this way, prefer " +
+      "keeping (as the mergeWithId target) whichever one is more clearly and completely worded. " +
+      "Do NOT copy the speaker's original sentence verbatim for a brand-new point -- condense it down to its " +
+      "core point in your own words, as short and punchy as possible (aim for well under 10 words, phrased as " +
+      "a plain statement, no filler like \"they said\" or \"because\"). "
     );
+  }
 
-    const normalize = (s: string) => s.trim().toLowerCase();
-    const rawClassName = typeof topicResult?.className === "string" ? topicResult.className : null;
-    const rawPropertyName = typeof topicResult?.propertyName === "string" ? topicResult.propertyName : null;
-    matchedEntry =
-      rawClassName && rawPropertyName
-        ? catalog.find(
-            (entry) =>
-              normalize(entry.className) === normalize(rawClassName) &&
-              normalize(entry.propertyName) === normalize(rawPropertyName),
-          )
-        : undefined;
+  interface TransientPoint {
+    id: number;
+    text: string;
+    by: string[];
+  }
+  const toTransientPoints = (entries: ModeratorInterventionEntry[] | null): TransientPoint[] =>
+    (entries ?? []).map((e, i) => ({ id: i + 1, text: e.text, by: e.by }));
+  const describeExisting = (points: TransientPoint[]) =>
+    points.length === 0
+      ? "(none yet)"
+      : points.map((p) => `- id ${p.id}: "${p.text}" (currently credited to: ${p.by.join(", ") || "no one"})`).join("\n");
+  const fillExtractionRules = (className: string, propertyName: string, existing: TransientPoint[], existingCounter: TransientPoint[]) =>
+    extractionRules(className, propertyName)
+      .replace("EXISTING_EXAMPLES_PLACEHOLDER", `Examples:\n${describeExisting(existing)}`)
+      .replace("EXISTING_COUNTEREXAMPLES_PLACEHOLDER", `Counterexamples:\n${describeExisting(existingCounter)}`);
+
+  const normalize = (s: string) => s.trim().toLowerCase();
+  const resolveMatch = (rawClassName: string | null, rawPropertyName: string | null) =>
+    rawClassName && rawPropertyName
+      ? catalog.find(
+          (entry) =>
+            normalize(entry.className) === normalize(rawClassName) &&
+            normalize(entry.propertyName) === normalize(rawPropertyName),
+        )
+      : undefined;
+
+  // Populated only when the single combined call below both (a) confirms
+  // the topic is a plain continuation of previousInterventionTopic and (b)
+  // performed the extraction inline -- letting the matched branch skip an
+  // entire second OpenAI round trip in that (by far most common) case,
+  // which is the whole point of combining the two calls together here.
+  let inlineExtraction: { examples: unknown[]; counterexamples: unknown[] } | null = null;
+  let existingExamplePoints: TransientPoint[] = [];
+  let existingCounterexamplePoints: TransientPoint[] = [];
+
+  try {
+    let rawClassName: string | null;
+    let rawPropertyName: string | null;
+
+    if (previousInterventionTopic && lastPostedIntervention) {
+      // --- Combined pass: decide the topic AND, if it's a continuation of
+      // the same property, extract the update -- both from ONE model call.
+      // This is safe specifically because the continuation case needs no
+      // extra data beyond what's already in hand: the previous topic's own
+      // examples/counterexamples (from lastPostedIntervention, fetched
+      // above) ARE this property's "existing points", and the transcript
+      // since that same message IS the extraction delta -- there is
+      // nothing left to fetch before asking the model to do both jobs at
+      // once. A genuine topic switch (or a first-ever intervention) can't
+      // be combined this way, since the OTHER property's existing points
+      // haven't been fetched -- those fall back to the separate two-call
+      // path below, exactly as before.
+      const priorExamples = toTransientPoints(lastPostedIntervention.examples);
+      const priorCounterexamples = toTransientPoints(lastPostedIntervention.counterexamples);
+      const combined = await callOpenAiJson(
+        apiKey,
+        config.model,
+        "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
+          "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
+          "retained, removed, or how it should be defined). " +
+          "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
+          "near-homophone transcription errors -- words or names that sound similar to what was actually said but " +
+          "were transcribed wrong (e.g. a class or property name mis-heard as an ordinary word or a different " +
+          "name that sounds alike, or small mangled phrasing around it). Do not take the literal text at face " +
+          "value when it doesn't quite make sense; sound out the words and infer the speaker's actual intended " +
+          "meaning, matching it against the real catalog names below by sound and context, not just exact " +
+          "spelling. " +
+          "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
+          catalogText +
+          `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, about ` +
+          `${previousInterventionTopic.className}.${previousInterventionTopic.propertyName}, followed by every ` +
+          "user message exchanged since then. Base your answer ONLY on these two things -- not on any earlier " +
+          "history beyond what that previous intervention message itself already states. Conversation commonly " +
+          "continues about the same property without re-stating its name -- via pronouns (\"it\", \"that\"), " +
+          "direct replies/agreement/disagreement/reactions, or follow-up refinements, even across several more " +
+          "messages. If the messages since that intervention read as a natural continuation of the same " +
+          `discussion, report that SAME className/propertyName (${previousInterventionTopic.className}.` +
+          `${previousInterventionTopic.propertyName}) again even though it isn't explicitly named. Only report ` +
+          "a DIFFERENT property if a message clearly and specifically names or unambiguously describes a " +
+          "different one. Only report null/null if the messages have moved on to something unrelated to any " +
+          "listed property entirely (small talk, a topic outside the catalog, etc). " +
+          "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
+          "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
+          "list. " +
+          `\n\nSECOND, ONLY IF your className/propertyName answer above is EXACTLY ` +
+          `${previousInterventionTopic.className}.${previousInterventionTopic.propertyName} (i.e. a plain ` +
+          "continuation, not a switch to a different property and not null/null): also perform this extraction " +
+          "update, using the exact same MESSAGES SINCE THEN transcript above as the source, and fill the " +
+          "\"examples\"/\"counterexamples\" fields of your response accordingly. If your className/propertyName " +
+          "answer is anything else (a different property, or null/null), leave \"examples\" and " +
+          "\"counterexamples\" as empty arrays -- do not attempt this extraction for a property whose " +
+          "established points you have not been shown.\n\n" +
+          fillExtractionRules(
+            previousInterventionTopic.className,
+            previousInterventionTopic.propertyName,
+            priorExamples,
+            priorCounterexamples,
+          ) +
+          'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+          '{"className": string | null, "propertyName": string | null, ' +
+          '"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
+          '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
+          "Use the exact usernames as they appear as speaker labels in the transcript.",
+        `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention.content}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`,
+      );
+
+      rawClassName = typeof combined?.className === "string" ? combined.className : null;
+      rawPropertyName = typeof combined?.propertyName === "string" ? combined.propertyName : null;
+
+      const isConfirmedContinuation =
+        rawClassName !== null &&
+        rawPropertyName !== null &&
+        normalize(rawClassName) === normalize(previousInterventionTopic.className) &&
+        normalize(rawPropertyName) === normalize(previousInterventionTopic.propertyName);
+      if (isConfirmedContinuation) {
+        inlineExtraction = {
+          examples: Array.isArray(combined?.examples) ? combined.examples : [],
+          counterexamples: Array.isArray(combined?.counterexamples) ? combined.counterexamples : [],
+        };
+        existingExamplePoints = priorExamples;
+        existingCounterexamplePoints = priorCounterexamples;
+      }
+    } else {
+      // --- Pass 1 only: no previous intervention to anchor continuity on
+      // (this project's very first one), so there's nothing to combine
+      // extraction with yet -- decide the topic alone, exactly as before.
+      const topicResult = await callOpenAiJson(
+        apiKey,
+        config.model,
+        "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
+          "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
+          "retained, removed, or how it should be defined). " +
+          "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
+          "near-homophone transcription errors -- words or names that sound similar to what was actually said but " +
+          "were transcribed wrong (e.g. a class or property name mis-heard as an ordinary word or a different " +
+          "name that sounds alike, or small mangled phrasing around it). Do not take the literal text at face " +
+          "value when it doesn't quite make sense; sound out the words and infer the speaker's actual intended " +
+          "meaning, matching it against the real catalog names below by sound and context, not just exact " +
+          "spelling. " +
+          "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
+          catalogText +
+          "\n\nThere is no previous intervention yet, so below is simply the transcript of what's been said so " +
+          "far. Only report a className/propertyName if a message clearly names or unambiguously describes " +
+          "one from the list; report null/null if nothing in the workspace catalog is being discussed." +
+          "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
+          "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
+          "list. " +
+          'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+          '{"className": string | null, "propertyName": string | null}.',
+        sinceLastInterventionTranscript,
+      );
+      rawClassName = typeof topicResult?.className === "string" ? topicResult.className : null;
+      rawPropertyName = typeof topicResult?.propertyName === "string" ? topicResult.propertyName : null;
+    }
+
+    matchedEntry = resolveMatch(rawClassName, rawPropertyName);
     matched = matchedEntry !== undefined;
 
     if (matched && matchedEntry) {
@@ -731,167 +932,85 @@ async function generateIntervention(projectId: number): Promise<void> {
       }
 
       // --- Pass 2: update from the last intervention message + what's new. ---
-      // By design this uses ONLY two sources, nothing else: the actual
-      // content of the last intervention message this moderator posted for
-      // this specific class/property (its established, group-visible
-      // record of where things stood), and the transcript of user messages
-      // exchanged since that message. It deliberately does NOT re-read the
-      // property's entire speech history from the start -- the previous
-      // intervention message already IS the durable summary of everything
-      // before it, so re-scanning all of that raw history again would be
-      // redundant and would reopen the door to re-deriving slightly
-      // different wording/attributions each round purely from re-reading
-      // the same old lines (see the "MAXIMUM STABILITY" instruction below).
-      const [previousPropertyIntervention] = await db
-        .select({
-          content: moderatorChatMessagesTable.content,
-          examples: moderatorChatMessagesTable.examples,
-          counterexamples: moderatorChatMessagesTable.counterexamples,
-          createdAt: moderatorChatMessagesTable.createdAt,
-        })
-        .from(moderatorChatMessagesTable)
-        .where(
-          and(
-            eq(moderatorChatMessagesTable.projectId, projectId),
-            eq(moderatorChatMessagesTable.type, "intervention"),
-            eq(moderatorChatMessagesTable.matched, true),
-            eq(moderatorChatMessagesTable.classId, classId),
-            eq(moderatorChatMessagesTable.propertyId, propertyId),
+      // Skipped ENTIRELY when the combined call above already confirmed
+      // this is a plain continuation and performed the extraction inline
+      // (inlineExtraction set) -- that's the common case and the whole
+      // reason for combining the two calls above. This separate call only
+      // still runs for a genuine topic switch (a DIFFERENT matched property
+      // than previousInterventionTopic) or this project's first-ever
+      // intervention, where the target property's own existing points
+      // haven't been fetched yet. By design it uses ONLY two sources,
+      // nothing else: the actual content of the last intervention message
+      // this moderator posted for this specific class/property (its
+      // established, group-visible record of where things stood), and the
+      // transcript of user messages exchanged since that message. It
+      // deliberately does NOT re-read the property's entire speech history
+      // from the start -- the previous intervention message already IS the
+      // durable summary of everything before it, so re-scanning all of that
+      // raw history again would be redundant and would reopen the door to
+      // re-deriving slightly different wording/attributions each round
+      // purely from re-reading the same old lines (see the "MAXIMUM
+      // STABILITY" instruction above).
+      let extraction: { examples: unknown[]; counterexamples: unknown[] };
+      if (inlineExtraction) {
+        extraction = inlineExtraction;
+      } else {
+        const [previousPropertyIntervention] = await db
+          .select({
+            content: moderatorChatMessagesTable.content,
+            examples: moderatorChatMessagesTable.examples,
+            counterexamples: moderatorChatMessagesTable.counterexamples,
+            createdAt: moderatorChatMessagesTable.createdAt,
+          })
+          .from(moderatorChatMessagesTable)
+          .where(
+            and(
+              eq(moderatorChatMessagesTable.projectId, projectId),
+              eq(moderatorChatMessagesTable.type, "intervention"),
+              eq(moderatorChatMessagesTable.matched, true),
+              eq(moderatorChatMessagesTable.classId, classId),
+              eq(moderatorChatMessagesTable.propertyId, propertyId),
+            ),
+          )
+          .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+          .limit(1);
+
+        // "Messages exchanged since that last intervention" -- if this is
+        // the very first intervention for this property, that's every
+        // chunk ever tagged to it (there's no previous message to have
+        // already covered any of them).
+        const deltaChunks = await db.query.moderatorTranscriptChunksTable.findMany({
+          where: and(
+            eq(moderatorTranscriptChunksTable.projectId, projectId),
+            eq(moderatorTranscriptChunksTable.classId, classId),
+            eq(moderatorTranscriptChunksTable.propertyId, propertyId),
+            previousPropertyIntervention
+              ? gt(moderatorTranscriptChunksTable.createdAt, previousPropertyIntervention.createdAt)
+              : undefined,
           ),
-        )
-        .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
-        .limit(1);
+        });
+        const deltaTranscript = formatChunksAsTranscript(deltaChunks, usernameById);
 
-      // "Messages exchanged since that last intervention" -- if this is the
-      // very first intervention for this property, that's every chunk ever
-      // tagged to it (there's no previous message to have already covered
-      // any of them).
-      const deltaChunks = await db.query.moderatorTranscriptChunksTable.findMany({
-        where: and(
-          eq(moderatorTranscriptChunksTable.projectId, projectId),
-          eq(moderatorTranscriptChunksTable.classId, classId),
-          eq(moderatorTranscriptChunksTable.propertyId, propertyId),
-          previousPropertyIntervention
-            ? gt(moderatorTranscriptChunksTable.createdAt, previousPropertyIntervention.createdAt)
-            : undefined,
-        ),
-      });
-      const deltaTranscript = formatChunksAsTranscript(deltaChunks, usernameById);
+        existingExamplePoints = toTransientPoints(previousPropertyIntervention?.examples ?? null);
+        existingCounterexamplePoints = toTransientPoints(previousPropertyIntervention?.counterexamples ?? null);
 
-      // Transient, this-round-only ids (just the array position) assigned
-      // to whatever examples/counterexamples the previous intervention
-      // message actually showed -- there's no separate persisted point
-      // store anymore, so these ids only need to be stable within this one
-      // prompt/response round-trip, not across rounds.
-      interface TransientPoint {
-        id: number;
-        text: string;
-        by: string[];
+        extraction = await callOpenAiJson(
+          apiKey,
+          config.model,
+          `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
+            "Below is the PREVIOUS INTERVENTION MESSAGE you already sent the group about this property (if any), " +
+            "followed by every user message exchanged SINCE that message. Base your answer ONLY on these two " +
+            "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
+            "message itself already states.\n\n" +
+            fillExtractionRules(className, propertyName, existingExamplePoints, existingCounterexamplePoints) +
+            'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+            '{"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
+            '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
+            "Use the exact usernames as they appear as speaker labels in the transcript.",
+          `PREVIOUS INTERVENTION MESSAGE:\n${previousPropertyIntervention?.content ?? "(none yet -- this is the first intervention for this property)"}` +
+            `\n\nMESSAGES SINCE THEN:\n${deltaTranscript || "(none)"}`,
+        );
       }
-      const toTransientPoints = (entries: ModeratorInterventionEntry[] | null): TransientPoint[] =>
-        (entries ?? []).map((e, i) => ({ id: i + 1, text: e.text, by: e.by }));
-      const existingExamplePoints = toTransientPoints(previousPropertyIntervention?.examples ?? null);
-      const existingCounterexamplePoints = toTransientPoints(previousPropertyIntervention?.counterexamples ?? null);
-      const describeExisting = (points: TransientPoint[]) =>
-        points.length === 0
-          ? "(none yet)"
-          : points.map((p) => `- id ${p.id}: "${p.text}" (currently credited to: ${p.by.join(", ") || "no one"})`).join("\n");
-
-      const extraction = await callOpenAiJson(
-        apiKey,
-        config.model,
-        `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
-          "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
-          "near-homophone transcription errors -- words, names, or short phrases mis-heard as something that " +
-          "sounds similar but isn't what was actually said. When a message doesn't quite make sense as written, " +
-          "don't take it at face value -- sound it out and interpret the speaker's actual intended meaning from " +
-          "context before deciding whether it's an example, a counterexample, an agreement, or a disagreement. " +
-          "Below is the PREVIOUS INTERVENTION MESSAGE you already sent the group about this property (if any), " +
-          "followed by every user message exchanged SINCE that message. Base your answer ONLY on these two " +
-          "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
-          "message itself already states. Extract every concrete EXAMPLE given in support of keeping/adding this " +
-          "property, and every COUNTEREXAMPLE or objection given against it -- include something even if it was " +
-          "only mentioned once and never repeated, but leave it out if someone explicitly retracted or " +
-          "contradicted it. For each one, note who said it. " +
-          "If the SAME underlying point was made more than once -- whether by the same person repeating " +
-          "themselves, or by different people independently making an equivalent point -- merge it into a " +
-          "single entry rather than listing it twice, and list every person who made that point (in the order " +
-          "they first raised it, no duplicate names even if someone repeated themselves). Only merge points " +
-          "that are genuinely the same underlying reason; keep distinct reasons as separate entries even if " +
-          "they're about the same property.\n\n" +
-          "These points were ALREADY ESTABLISHED in a previous round -- you MUST treat their wording as frozen, " +
-          "and each current supporter's agreement is assumed to STILL STAND unless the transcript shows " +
-          "otherwise:\n" +
-          `Examples:\n${describeExisting(existingExamplePoints)}\n\n` +
-          `Counterexamples:\n${describeExisting(existingCounterexamplePoints)}\n\n` +
-          "For each one: if the transcript still supports it (repeated or not), return it with its EXACT SAME id " +
-          "and EXACT SAME text (copy the text verbatim, do not rephrase it even slightly). ONLY change an " +
-          "existing id's text if a member EXPLICITLY asks to reword, correct, or replace that specific existing " +
-          "point in the transcript (e.g. \"can we change that example to say X instead\") -- in that case set " +
-          "\"revise\": true and put the new wording in \"text\". Never reword an existing point just because you " +
-          "found a slightly different way to phrase it; if you're not certain a member explicitly asked for a " +
-          "reword, leave the text untouched. " +
-          "List in \"by\" any NEW people (not already credited above) who now also back this point -- including " +
-          "someone who never names the point directly but clearly implies backing it: stating a preference, " +
-          "saying what seems better to them, describing their thinking shifting that way, or proposing something " +
-          "that only makes sense if this point holds. " +
-          "List in \"remove\" any of the CURRENTLY credited people (from the list above) who no longer stand " +
-          "behind this specific point. Do NOT require explicit retraction language -- infer this from ANY clear " +
-          "signal that their stance has moved away from the point, phrased however they like: stating a " +
-          "preference for the opposite side, saying an alternative now seems better to them, describing a " +
-          "change of mind in general terms (\"actually I don't think that's true anymore\", \"I take that back\", " +
-          "\"I'm leaning the other way now\"), or proposing/backing something that directly contradicts what " +
-          "this point said -- e.g. someone credited on a counterexample for removing this property later argues " +
-          "to keep it, or backs an example that only makes sense if the property stays; that contradicts their " +
-          "earlier counterexample, so remove them from it (and the same the other way around, from an example to " +
-          "a counterexample). The bar is a genuine contradiction or a stated shift somewhere in the transcript -- " +
-          "simply not repeating the point again, or staying quiet about it, is still NOT enough on its own and " +
-          "must NOT put them in \"remove\". " +
-          "A member often expresses agreement or disagreement by referring to ANOTHER member -- by name, or by " +
-          "that member's assigned COLOR -- instead of restating the opinion itself (e.g. \"I agree with Blue\", " +
-          "\"disagree with what Alice said\", \"the purple one has a point\", \"same as him\" replying to a " +
-          "colored/named mention). Each project member has exactly one fixed color; resolve any such name/color " +
-          `reference using this legend: ${colorLegendText}. Once resolved to a specific member, find which of ` +
-          "the point(s) that SPECIFIC member is currently credited on (from the existing lists above, or newly " +
-          "raised earlier in this same batch of messages) is being reacted to -- if they have only one, it's " +
-          "that one; if they have several, use the surrounding context (what was just being discussed) to tell " +
-          "which one, and if it's genuinely ambiguous which of their points is meant, do not guess -- treat it " +
-          "the same as any other ambiguous remark (see below) and leave things as they were. Once resolved, " +
-          "treat it exactly like directly restating that point: add the responding member to \"by\" if they now " +
-          "agree with it, or to \"remove\" (naming the ORIGINAL member, not the responder) only if the responder " +
-          "is the original author disagreeing with their own past point -- agreeing/disagreeing FROM one member " +
-          "ABOUT another member's point never removes the original author, it only adds or withholds the " +
-          "responder's own name in \"by\". " +
-          "The overall goal across rounds is MAXIMUM STABILITY: this exact list, in this exact wording, is what " +
-          "was shown to the group last time, and it should come back looking as close to identical as possible " +
-          "this time, changing only where the transcript has genuinely, unambiguously moved. When a remark is " +
-          "vague or general -- a bare \"I agree\", \"that's right\", \"I'm satisfied now\", or similar -- and it " +
-          "is not clear from context which SPECIFIC existing point (by id) it endorses or contradicts, that " +
-          "ambiguity is NOT evidence of anything: do not add the speaker to \"by\" and do not put them in " +
-          "\"remove\" for ANY existing point on the strength of it alone. Whenever genuinely unsure whether " +
-          "something clears the bar for \"remove\" or \"revise\", resolve the uncertainty by leaving the " +
-          "existing point exactly as it was credited before, rather than changing it. " +
-          "Any genuinely new point not covered by an existing id above should be returned with NO \"id\" field -- " +
-          "BUT merge fairly liberally: before treating something as a brand-new point, check whether it's " +
-          "broadly the same underlying idea as one of the existing points listed above, just phrased " +
-          "differently (not necessarily word-for-word identical, close enough in meaning is enough). If so, " +
-          "don't create a new point -- instead set \"mergeWithId\" to that existing point's id and put the new " +
-          "speaker(s) in \"by\"; the merged-in wording is discarded and the existing point's frozen text wins. " +
-          "This also applies to two of the EXISTING points above if you notice they're actually the same " +
-          "underlying idea (this can happen from earlier rounds before this rule) -- return the newer/less-" +
-          "supported one with its own \"id\" and \"mergeWithId\" set to the other's id, and its supporters will " +
-          "be folded into that other point automatically; when merging two existing points this way, prefer " +
-          "keeping (as the mergeWithId target) whichever one is more clearly and completely worded. " +
-          "Do NOT copy the speaker's original sentence verbatim for a brand-new point -- condense it down to its " +
-          "core point in your own words, as short and punchy as possible (aim for well under 10 words, phrased as " +
-          "a plain statement, no filler like \"they said\" or \"because\"). " +
-          'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-          '{"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
-          '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
-          "Use the exact usernames as they appear as speaker labels in the transcript.",
-        `PREVIOUS INTERVENTION MESSAGE:\n${previousPropertyIntervention?.content ?? "(none yet -- this is the first intervention for this property)"}` +
-          `\n\nMESSAGES SINCE THEN:\n${deltaTranscript || "(none)"}`,
-      );
 
       const rawExamples = Array.isArray(extraction?.examples) ? extraction.examples : [];
       const rawCounterexamples = Array.isArray(extraction?.counterexamples) ? extraction.counterexamples : [];
