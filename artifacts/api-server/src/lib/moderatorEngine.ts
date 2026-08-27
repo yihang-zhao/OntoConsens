@@ -35,9 +35,8 @@ const SILENCE_TIMEOUT_MS = 2_000;
 // Kept short and non-zero (rather than removed outright) so the indicator
 // still gets one visible frame instead of being replaced by the real
 // message in the same tick -- minimal latency is the priority here, not a
-// naturalistic typing simulation. Shaved down from an earlier 250ms since
-// even this pure display delay is on the critical path the group waits on.
-const INTERVENTION_TYPING_DELAY_MS = 60;
+// naturalistic typing simulation.
+const INTERVENTION_TYPING_DELAY_MS = 250;
 
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
