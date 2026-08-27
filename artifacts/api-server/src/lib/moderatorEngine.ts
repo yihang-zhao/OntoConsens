@@ -469,6 +469,48 @@ async function callOpenAiJson(apiKey: string, model: string, systemPrompt: strin
   }
 }
 
+// Speech-to-text transcripts can be in any language, and a group may not be
+// speaking English at all. Rather than always posting the intervention in
+// English, detect the DOMINANT language across the messages since the last
+// intervention and rewrite the (English-composed) message content in that
+// language -- except any class/property names, which are technical
+// identifiers in the shared workspace and must stay exactly as-is,
+// untranslated, wherever they appear (including inside a header like
+// "Discussion stalled — ClassName.PropertyName").
+async function localizeInterventionContent(
+  apiKey: string,
+  model: string,
+  content: string,
+  transcriptSinceLastIntervention: string,
+  preserveNames: string[],
+): Promise<string> {
+  const preserveInstruction =
+    preserveNames.length > 0
+      ? `The message below contains these exact class/property names, which are technical identifiers, not ` +
+        `natural language -- leave every one of them completely UNTRANSLATED, verbatim, wherever it appears: ` +
+        preserveNames.map((n) => `"${n}"`).join(", ") +
+        ". "
+      : "";
+  const result = await callOpenAiJson(
+    apiKey,
+    model,
+    "You are localizing a message for a group conversation. First determine the DOMINANT language used across " +
+      "the MESSAGES SINCE THE LAST INTERVENTION below (the language most of the words/characters are actually " +
+      "written in -- ignore isolated foreign words or names). Then rewrite the MODERATOR MESSAGE entirely in " +
+      "that dominant language, preserving its exact structure, meaning, and line breaks -- do not add, remove, " +
+      "reorder, or reinterpret any information in it, this is a translation, not a rewrite. " +
+      preserveInstruction +
+      "If the dominant language is already English, still return the message text unchanged. If there are no " +
+      "messages to judge a language from, default to English and return the message text unchanged. " +
+      'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+      '{"language": string, "text": string}.',
+    `MESSAGES SINCE THE LAST INTERVENTION (for judging the dominant language only):\n${transcriptSinceLastIntervention || "(none)"}\n\n` +
+      `MODERATOR MESSAGE TO LOCALIZE:\n${content}`,
+  );
+  const localizedText = typeof result?.text === "string" ? result.text.trim() : "";
+  return localizedText || content;
+}
+
 function formatChunksAsTranscript(
   chunks: { userId: number; text: string; createdAt: Date }[],
   usernameById: Map<number, string>,
@@ -1025,10 +1067,28 @@ async function generateIntervention(projectId: number): Promise<void> {
       interventionExamples = exampleEntries;
       interventionCounterexamples = counterexampleEntries;
       hasNothingToShow = exampleEntries.length === 0 && counterexampleEntries.length === 0;
+
+      if (!hasNothingToShow) {
+        interventionContent = await localizeInterventionContent(
+          apiKey,
+          config.model,
+          interventionContent,
+          sinceLastInterventionTranscript,
+          [className, propertyName],
+        );
+      }
     } else {
       interventionContent =
         "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
         "Try focusing the discussion on properties already in this shared workspace.";
+
+      interventionContent = await localizeInterventionContent(
+        apiKey,
+        config.model,
+        interventionContent,
+        sinceLastInterventionTranscript,
+        [],
+      );
     }
   } catch (err) {
     logger.error({ err, projectId }, "Moderator intervention generation errored");
