@@ -564,42 +564,88 @@ async function generateIntervention(projectId: number): Promise<void> {
   // silently advance the checkpoint, never post.
   let hasNothingToShow = false;
 
-  // What the previous round resolved to, if anything -- lets pass 1 infer
-  // that an unlabeled continuation ("yeah I agree", "what about when it's
-  // empty?") is still about the same property, instead of only ever
-  // matching an explicit re-statement of its name.
-  const previousTopic =
-    config.lastTopicClassId !== null && config.lastTopicPropertyId !== null
-      ? catalog.find(
-          (entry) => entry.classId === config.lastTopicClassId && entry.propertyId === config.lastTopicPropertyId,
-        )
-      : undefined;
-  const previousTopicText = previousTopic ? `${previousTopic.className}.${previousTopic.propertyName}` : "(nothing yet)";
+  // The anchor for "is this still about the same property" continuity is
+  // the single most recent intervention message this moderator has
+  // actually POSTED (any property, project-wide) -- not a lighter-weight
+  // "what did pass 1 last resolve to" hint. Per design, pass 1 must decide
+  // continuation using ONLY two sources: that previous intervention
+  // message's real content, and every user message exchanged since it
+  // (which is a superset of `newChunks` above whenever an earlier round's
+  // checkpoint advanced without ever posting, e.g. a duplicate-content or
+  // hasNothingToShow skip) -- never the raw pre-intervention history, and
+  // never a same-topic guess from a round that itself never got shown to
+  // the group.
+  const [lastPostedIntervention] = await db
+    .select({
+      content: moderatorChatMessagesTable.content,
+      classId: moderatorChatMessagesTable.classId,
+      propertyId: moderatorChatMessagesTable.propertyId,
+      createdAt: moderatorChatMessagesTable.createdAt,
+    })
+    .from(moderatorChatMessagesTable)
+    .where(
+      and(
+        eq(moderatorChatMessagesTable.projectId, projectId),
+        eq(moderatorChatMessagesTable.type, "intervention"),
+        eq(moderatorChatMessagesTable.matched, true),
+      ),
+    )
+    .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+    .limit(1);
+
+  const previousInterventionTopic = lastPostedIntervention
+    ? catalog.find(
+        (entry) => entry.classId === lastPostedIntervention.classId && entry.propertyId === lastPostedIntervention.propertyId,
+      )
+    : undefined;
+
+  // "Every user message exchanged since" that last posted intervention --
+  // project-wide, since pass 1 doesn't yet know which property (if any)
+  // the new messages concern.
+  const sinceLastInterventionChunks = lastPostedIntervention
+    ? await db.query.moderatorTranscriptChunksTable.findMany({
+        where: and(
+          eq(moderatorTranscriptChunksTable.projectId, projectId),
+          gt(moderatorTranscriptChunksTable.createdAt, lastPostedIntervention.createdAt),
+        ),
+      })
+    : newChunks;
+  const sinceLastInterventionTranscript = formatChunksAsTranscript(sinceLastInterventionChunks, usernameById);
 
   try {
     // --- Pass 1: what is the group discussing right now? ---
     const topicResult = await callOpenAiJson(
       apiKey,
       config.model,
-      "You are an AI moderator for a group ontology-design conversation. Look at the transcript below and " +
+      "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
         "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
         "retained, removed, or how it should be defined). " +
         "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
         catalogText +
-        `\n\nImmediately before this transcript, the group was discussing: ${previousTopicText}. Conversation ` +
-        "commonly continues about the same property without re-stating its name -- via pronouns (\"it\", " +
-        "\"that\"), direct replies/agreement/disagreement, or follow-up refinements. If this transcript reads as " +
-        "a natural continuation of that same discussion, report that SAME className/propertyName again even " +
-        "though it isn't explicitly named here. Only report a DIFFERENT property if the transcript clearly and " +
-        "specifically names or unambiguously describes a different one. Only report null/null if the transcript " +
-        "has moved on to something unrelated to any listed property entirely (small talk, a topic outside the " +
-        "catalog, etc). " +
+        (previousInterventionTopic
+          ? `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, about ` +
+            `${previousInterventionTopic.className}.${previousInterventionTopic.propertyName}, followed by every ` +
+            "user message exchanged since then. Base your answer ONLY on these two things -- not on any earlier " +
+            "history beyond what that previous intervention message itself already states. Conversation commonly " +
+            "continues about the same property without re-stating its name -- via pronouns (\"it\", \"that\"), " +
+            "direct replies/agreement/disagreement/reactions, or follow-up refinements, even across several more " +
+            "messages. If the messages since that intervention read as a natural continuation of the same " +
+            `discussion, report that SAME className/propertyName (${previousInterventionTopic.className}.` +
+            `${previousInterventionTopic.propertyName}) again even though it isn't explicitly named. Only report ` +
+            "a DIFFERENT property if a message clearly and specifically names or unambiguously describes a " +
+            "different one. Only report null/null if the messages have moved on to something unrelated to any " +
+            "listed property entirely (small talk, a topic outside the catalog, etc)."
+          : "\n\nThere is no previous intervention yet, so below is simply the transcript of what's been said so " +
+            "far. Only report a className/propertyName if a message clearly names or unambiguously describes " +
+            "one from the list; report null/null if nothing in the workspace catalog is being discussed.") +
         "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
         "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
         "list. " +
         'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
         '{"className": string | null, "propertyName": string | null}.',
-      newChunksTranscript,
+      lastPostedIntervention
+        ? `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention.content}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`
+        : sinceLastInterventionTranscript,
     );
 
     const normalize = (s: string) => s.trim().toLowerCase();
@@ -614,19 +660,6 @@ async function generateIntervention(projectId: number): Promise<void> {
           )
         : undefined;
     matched = matchedEntry !== undefined;
-
-    // Persist whatever pass 1 resolved to (continuing, switched, or none)
-    // as the new continuity anchor for the round after this one -- done
-    // regardless of whether pass 2 below succeeds, since this is purely
-    // about "what topic is live right now", not about the intervention
-    // content itself.
-    await db
-      .update(projectModeratorTable)
-      .set({
-        lastTopicClassId: matchedEntry?.classId ?? null,
-        lastTopicPropertyId: matchedEntry?.propertyId ?? null,
-      })
-      .where(eq(projectModeratorTable.id, config.id));
 
     if (matched && matchedEntry) {
       const { classId, propertyId, className, propertyName } = matchedEntry;
