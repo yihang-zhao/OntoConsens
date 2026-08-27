@@ -257,14 +257,20 @@ export default function Dashboard() {
               </DialogContent>
             </Dialog>
 
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <Dialog
+              open={createOpen}
+              onOpenChange={(open) => {
+                if (createProject.isPending) return;
+                setCreateOpen(open);
+              }}
+            >
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-2">
                   <Plus className="w-4 h-4" />
                   New Project
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent closeButtonDisabled={createProject.isPending}>
                 <DialogHeader>
                   <DialogTitle>Create New Project</DialogTitle>
                 </DialogHeader>
@@ -357,7 +363,10 @@ export default function Dashboard() {
                       </p>
                     )}
                     <DialogFooter>
-                      <Button type="submit" disabled={createProject.isPending}>Create</Button>
+                      <Button type="submit" disabled={createProject.isPending} className="gap-2">
+                        {createProject.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Create
+                      </Button>
                     </DialogFooter>
                   </form>
                 </Form>
