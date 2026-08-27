@@ -58,7 +58,7 @@ interface ModeratorChatPanelProps {
   /** Whether the CURRENT user has turned the moderator on for themselves --
    *  purely per-person, independent of every other member. */
   moderatorActive: boolean;
-  /** True once the project creator's account has a Claude API key saved --
+  /** True once the project creator's account has an OpenAI API key saved --
    *  without one, nobody can turn the moderator on. */
   moderatorConfigured: boolean;
   /** New messages received live over the socket since this page mounted --

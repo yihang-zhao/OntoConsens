@@ -15,7 +15,7 @@ const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(32, "Username too long"),
   password: z.string().min(6, "Password must be at least 6 characters").max(128, "Password too long"),
   confirmPassword: z.string(),
-  apiKey: z.string().min(1, "A Claude API key is required"),
+  apiKey: z.string().min(1, "An OpenAI API key is required"),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -143,9 +143,9 @@ export default function Register() {
                   name="apiKey"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Claude API Key</FormLabel>
+                      <FormLabel>OpenAI API Key</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="sk-ant-..." autoComplete="off" {...field} />
+                        <Input type="password" placeholder="sk-..." autoComplete="off" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

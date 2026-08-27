@@ -140,7 +140,7 @@ export async function ensureActiveParticipant(
 // several old per-project keys should take priority.
 async function migrateLegacyProjectKeyToOwner(projectId: number, ownerId: number): Promise<void> {
   const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, ownerId) });
-  if (owner?.claudeApiKeyEncrypted) return; // Owner already has an account key -- nothing to migrate.
+  if (owner?.openaiApiKeyEncrypted) return; // Owner already has an account key -- nothing to migrate.
 
   const legacy = await db.query.projectModeratorTable.findFirst({
     where: eq(projectModeratorTable.projectId, projectId),
@@ -150,9 +150,9 @@ async function migrateLegacyProjectKeyToOwner(projectId: number, ownerId: number
   await db
     .update(usersTable)
     .set({
-      claudeApiKeyEncrypted: legacy.encryptedApiKey,
-      claudeApiKeyIv: legacy.apiKeyIv,
-      claudeApiKeyAuthTag: legacy.apiKeyAuthTag,
+      openaiApiKeyEncrypted: legacy.encryptedApiKey,
+      openaiApiKeyIv: legacy.apiKeyIv,
+      openaiApiKeyAuthTag: legacy.apiKeyAuthTag,
     })
     .where(eq(usersTable.id, ownerId));
   await db
@@ -169,7 +169,7 @@ async function migrateLegacyProjectKeyToOwner(projectId: number, ownerId: number
 export async function projectOwnerHasApiKey(projectId: number, ownerId: number): Promise<boolean> {
   await migrateLegacyProjectKeyToOwner(projectId, ownerId);
   const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, ownerId) });
-  return Boolean(owner?.claudeApiKeyEncrypted);
+  return Boolean(owner?.openaiApiKeyEncrypted);
 }
 
 export async function getProjectOwnerApiKey(projectId: number): Promise<string | null> {
@@ -179,12 +179,12 @@ export async function getProjectOwnerApiKey(projectId: number): Promise<string |
   await migrateLegacyProjectKeyToOwner(projectId, project.ownerId);
 
   const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.id, project.ownerId) });
-  if (!owner?.claudeApiKeyEncrypted || !owner.claudeApiKeyIv || !owner.claudeApiKeyAuthTag) return null;
+  if (!owner?.openaiApiKeyEncrypted || !owner.openaiApiKeyIv || !owner.openaiApiKeyAuthTag) return null;
   try {
     return decryptApiKey({
-      encryptedApiKey: owner.claudeApiKeyEncrypted,
-      apiKeyIv: owner.claudeApiKeyIv,
-      apiKeyAuthTag: owner.claudeApiKeyAuthTag,
+      encryptedApiKey: owner.openaiApiKeyEncrypted,
+      apiKeyIv: owner.openaiApiKeyIv,
+      apiKeyAuthTag: owner.openaiApiKeyAuthTag,
     });
   } catch {
     return null;
@@ -428,27 +428,28 @@ interface CatalogEntry {
   propertyName: string;
 }
 
-async function callClaudeJson(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<any | null> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+async function callOpenAiJson(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<any | null> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      // Not passing "temperature" here on purpose -- since `model` is
-      // user-configurable per project, a hardcoded override isn't safe
-      // across every model id someone might configure. Stability of
+      // Not passing "temperature" here on purpose -- some models (e.g.
+      // reasoning models like o1/gpt-5) reject any non-default value
+      // outright, and since `model` is user-configurable per project, a
+      // hardcoded override isn't safe across all of them. Stability of
       // wording/attribution across rounds is instead enforced by the
       // prompt itself (see the extraction prompt's "MAXIMUM STABILITY"
       // instructions below) and the canonical-signature dedup in
       // generateIntervention's commit transaction, not by sampling
       // settings.
       model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userContent }],
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
     }),
   });
 
@@ -456,17 +457,13 @@ async function callClaudeJson(apiKey: string, model: string, systemPrompt: strin
     const body = await response.json().catch(() => null);
     const message =
       (body && typeof body === "object" && "error" in body && (body as any).error?.message) ||
-      `Claude request failed with status ${response.status}`;
+      `OpenAI request failed with status ${response.status}`;
     throw new Error(message);
   }
 
-  const data = (await response.json()) as { content?: { type?: string; text?: string }[] };
-  const rawContent = data.content
-    ?.filter((block) => block.type === "text" && typeof block.text === "string")
-    .map((block) => block.text)
-    .join("")
-    .trim();
-  if (!rawContent) throw new Error("Claude returned an empty response.");
+  const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+  const rawContent = data.choices?.[0]?.message?.content?.trim();
+  if (!rawContent) throw new Error("OpenAI returned an empty response.");
 
   try {
     const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
@@ -786,7 +783,7 @@ async function generateIntervention(projectId: number): Promise<void> {
   // Populated only when the single combined call below both (a) confirms
   // the topic is a plain continuation of previousInterventionTopic and (b)
   // performed the extraction inline -- letting the matched branch skip an
-  // entire second Claude round trip in that (by far most common) case,
+  // entire second OpenAI round trip in that (by far most common) case,
   // which is the whole point of combining the two calls together here.
   let inlineExtraction: { examples: unknown[]; counterexamples: unknown[] } | null = null;
   let existingExamplePoints: TransientPoint[] = [];
@@ -811,7 +808,7 @@ async function generateIntervention(projectId: number): Promise<void> {
       // path below, exactly as before.
       const priorExamples = toTransientPoints(lastPostedIntervention.examples);
       const priorCounterexamples = toTransientPoints(lastPostedIntervention.counterexamples);
-      const combined = await callClaudeJson(
+      const combined = await callOpenAiJson(
         apiKey,
         config.model,
         "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
@@ -883,7 +880,7 @@ async function generateIntervention(projectId: number): Promise<void> {
       // --- Pass 1 only: no previous intervention to anchor continuity on
       // (this project's very first one), so there's nothing to combine
       // extraction with yet -- decide the topic alone, exactly as before.
-      const topicResult = await callClaudeJson(
+      const topicResult = await callOpenAiJson(
         apiKey,
         config.model,
         "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
@@ -997,7 +994,7 @@ async function generateIntervention(projectId: number): Promise<void> {
         existingExamplePoints = toTransientPoints(previousPropertyIntervention?.examples ?? null);
         existingCounterexamplePoints = toTransientPoints(previousPropertyIntervention?.counterexamples ?? null);
 
-        extraction = await callClaudeJson(
+        extraction = await callOpenAiJson(
           apiKey,
           config.model,
           `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
@@ -1171,7 +1168,7 @@ async function generateIntervention(projectId: number): Promise<void> {
     logger.error({ err, projectId }, "Moderator intervention generation errored");
     broadcastToProject(projectId, {
       type: "moderator_error",
-      message: err instanceof Error ? err.message : "Could not reach Claude to generate a summary.",
+      message: err instanceof Error ? err.message : "Could not reach OpenAI to generate a summary.",
     });
     return;
   }

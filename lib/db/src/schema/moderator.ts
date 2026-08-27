@@ -14,7 +14,7 @@ import { projectsTable } from "./projects";
 import { usersTable } from "./users";
 
 // One row per project: project-wide moderator settings/checkpoint. The
-// Claude API key used to run it belongs to the project's CREATOR account
+// OpenAI API key used to run it belongs to the project's CREATOR account
 // (see users.ts / lib/moderatorCrypto.ts in the api-server), not this table.
 // Whether the moderator is actually capturing anyone right now is tracked
 // per-user in moderatorParticipantsTable below -- each member turns their
@@ -29,7 +29,7 @@ export const projectModeratorTable = pgTable("project_moderator", {
   // Exact model id to use for the summarization step. Configurable per
   // project rather than hardcoded, since it's the creator's own key/account
   // and they may not have access to every model id.
-  model: text("model").notNull().default("claude-sonnet-5"),
+  model: text("model").notNull().default("gpt-5.6-terra"),
   // DEPRECATED — legacy per-project key, from before API keys moved to the
   // account level. No longer written by new code. Kept only so existing
   // rows created before this migration keep working: the api-server reads
