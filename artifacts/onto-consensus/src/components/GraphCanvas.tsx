@@ -20,6 +20,7 @@ import {
 import type { OntologyClass, OntologyRelation, Property } from "@workspace/api-client-react";
 import { colorForSlot } from "@/lib/memberColors";
 import type { RemoteCursor } from "@/hooks/useProjectSocket";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface GraphCanvasProps {
   projectId: number;
@@ -60,6 +61,12 @@ interface LaidOutClass extends OntologyClass {
 // rotating in place afterward sidesteps that trap entirely.
 const CIRCLE_SIZE = 128;
 const CIRCLE_RADIUS = CIRCLE_SIZE / 2;
+// The largest square that fits entirely inside the circle's inner (border-
+// excluded) diameter -- side = diameter / sqrt(2). Constraining the label's
+// wrapping box to this size, rather than the circle's full bounding box,
+// guarantees every corner of a multi-line label stays inside the circle
+// instead of being clipped by its curve or covered by the border frame.
+const CLASS_LABEL_BOX_SIZE = (CIRCLE_SIZE - 8) / Math.SQRT2;
 const PETAL_WIDTH = 56;
 const PETAL_LENGTH = 64;
 // Clear space between the circle's edge and the nearest petal — the shape
@@ -1262,9 +1269,17 @@ export function GraphCanvas({
                   transition={{ duration: 0.5, ease: "easeOut" }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="line-clamp-3 px-3 text-sm font-semibold text-card-foreground">
-                    {cls.label}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="line-clamp-4 break-words text-sm font-semibold text-card-foreground"
+                        style={{ width: CLASS_LABEL_BOX_SIZE, maxHeight: CLASS_LABEL_BOX_SIZE }}
+                      >
+                        {cls.label}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-64 break-words">{cls.label}</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </div>
