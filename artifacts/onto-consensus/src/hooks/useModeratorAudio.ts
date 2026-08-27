@@ -124,10 +124,20 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     let priorSessionsText = "";
     let lastSpeechAt = 0;
     let lastResults: any = null;
+    // Index into the CURRENT recognition session's `results` array from
+    // which words belong to the utterance-in-progress. Advanced (not the
+    // recognizer restarted) every time an utterance is finalized on silence
+    // -- see the silence timer below for why: restarting the recognizer
+    // stops and restarts mic capture, which swallows the first word or two
+    // of whatever's said right after. The browser's results array only ever
+    // grows within one session, so everything before this offset is simply
+    // ignored by textFromResults from then on; it's reset to 0 only when a
+    // brand-new recognition session actually starts (see start()).
+    let resultsOffset = 0;
 
-    function textFromResults(results: any): string {
+    function textFromResults(results: any, offset = 0): string {
       const parts: string[] = [];
-      for (let i = 0; i < results.length; i++) {
+      for (let i = offset; i < results.length; i++) {
         const text = results[i]?.[0]?.transcript?.trim();
         if (text) parts.push(text);
       }
@@ -162,7 +172,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     // state so the effect-teardown flush below finds nothing left to
     // (redundantly) finalize once `active` actually flips to false.
     flushRef.current = () => {
-      const text = currentText(lastResults ? textFromResults(lastResults) : "");
+      const text = currentText(lastResults ? textFromResults(lastResults, resultsOffset) : "");
       priorSessionsText = "";
       lastResults = null;
       lastSpeechAt = 0;
@@ -178,13 +188,17 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
 
     function start() {
       if (stopped) return;
+      // A brand-new recognition session means a brand-new, empty `results`
+      // array from the browser's side -- the offset only ever makes sense
+      // relative to the session it was measured against.
+      resultsOffset = 0;
       const rec = new Ctor();
       rec.continuous = true;
       rec.interimResults = true;
       rec.lang = lang;
       rec.onresult = (event: any) => {
         lastResults = event.results;
-        const sessionText = textFromResults(event.results);
+        const sessionText = textFromResults(event.results, resultsOffset);
         lastSpeechAt = Date.now();
         onCaptionRef.current?.(currentText(sessionText));
       };
@@ -197,7 +211,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         // never got folded into priorSessionsText -- carry them forward so
         // the restart below is invisible rather than dropping the tail end
         // of what was just said.
-        if (lastResults) priorSessionsText = currentText(textFromResults(lastResults));
+        if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset));
         lastResults = null;
         restartTimer = setTimeout(start, RECOGNITION_RESTART_DELAY_MS);
       };
@@ -216,22 +230,20 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       if (!lastSpeechAt) return;
       if (Date.now() - lastSpeechAt >= SILENCE_FINALIZE_MS) {
         lastSpeechAt = 0;
-        finalizeIfAny(lastResults ? textFromResults(lastResults) : "");
-        lastResults = null;
+        finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset) : "");
         // The browser's own results array for this recognition session keeps
         // growing for as long as the session runs -- it never forgets what
         // was already recognized. Left alone, the NEXT onresult would rebuild
         // its text from that same array and drag the just-finalized words
-        // back into the new message box. Restarting the recognizer here
-        // gives the next utterance a brand-new, empty results array to build
-        // from, exactly like the natural periodic restarts already do.
-        if (recognition) {
-          try {
-            recognition.abort();
-          } catch {
-            // already stopped
-          }
-        }
+        // back into the new message box. This used to be solved by
+        // restarting the recognizer here, but stopping and restarting the
+        // browser's recognizer briefly drops mic capture -- swallowing the
+        // first word or two of whatever's said right after the pause.
+        // Instead, just move the offset forward: the recognizer keeps
+        // running uninterrupted, and everything before this point in its
+        // results array is simply ignored from now on.
+        resultsOffset = lastResults ? lastResults.length : resultsOffset;
+        lastResults = null;
       }
     }, SILENCE_CHECK_INTERVAL_MS);
 
@@ -241,7 +253,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       if (silenceTimer) clearInterval(silenceTimer);
       // Flush whatever's in progress immediately -- e.g. the mic was turned
       // off mid-sentence, which shouldn't silently drop that utterance.
-      finalizeIfAny(lastResults ? textFromResults(lastResults) : "");
+      finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset) : "");
       if (recognition) {
         recognition.onend = null;
         recognition.onerror = null;
