@@ -424,7 +424,7 @@ interface CatalogEntry {
   propertyName: string;
 }
 
-async function callOpenAiRaw(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<string> {
+async function callOpenAiJson(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<any | null> {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -460,87 +460,13 @@ async function callOpenAiRaw(apiKey: string, model: string, systemPrompt: string
   const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
   const rawContent = data.choices?.[0]?.message?.content?.trim();
   if (!rawContent) throw new Error("OpenAI returned an empty response.");
-  return rawContent;
-}
 
-async function callOpenAiJson(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<any | null> {
-  const rawContent = await callOpenAiRaw(apiKey, model, systemPrompt, userContent);
   try {
     const cleaned = rawContent.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
     return JSON.parse(cleaned);
   } catch {
     throw new Error("Could not understand the AI moderator's analysis of the discussion.");
   }
-}
-
-// Speech-to-text transcripts can be in any language, and a group may not be
-// speaking English at all. Rather than always posting the intervention in
-// English, detect the DOMINANT language across the messages since the last
-// intervention and rewrite the (English-composed) message content in that
-// language -- except any class/property names, which are technical
-// identifiers in the shared workspace and must stay exactly as-is,
-// untranslated, wherever they appear (including inside a header like
-// "Discussion stalled — ClassName.PropertyName").
-//
-// This is deliberately split into two separate, single-purpose model calls
-// rather than one combined "detect the language AND rewrite in it" JSON
-// call. A single call asking the model to both self-detect a language and
-// self-translate into it inside one JSON object was unreliable in practice
-// -- the model would sometimes fill in a plausible "language" field but
-// still just echo the original English "text" back unchanged, since
-// nothing forces the two fields to be causally consistent. Naming the
-// target language explicitly in a dedicated, plain-text "translate this
-// into <language>" call (no JSON framing to hide behind) is far more
-// reliable.
-async function detectDominantLanguage(apiKey: string, model: string, transcript: string): Promise<string | null> {
-  if (!transcript.trim()) return null;
-  const result = await callOpenAiJson(
-    apiKey,
-    model,
-    "Identify the SINGLE dominant language used across the messages below -- the language most of the actual " +
-      "words/characters are written in. Ignore isolated foreign words, names, or numbers that don't change the " +
-      "overall language of the conversation. Name the language using its common English name (e.g. \"English\", " +
-      "\"Chinese\", \"Spanish\", \"French\", \"Japanese\"). If the messages are empty, unintelligible, or you " +
-      "genuinely cannot tell, answer \"English\". " +
-      'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-      '{"language": string}.',
-    transcript,
-  );
-  const language = typeof result?.language === "string" ? result.language.trim() : "";
-  if (!language || language.toLowerCase() === "english") return null;
-  return language;
-}
-
-async function localizeInterventionContent(
-  apiKey: string,
-  model: string,
-  content: string,
-  transcriptSinceLastIntervention: string,
-  preserveNames: string[],
-): Promise<string> {
-  const language = await detectDominantLanguage(apiKey, model, transcriptSinceLastIntervention);
-  if (!language) return content; // Already English, or nothing to judge a language from.
-
-  const preserveInstruction =
-    preserveNames.length > 0
-      ? `The message contains these exact class/property names, which are technical identifiers, not natural ` +
-        `language -- leave every one of them completely UNTRANSLATED, verbatim, character-for-character, ` +
-        `wherever it appears: ${preserveNames.map((n) => `"${n}"`).join(", ")}. Translate every other word `
-      : "Translate every word ";
-  const translated = await callOpenAiRaw(
-    apiKey,
-    model,
-    `You are a professional translator. Translate the MESSAGE below into ${language}. ` +
-      preserveInstruction +
-      "around them into " +
-      `${language} as normal. Preserve the message's exact structure, meaning, paragraph breaks, and line ` +
-      "breaks -- do not add, remove, reorder, or reinterpret any information in it; this is a faithful " +
-      `translation, not a rewrite or summary. Your entire reply IS the translated message, in ${language} -- ` +
-      "reply with ONLY that translated text and nothing else: no JSON, no quotation marks wrapping it, no " +
-      "markdown fences, no preamble like \"Here is the translation:\", no explanation.",
-    content,
-  );
-  return translated.trim() || content;
 }
 
 function formatChunksAsTranscript(
@@ -1099,28 +1025,10 @@ async function generateIntervention(projectId: number): Promise<void> {
       interventionExamples = exampleEntries;
       interventionCounterexamples = counterexampleEntries;
       hasNothingToShow = exampleEntries.length === 0 && counterexampleEntries.length === 0;
-
-      if (!hasNothingToShow) {
-        interventionContent = await localizeInterventionContent(
-          apiKey,
-          config.model,
-          interventionContent,
-          sinceLastInterventionTranscript,
-          [className, propertyName],
-        );
-      }
     } else {
       interventionContent =
         "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
         "Try focusing the discussion on properties already in this shared workspace.";
-
-      interventionContent = await localizeInterventionContent(
-        apiKey,
-        config.model,
-        interventionContent,
-        sinceLastInterventionTranscript,
-        [],
-      );
     }
   } catch (err) {
     logger.error({ err, projectId }, "Moderator intervention generation errored");
