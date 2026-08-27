@@ -311,12 +311,11 @@ export default function Dashboard() {
                         const selectedFile = value instanceof File ? value : undefined;
                         return (
                           <FormItem>
-                            <FormLabel>Ontology File (.ttl, .owl, .rdf)</FormLabel>
+                            <FormLabel>Ontology File</FormLabel>
                             <FormControl>
                               <div>
                                 <input
                                   type="file"
-                                  accept=".ttl,.owl,.rdf"
                                   className="sr-only"
                                   ref={(el) => {
                                     fileInputRef.current = el;

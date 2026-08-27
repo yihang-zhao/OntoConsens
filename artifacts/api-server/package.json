@@ -19,11 +19,9 @@
     "drizzle-orm": "catalog:",
     "express": "^5.2.1",
     "multer": "^2.2.0",
-    "n3": "^2.1.2",
     "pg": "^8.22.0",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",
-    "rdfxml-streaming-parser": "^3.2.0",
     "ws": "^8.21.2"
   },
   "devDependencies": {

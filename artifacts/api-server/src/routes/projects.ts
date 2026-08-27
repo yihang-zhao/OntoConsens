@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { JoinProjectBody, SetReadyBody } from "@workspace/api-zod";
 import { requireAuth } from "../lib/auth";
-import { parseOntologyFile } from "../lib/ontologyParser";
+import { extractOntologyWithAI, getUserApiKey } from "../lib/aiOntologyExtractor";
 import { issueTicket, issueUserTicket, broadcastToProject, broadcastToUsers } from "../lib/wsHub";
 import { getPropertyQuota, mergeDuplicatePropertiesOnReady } from "./properties";
 import { ensureModeratorIntroMessage } from "../lib/moderatorEngine";
@@ -88,16 +88,22 @@ router.post("/projects", upload.single("file"), async (req, res) => {
     return;
   }
 
+  const apiKey = await getUserApiKey(userId);
+  if (!apiKey) {
+    res.status(400).json({ error: "Add your OpenAI API key before creating a project (see the API Key button above)." });
+    return;
+  }
+
   let parsed;
   try {
-    parsed = await parseOntologyFile(file.originalname, file.buffer.toString("utf-8"));
-  } catch {
-    res.status(400).json({ error: "Could not parse the ontology file" });
+    parsed = await extractOntologyWithAI(apiKey, file.originalname, file.buffer, file.mimetype);
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || "Could not parse the ontology file" });
     return;
   }
 
   if (parsed.classes.length === 0) {
-    res.status(400).json({ error: "No classes found in the ontology file" });
+    res.status(400).json({ error: "No connected class hierarchy was found in the uploaded file" });
     return;
   }
 
