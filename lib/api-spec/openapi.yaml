@@ -142,38 +142,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /auth/stt-language:
-    put:
-      operationId: updateSttLanguage
-      tags: [auth]
-      summary: Update the current account's speech-to-text language
-      description: >-
-        Persists the language this account has currently selected for its
-        own speech-to-text recognition. When this account owns a project,
-        the AI moderator's intervention messages are posted translated into
-        this language.
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SttLanguageInput"
-      responses:
-        "200":
-          description: Language updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/User"
-        "400":
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
   /projects:
     get:
       operationId: listProjects
@@ -625,20 +593,9 @@ components:
           type: string
           minLength: 1
 
-    SttLanguageInput:
-      type: object
-      required: [language]
-      properties:
-        language:
-          type: string
-          minLength: 1
-          description: >-
-            BCP-47 tag (e.g. "en-US", "zh-CN") matching one of the languages
-            offered by the speech-to-text language picker.
-
     User:
       type: object
-      required: [id, username, apiKeyConfigured, sttLanguage]
+      required: [id, username, apiKeyConfigured]
       properties:
         id:
           type: integer
@@ -647,12 +604,6 @@ components:
         apiKeyConfigured:
           type: boolean
           description: True once this account has an OpenAI API key saved.
-        sttLanguage:
-          type: string
-          description: >-
-            BCP-47 tag for this account's currently selected speech-to-text
-            language. When this account owns a project, the AI moderator
-            posts intervention messages translated into this language.
 
     AuthResponse:
       type: object

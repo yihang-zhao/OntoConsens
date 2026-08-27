@@ -4,13 +4,10 @@ import {
   useDisableModerator,
   useListModeratorChatMessages,
   useSubmitModeratorTranscript,
-  useUpdateSttLanguage,
   getGetModeratorStatusQueryKey,
   getListModeratorChatMessagesQueryKey,
-  getGetMeQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/use-auth";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sparkles, AlertTriangle, X, Mic, MicOff, Languages, ArrowDown } from "lucide-react";
@@ -119,8 +116,6 @@ export function ModeratorChatPanel({
   const configure = useConfigureModerator();
   const disable = useDisableModerator();
   const submitTranscript = useSubmitModeratorTranscript();
-  const updateSttLanguage = useUpdateSttLanguage();
-  const { user } = useAuth();
 
   const { data: history } = useListModeratorChatMessages(projectId, {
     query: { queryKey: getListModeratorChatMessagesQueryKey(projectId) },
@@ -134,33 +129,13 @@ export function ModeratorChatPanel({
   const invalidateStatus = () =>
     queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
 
-  // Which language THIS member's mic is RECOGNIZED in is a local, per-browser
-  // choice (each member can speak a different language) -- localStorage
-  // remains the source of truth for the recognizer itself. But the choice is
-  // ALSO persisted to this account server-side (users.sttLanguage), since
-  // when this account owns a project, the AI moderator posts its
-  // intervention messages translated into whichever language its owner has
-  // currently selected here.
+  // Which language THIS member's mic is recognized in -- purely a local,
+  // per-browser choice (each member can speak a different language), so it
+  // lives in localStorage rather than anywhere shared/synced.
   const [recognitionLang, setRecognitionLang] = useState(defaultRecognitionLang);
-  // The very first time this account's own server-side preference loads,
-  // adopt it as the active recognition language too (it reflects the last
-  // choice made on any device); after that, local edits always win so
-  // switching languages mid-session doesn't get clobbered by a stale fetch.
-  const syncedFromServerRef = useRef(false);
-  useEffect(() => {
-    if (syncedFromServerRef.current || !user?.sttLanguage) return;
-    syncedFromServerRef.current = true;
-    if (RECOGNITION_LANGUAGES.some((l) => l.value === user.sttLanguage) && !localStorage.getItem(RECOGNITION_LANG_STORAGE_KEY)) {
-      setRecognitionLang(user.sttLanguage);
-    }
-  }, [user?.sttLanguage]);
   const handleLangChange = (value: string) => {
     setRecognitionLang(value);
     localStorage.setItem(RECOGNITION_LANG_STORAGE_KEY, value);
-    updateSttLanguage.mutate(
-      { data: { language: value } },
-      { onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() }) },
-    );
   };
 
   // Turning the moderator on for yourself is the same click that starts

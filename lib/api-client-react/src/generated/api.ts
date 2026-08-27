@@ -39,7 +39,6 @@ import type {
   PropertyUpdate,
   ReadyInput,
   RegisterInput,
-  SttLanguageInput,
   UpdateApiKeyInput,
   User,
   WsTicket
@@ -510,78 +509,6 @@ export const useUpdateApiKey = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getUpdateApiKeyMutationOptions(options));
-    }
-
-export const getUpdateSttLanguageUrl = () => {
-
-
-
-
-  return `/api/auth/stt-language`
-}
-
-/**
- * Persists the language this account has currently selected for its own speech-to-text recognition. When this account owns a project, the AI moderator's intervention messages are posted translated into this language.
- * @summary Update the current account's speech-to-text language
- */
-export const updateSttLanguage = async (sttLanguageInput: SttLanguageInput, options?: Parameters<typeof customFetch>[1]): Promise<User> => {
-
-  return customFetch<User>(getUpdateSttLanguageUrl(),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(sttLanguageInput)
-  }
-);}
-
-
-
-
-
-export const getUpdateSttLanguageMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSttLanguage>>, TError,{data: BodyType<SttLanguageInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof updateSttLanguage>>, TError,{data: BodyType<SttLanguageInput>}, TContext> => {
-
-const mutationKey = ['updateSttLanguage'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSttLanguage>>, {data: BodyType<SttLanguageInput>}> = (props) => {
-          const {data} = props ?? {};
-
-          return  updateSttLanguage(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateSttLanguageMutationResult = NonNullable<Awaited<ReturnType<typeof updateSttLanguage>>>
-    export type UpdateSttLanguageMutationBody = BodyType<SttLanguageInput>
-    export type UpdateSttLanguageMutationError = ErrorType<ErrorResponse>
-
-    /**
- * @summary Update the current account's speech-to-text language
- */
-export const useUpdateSttLanguage = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSttLanguage>>, TError,{data: BodyType<SttLanguageInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof updateSttLanguage>>,
-        TError,
-        {data: BodyType<SttLanguageInput>},
-        TContext
-      > => {
-      return useMutation(getUpdateSttLanguageMutationOptions(options));
     }
 
 export const getListProjectsUrl = () => {
