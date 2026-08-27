@@ -57,6 +57,198 @@ function colorNameForSlot(slot: number): string {
   return COLOR_SLOT_NAMES[slot % COLOR_SLOT_NAMES.length] ?? COLOR_SLOT_NAMES[0]!;
 }
 
+// ---------------------------------------------------------------------
+// Intervention messages are posted in whichever language the PROJECT
+// CREATOR (projects.ownerId, not whoever happens to speak) currently has
+// selected for their own speech-to-text recognition -- see sttLanguage on
+// usersTable and RECOGNITION_LANGUAGES in ModeratorChatPanel.tsx, which
+// this must stay in sync with. Class and property names are never
+// translated, in any language, since they're literal identifiers from the
+// shared ontology.
+// ---------------------------------------------------------------------
+
+// The intervention message is mostly a fixed template around freeform
+// example/counterexample text -- translating the fixed parts via a lookup
+// table (rather than an LLM call every round) keeps that wording exact and
+// avoids an extra round trip when nothing new needs translating.
+interface InterventionTemplate {
+  stalledPrefix: string; // e.g. "Discussion stalled — "
+  intro: string;
+  forKeeping: string;
+  forRemoving: string;
+  question: string;
+  noneYet: string;
+  unmatched: string;
+}
+const EN_TEMPLATE: InterventionTemplate = {
+  stalledPrefix: "Discussion stalled — ",
+  intro: "I noticed the discussion has stalled on this property. Here's where things stand:",
+  forKeeping: "For keeping it:",
+  forRemoving: "For removing it:",
+  question: "Would you like to continue discussing, or move to a vote?",
+  noneYet: "(none given yet)",
+  unmatched:
+    "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
+    "Try focusing the discussion on properties already in this shared workspace.",
+};
+const INTERVENTION_TEMPLATES: Record<string, InterventionTemplate> = {
+  en: EN_TEMPLATE,
+  "zh-CN": {
+    stalledPrefix: "讨论已停滞 — ",
+    intro: "我注意到关于这个属性的讨论已经停滞。目前的情况是：",
+    forKeeping: "支持保留：",
+    forRemoving: "支持移除：",
+    question: "你们想继续讨论，还是进行投票？",
+    noneYet: "（暂无）",
+    unmatched: "我注意到讨论已经停滞，但无法确定具体是哪个类或属性。请把讨论集中在这个共享工作区已有的属性上。",
+  },
+  es: {
+    stalledPrefix: "Discusión estancada — ",
+    intro: "He notado que la discusión sobre esta propiedad se ha estancado. Así están las cosas:",
+    forKeeping: "A favor de mantenerla:",
+    forRemoving: "A favor de eliminarla:",
+    question: "¿Quieren seguir discutiendo o pasar a una votación?",
+    noneYet: "(nada aún)",
+    unmatched:
+      "He notado que la discusión se ha estancado, pero no pude determinar de qué clase o propiedad se trataba. " +
+      "Intenten centrar la discusión en propiedades que ya existan en este espacio compartido.",
+  },
+  fr: {
+    stalledPrefix: "Discussion bloquée — ",
+    intro: "J'ai remarqué que la discussion sur cette propriété s'est bloquée. Voici où on en est :",
+    forKeeping: "Pour la garder :",
+    forRemoving: "Pour la supprimer :",
+    question: "Voulez-vous continuer à en discuter, ou passer au vote ?",
+    noneYet: "(rien pour l'instant)",
+    unmatched:
+      "J'ai remarqué que la discussion s'est bloquée, mais je n'ai pas pu déterminer de quelle classe ou propriété " +
+      "il s'agissait. Essayez de recentrer la discussion sur des propriétés déjà présentes dans cet espace partagé.",
+  },
+  de: {
+    stalledPrefix: "Diskussion ins Stocken geraten — ",
+    intro: "Mir ist aufgefallen, dass die Diskussion zu dieser Eigenschaft ins Stocken geraten ist. So ist der aktuelle Stand:",
+    forKeeping: "Für das Beibehalten:",
+    forRemoving: "Für das Entfernen:",
+    question: "Möchtet ihr weiterdiskutieren oder zur Abstimmung übergehen?",
+    noneYet: "(noch nichts)",
+    unmatched:
+      "Mir ist aufgefallen, dass die Diskussion ins Stocken geraten ist, konnte aber nicht erkennen, um welche Klasse " +
+      "oder Eigenschaft es ging. Versucht, die Diskussion auf Eigenschaften zu fokussieren, die bereits in diesem " +
+      "gemeinsamen Arbeitsbereich vorhanden sind.",
+  },
+  ja: {
+    stalledPrefix: "議論が停滞しています — ",
+    intro: "このプロパティに関する議論が停滞しているようです。現在の状況は次の通りです：",
+    forKeeping: "維持に賛成：",
+    forRemoving: "削除に賛成：",
+    question: "このまま議論を続けますか、それとも投票に移りますか？",
+    noneYet: "（まだありません）",
+    unmatched: "議論が停滞しているようですが、どのクラスまたはプロパティについてか判断できませんでした。この共有ワークスペースに既にあるプロパティに議論を絞ってみてください。",
+  },
+  ko: {
+    stalledPrefix: "논의가 정체되었습니다 — ",
+    intro: "이 속성에 대한 논의가 정체된 것 같습니다. 현재 상황은 다음과 같습니다:",
+    forKeeping: "유지 찬성:",
+    forRemoving: "제거 찬성:",
+    question: "계속 논의하시겠습니까, 아니면 투표로 넘어가시겠습니까?",
+    noneYet: "(아직 없음)",
+    unmatched: "논의가 정체된 것 같지만 어떤 클래스나 속성에 대한 것인지 파악하지 못했습니다. 이미 이 공유 작업 공간에 있는 속성에 논의를 집중해 주세요.",
+  },
+  hi: {
+    stalledPrefix: "चर्चा रुक गई है — ",
+    intro: "मैंने देखा कि इस प्रॉपर्टी पर चर्चा रुक गई है। अभी स्थिति यह है:",
+    forKeeping: "रखने के पक्ष में:",
+    forRemoving: "हटाने के पक्ष में:",
+    question: "क्या आप चर्चा जारी रखना चाहेंगे, या वोट पर जाना चाहेंगे?",
+    noneYet: "(अभी तक कुछ नहीं)",
+    unmatched:
+      "मैंने देखा कि चर्चा रुक गई है, लेकिन यह पता नहीं चल पाया कि यह किस क्लास या प्रॉपर्टी के बारे में थी। " +
+      "कृपया चर्चा को इस साझा वर्कस्पेस में पहले से मौजूद प्रॉपर्टीज़ पर केंद्रित रखें।",
+  },
+  pt: {
+    stalledPrefix: "Discussão estagnada — ",
+    intro: "Percebi que a discussão sobre esta propriedade estagnou. Eis a situação atual:",
+    forKeeping: "A favor de manter:",
+    forRemoving: "A favor de remover:",
+    question: "Vocês querem continuar discutindo ou passar para uma votação?",
+    noneYet: "(nada ainda)",
+    unmatched:
+      "Percebi que a discussão estagnou, mas não consegui identificar de qual classe ou propriedade se tratava. " +
+      "Tentem concentrar a discussão em propriedades que já existem neste espaço compartilhado.",
+  },
+  ru: {
+    stalledPrefix: "Обсуждение застопорилось — ",
+    intro: "Я заметил, что обсуждение этого свойства застопорилось. Вот как обстоят дела на данный момент:",
+    forKeeping: "За то, чтобы оставить:",
+    forRemoving: "За то, чтобы убрать:",
+    question: "Хотите продолжить обсуждение или перейти к голосованию?",
+    noneYet: "(пока ничего)",
+    unmatched:
+      "Я заметил, что обсуждение застопорилось, но не смог понять, о каком классе или свойстве идёт речь. " +
+      "Постарайтесь сосредоточить обсуждение на свойствах, уже существующих в этом общем рабочем пространстве.",
+  },
+};
+// Human-readable name (fed to the translation prompt) per language prefix --
+// keep in sync with INTERVENTION_TEMPLATES/RECOGNITION_LANGUAGES.
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  "zh-CN": "Simplified Chinese",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  ja: "Japanese",
+  ko: "Korean",
+  hi: "Hindi",
+  pt: "Portuguese",
+  ru: "Russian",
+};
+function templateKeyForSttLanguage(sttLanguage: string): string {
+  if (sttLanguage === "zh-CN") return "zh-CN";
+  const prefix = sttLanguage.split("-")[0] ?? "en";
+  return INTERVENTION_TEMPLATES[prefix] ? prefix : "en";
+}
+function interventionTemplateFor(sttLanguage: string): InterventionTemplate {
+  return INTERVENTION_TEMPLATES[templateKeyForSttLanguage(sttLanguage)] ?? EN_TEMPLATE;
+}
+
+// Translates only the freeform example/counterexample text that's actually
+// NEW or freshly revised this round (see the `freshIndices` distinction in
+// reconcile() below) -- text carried over unchanged from a previous round
+// is already in the target language and MUST NOT be re-translated, or its
+// frozen wording would silently drift round to round.
+async function translateFreshTexts(
+  apiKey: string,
+  model: string,
+  texts: string[],
+  sttLanguage: string,
+  className: string,
+  propertyName: string,
+): Promise<string[]> {
+  if (texts.length === 0) return texts;
+  const languageLabel = LANGUAGE_LABELS[templateKeyForSttLanguage(sttLanguage)] ?? "English";
+  const result = await callOpenAiJson(
+    apiKey,
+    model,
+    `Translate each of the following short statements into ${languageLabel}, preserving the original meaning and ` +
+      "tone as closely as possible. These are spoken remarks from a group discussion, so keep the translation " +
+      "natural and conversational, not stiff or literal. " +
+      `The class name "${className}" and the property name "${propertyName}" are literal identifiers and must ` +
+      "remain EXACTLY as written, untranslated, wherever they appear inside a statement -- translate only the " +
+      "surrounding language. " +
+      'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+      '{"translations": string[]}, with exactly one translated string per input statement, in the same order.',
+    JSON.stringify(texts),
+  );
+  const translations = Array.isArray(result?.translations) ? result.translations : null;
+  if (!translations || translations.length !== texts.length || !translations.every((t: unknown) => typeof t === "string")) {
+    // Translation failed or came back malformed -- fall back to the
+    // untranslated (English) text rather than dropping the point or
+    // blocking the intervention entirely.
+    return texts;
+  }
+  return translations;
+}
+
 // One silence timer per project, shared across every active participant --
 // the AI moderator produces one running discussion per project (not one per
 // person), so "60 seconds since the last chunk from ANYONE currently on" is
@@ -518,6 +710,15 @@ async function generateIntervention(projectId: number): Promise<void> {
   const users = await db.query.usersTable.findMany();
   const usernameById = new Map(users.map((u) => [u.id, u.username]));
 
+  // Intervention messages are posted in whichever language the PROJECT
+  // CREATOR currently has selected for their own speech-to-text
+  // recognition -- not whichever language members happen to be speaking in
+  // (see the INTERVENTION_TEMPLATES/translateFreshTexts doc comments
+  // above). Falls back to English if the project or its owner somehow
+  // can't be resolved.
+  const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+  const ownerSttLanguage = (project ? users.find((u) => u.id === project.ownerId)?.sttLanguage : undefined) ?? "en-US";
+
   // Members commonly refer to each other by their assigned color instead of
   // by name or by restating an opinion (e.g. "I agree with Blue") -- see
   // the color-legend usage in the Pass 2 extraction prompt below. Build the
@@ -926,7 +1127,16 @@ async function generateIntervention(projectId: number): Promise<void> {
       // store to write back to; the result becomes part of the new
       // intervention message row itself, which in turn becomes "existing"
       // for the NEXT round.
-      function reconcile(existing: TransientPoint[], responseEntries: ParsedResponseEntry[]): ModeratorInterventionEntry[] {
+      // `fresh` flags which entries carry text that's NEW this round (a
+      // brand-new point, or an existing point explicitly revised) as
+      // opposed to text simply carried over unchanged from a previous
+      // round's frozen wording -- see translateFreshTexts above, which
+      // relies on this distinction to avoid re-translating (and thereby
+      // silently drifting) already-established wording.
+      function reconcile(
+        existing: TransientPoint[],
+        responseEntries: ParsedResponseEntry[],
+      ): { entries: ModeratorInterventionEntry[]; fresh: boolean[] } {
         const byId = new Map(existing.map((p) => [p.id, p]));
 
         // --- Fold merges first, before doing anything else. ---
@@ -965,6 +1175,7 @@ async function generateIntervention(projectId: number): Promise<void> {
         }
 
         const result: ModeratorInterventionEntry[] = [];
+        const fresh: boolean[] = [];
 
         // Existing points first, in their original stable order, so the
         // card's row order never reshuffles between interventions.
@@ -974,6 +1185,7 @@ async function generateIntervention(projectId: number): Promise<void> {
           const extra = extraById.get(point.id);
           let text = point.text;
           let by = point.by;
+          let wasRevised = false;
           if (response || extra) {
             const removeSet = new Set([...(response?.remove ?? []), ...(extra?.remove ?? [])].map((n) => n.toLowerCase()));
             by = Array.from(new Set([...point.by, ...(response?.by ?? []), ...(extra?.by ?? [])])).filter(
@@ -981,6 +1193,7 @@ async function generateIntervention(projectId: number): Promise<void> {
             );
             if (response?.revise && response.text.length > 0) {
               text = response.text;
+              wasRevised = true;
             }
           }
           if (by.length === 0) {
@@ -990,6 +1203,7 @@ async function generateIntervention(projectId: number): Promise<void> {
             continue;
           }
           result.push({ text, by });
+          fresh.push(wasRevised);
         }
 
         // Anything the model returned with no id (or an id that doesn't
@@ -999,36 +1213,70 @@ async function generateIntervention(projectId: number): Promise<void> {
           if (response.id !== null && byId.has(response.id)) continue;
           if (response.by.length === 0) continue;
           result.push({ text: response.text, by: response.by });
+          fresh.push(true);
         }
 
-        return result;
+        return { entries: result, fresh };
       }
 
-      const exampleEntries = reconcile(existingExamplePoints, toResponseEntries(rawExamples));
-      const counterexampleEntries = reconcile(existingCounterexamplePoints, toResponseEntries(rawCounterexamples));
+      const exampleResult = reconcile(existingExamplePoints, toResponseEntries(rawExamples));
+      const counterexampleResult = reconcile(existingCounterexamplePoints, toResponseEntries(rawCounterexamples));
+      let exampleEntries = exampleResult.entries;
+      let counterexampleEntries = counterexampleResult.entries;
 
+      // Translate only the freshly-produced text (see reconcile's `fresh`
+      // flags) into the project creator's currently selected speech-to-text
+      // language -- text carried over unchanged from a previous round is
+      // already in that language and is left byte-for-byte untouched, so
+      // established wording never drifts round to round. English needs no
+      // translation call at all.
+      if (templateKeyForSttLanguage(ownerSttLanguage) !== "en") {
+        const translateEntries = async (entries: ModeratorInterventionEntry[], freshFlags: boolean[]) => {
+          const freshIndices = freshFlags.map((f, i) => (f ? i : -1)).filter((i) => i >= 0);
+          if (freshIndices.length === 0) return entries;
+          const translated = await translateFreshTexts(
+            apiKey,
+            config.model,
+            freshIndices.map((i) => entries[i]!.text),
+            ownerSttLanguage,
+            className,
+            propertyName,
+          );
+          const next = entries.slice();
+          freshIndices.forEach((idx, j) => {
+            next[idx] = { ...next[idx]!, text: translated[j] ?? next[idx]!.text };
+          });
+          return next;
+        };
+        [exampleEntries, counterexampleEntries] = await Promise.all([
+          translateEntries(exampleEntries, exampleResult.fresh),
+          translateEntries(counterexampleEntries, counterexampleResult.fresh),
+        ]);
+      }
+
+      const template = interventionTemplateFor(ownerSttLanguage);
       const formatEntriesText = (entries: ModeratorInterventionEntry[]) =>
         entries.map((e) => `${e.text}. — ${e.by.length > 0 ? e.by.join(", ") : "someone"}`).join("\n") ||
-        "(none given yet)";
+        template.noneYet;
 
       // Fixed template: title/header lives in the client (always "AI
       // moderator"), so the content itself only carries the stalled-property
       // line, the two condensed pro/con lists, and the standing prompt to
       // keep discussing or move to a vote -- no extra framing or attribution
-      // line, per the exact wording the moderator is expected to use.
+      // line, per the exact wording the moderator is expected to use. The
+      // template phrases are in the project creator's selected language;
+      // className/propertyName themselves are NEVER translated.
       interventionContent =
-        `Discussion stalled — ${className}.${propertyName}\n\n` +
-        `I noticed the discussion has stalled on this property. Here's where things stand:\n\n` +
-        `For keeping it:\n\n${formatEntriesText(exampleEntries)}\n\n` +
-        `For removing it:\n\n${formatEntriesText(counterexampleEntries)}\n\n` +
-        `Would you like to continue discussing, or move to a vote?`;
+        `${template.stalledPrefix}${className}.${propertyName}\n\n` +
+        `${template.intro}\n\n` +
+        `${template.forKeeping}\n\n${formatEntriesText(exampleEntries)}\n\n` +
+        `${template.forRemoving}\n\n${formatEntriesText(counterexampleEntries)}\n\n` +
+        `${template.question}`;
       interventionExamples = exampleEntries;
       interventionCounterexamples = counterexampleEntries;
       hasNothingToShow = exampleEntries.length === 0 && counterexampleEntries.length === 0;
     } else {
-      interventionContent =
-        "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
-        "Try focusing the discussion on properties already in this shared workspace.";
+      interventionContent = interventionTemplateFor(ownerSttLanguage).unmatched;
     }
   } catch (err) {
     logger.error({ err, projectId }, "Moderator intervention generation errored");

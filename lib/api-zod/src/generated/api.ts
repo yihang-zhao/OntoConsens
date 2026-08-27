@@ -79,7 +79,8 @@ export const LogoutResponse = zod.void()
 export const GetMeResponse = zod.object({
   "id": zod.number().int(),
   "username": zod.string(),
-  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.')
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.'),
+  "sttLanguage": zod.string().describe('BCP-47 tag for this account\'s currently selected speech-to-text language. When this account owns a project, the AI moderator posts intervention messages translated into this language.')
 })
 
 
@@ -97,7 +98,27 @@ export const UpdateApiKeyBody = zod.object({
 export const UpdateApiKeyResponse = zod.object({
   "id": zod.number().int(),
   "username": zod.string(),
-  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.')
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.'),
+  "sttLanguage": zod.string().describe('BCP-47 tag for this account\'s currently selected speech-to-text language. When this account owns a project, the AI moderator posts intervention messages translated into this language.')
+})
+
+
+/**
+ * Persists the language this account has currently selected for its own speech-to-text recognition. When this account owns a project, the AI moderator's intervention messages are posted translated into this language.
+ * @summary Update the current account's speech-to-text language
+ */
+
+
+
+export const UpdateSttLanguageBody = zod.object({
+  "language": zod.string().min(1).describe('BCP-47 tag (e.g. \"en-US\", \"zh-CN\") matching one of the languages offered by the speech-to-text language picker.')
+})
+
+export const UpdateSttLanguageResponse = zod.object({
+  "id": zod.number().int(),
+  "username": zod.string(),
+  "apiKeyConfigured": zod.boolean().describe('True once this account has an OpenAI API key saved.'),
+  "sttLanguage": zod.string().describe('BCP-47 tag for this account\'s currently selected speech-to-text language. When this account owns a project, the AI moderator posts intervention messages translated into this language.')
 })
 
 

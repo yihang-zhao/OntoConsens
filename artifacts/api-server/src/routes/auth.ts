@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { RegisterBody, LoginBody, UpdateApiKeyBody } from "@workspace/api-zod";
+import { RegisterBody, LoginBody, UpdateApiKeyBody, UpdateSttLanguageBody } from "@workspace/api-zod";
 import {
   hashPassword,
   verifyPassword,
@@ -16,6 +16,22 @@ const router: IRouter = Router();
 function hasApiKey(user: { openaiApiKeyEncrypted: string | null }): boolean {
   return Boolean(user.openaiApiKeyEncrypted);
 }
+
+// Must stay in sync with RECOGNITION_LANGUAGES in
+// ModeratorChatPanel.tsx -- that's the exact set of languages the picker
+// ever sends here.
+const ALLOWED_STT_LANGUAGES = [
+  "en-US",
+  "zh-CN",
+  "es-ES",
+  "fr-FR",
+  "de-DE",
+  "ja-JP",
+  "ko-KR",
+  "hi-IN",
+  "pt-BR",
+  "ru-RU",
+];
 
 router.post("/auth/register", async (req, res) => {
   const parsed = RegisterBody.safeParse(req.body);
@@ -57,7 +73,13 @@ router.post("/auth/register", async (req, res) => {
   }
 
   const token = createSessionToken(user.id);
-  res.status(201).json({ id: user.id, username: user.username, token, apiKeyConfigured: true });
+  res.status(201).json({
+    id: user.id,
+    username: user.username,
+    token,
+    apiKeyConfigured: true,
+    sttLanguage: user.sttLanguage,
+  });
 });
 
 router.post("/auth/login", async (req, res) => {
@@ -77,7 +99,13 @@ router.post("/auth/login", async (req, res) => {
   }
 
   const token = createSessionToken(user.id);
-  res.json({ id: user.id, username: user.username, token, apiKeyConfigured: hasApiKey(user) });
+  res.json({
+    id: user.id,
+    username: user.username,
+    token,
+    apiKeyConfigured: hasApiKey(user),
+    sttLanguage: user.sttLanguage,
+  });
 });
 
 router.post("/auth/logout", (req, res) => {
@@ -96,7 +124,12 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
-  res.json({ id: user.id, username: user.username, apiKeyConfigured: hasApiKey(user) });
+  res.json({
+    id: user.id,
+    username: user.username,
+    apiKeyConfigured: hasApiKey(user),
+    sttLanguage: user.sttLanguage,
+  });
 });
 
 // Lets a signed-in user view/replace the OpenAI API key on their own
@@ -129,7 +162,46 @@ router.put("/auth/api-key", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Failed to update API key" });
     return;
   }
-  res.json({ id: user.id, username: user.username, apiKeyConfigured: true });
+  res.json({
+    id: user.id,
+    username: user.username,
+    apiKeyConfigured: true,
+    sttLanguage: user.sttLanguage,
+  });
+});
+
+// Lets a signed-in user persist which language their own speech-to-text
+// recognizer is currently set to. When this account owns a project, the AI
+// moderator translates its intervention messages into this language (see
+// moderatorEngine.ts).
+router.put("/auth/stt-language", requireAuth, async (req, res) => {
+  const parsed = UpdateSttLanguageBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+    return;
+  }
+  const language = parsed.data.language.trim();
+  if (!ALLOWED_STT_LANGUAGES.includes(language)) {
+    res.status(400).json({ error: "Unsupported language" });
+    return;
+  }
+
+  const [user] = await db
+    .update(usersTable)
+    .set({ sttLanguage: language })
+    .where(eq(usersTable.id, req.userId!))
+    .returning();
+
+  if (!user) {
+    res.status(500).json({ error: "Failed to update language" });
+    return;
+  }
+  res.json({
+    id: user.id,
+    username: user.username,
+    apiKeyConfigured: hasApiKey(user),
+    sttLanguage: user.sttLanguage,
+  });
 });
 
 export default router;

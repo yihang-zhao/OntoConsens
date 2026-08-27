@@ -49,11 +49,21 @@ export interface UpdateApiKeyInput {
   apiKey: string;
 }
 
+export interface SttLanguageInput {
+  /**
+     * BCP-47 tag (e.g. "en-US", "zh-CN") matching one of the languages offered by the speech-to-text language picker.
+     * @minLength 1
+     */
+  language: string;
+}
+
 export interface User {
   id: number;
   username: string;
   /** True once this account has an OpenAI API key saved. */
   apiKeyConfigured: boolean;
+  /** BCP-47 tag for this account's currently selected speech-to-text language. When this account owns a project, the AI moderator posts intervention messages translated into this language. */
+  sttLanguage: string;
 }
 
 export interface AuthResponse {
