@@ -29,7 +29,7 @@ export const projectModeratorTable = pgTable("project_moderator", {
   // Exact model id to use for the summarization step. Configurable per
   // project rather than hardcoded, since it's the creator's own key/account
   // and they may not have access to every model id.
-  model: text("model").notNull().default("gpt-5.6-terra"),
+  model: text("model").notNull().default("gpt-5.6-sol"),
   // DEPRECATED — legacy per-project key, from before API keys moved to the
   // account level. No longer written by new code. Kept only so existing
   // rows created before this migration keep working: the api-server reads
