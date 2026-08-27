@@ -648,6 +648,13 @@ async function generateIntervention(projectId: number): Promise<void> {
       "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
         "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
         "retained, removed, or how it should be defined). " +
+        "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
+        "near-homophone transcription errors -- words or names that sound similar to what was actually said but " +
+        "were transcribed wrong (e.g. a class or property name mis-heard as an ordinary word or a different " +
+        "name that sounds alike, or small mangled phrasing around it). Do not take the literal text at face " +
+        "value when it doesn't quite make sense; sound out the words and infer the speaker's actual intended " +
+        "meaning, matching it against the real catalog names below by sound and context, not just exact " +
+        "spelling. " +
         "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
         catalogText +
         (previousInterventionTopic
@@ -779,6 +786,11 @@ async function generateIntervention(projectId: number): Promise<void> {
         apiKey,
         config.model,
         `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
+          "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
+          "near-homophone transcription errors -- words, names, or short phrases mis-heard as something that " +
+          "sounds similar but isn't what was actually said. When a message doesn't quite make sense as written, " +
+          "don't take it at face value -- sound it out and interpret the speaker's actual intended meaning from " +
+          "context before deciding whether it's an example, a counterexample, an agreement, or a disagreement. " +
           "Below is the PREVIOUS INTERVENTION MESSAGE you already sent the group about this property (if any), " +
           "followed by every user message exchanged SINCE that message. Base your answer ONLY on these two " +
           "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
