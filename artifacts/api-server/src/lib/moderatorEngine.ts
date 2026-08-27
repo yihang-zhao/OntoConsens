@@ -32,11 +32,12 @@ const SILENCE_TIMEOUT_MS = 2_000;
 // intervention message appears, once conditions 1-3 have all already been
 // confirmed true (see generateIntervention) -- purely a display delay, the
 // message itself is already generated and durably committed by this point.
-// Kept short and non-zero (rather than removed outright) so the indicator
-// still gets one visible frame instead of being replaced by the real
-// message in the same tick -- minimal latency is the priority here, not a
-// naturalistic typing simulation.
-const INTERVENTION_TYPING_DELAY_MS = 250;
+// Set to 0: minimizing time-to-appear is the priority, not a naturalistic
+// typing simulation, and the typing indicator still gets its own visible
+// frame for free from the unavoidable gap before it (serializeChatMessage
+// below does its own DB round trip), so no artificial hold is needed on
+// top of that.
+const INTERVENTION_TYPING_DELAY_MS = 0;
 
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
@@ -523,44 +524,67 @@ async function generateIntervention(projectId: number): Promise<void> {
   // `config` (for the checkpoint clause) and `projectId`. Firing them
   // together instead of sequentially is a straightforward latency win on
   // every single intervention attempt.
-  const [newChunks, users, projectMembers, [classes, properties], lastPostedIntervention] = await Promise.all([
-    db.query.moderatorTranscriptChunksTable.findMany({
-      where: and(eq(moderatorTranscriptChunksTable.projectId, projectId), sinceClause),
-    }),
-    db.query.usersTable.findMany(),
-    db.query.projectMembersTable.findMany({
-      where: eq(projectMembersTable.projectId, projectId),
-    }),
-    Promise.all([
-      db.query.ontologyClassesTable.findMany({ where: eq(ontologyClassesTable.projectId, projectId) }),
-      db.query.propertiesTable.findMany({ where: eq(propertiesTable.projectId, projectId) }),
-    ]),
-    db
-      .select({
-        content: moderatorChatMessagesTable.content,
-        classId: moderatorChatMessagesTable.classId,
-        propertyId: moderatorChatMessagesTable.propertyId,
-        createdAt: moderatorChatMessagesTable.createdAt,
-        // Pulled along with the rest of this row (not just content/ids) so
-        // the combined topic+extraction call below can reuse it directly as
-        // "the existing points" when the round turns out to be a plain
-        // continuation -- see isContinuation below -- without a second
-        // round trip to re-fetch the exact same row by classId/propertyId.
-        examples: moderatorChatMessagesTable.examples,
-        counterexamples: moderatorChatMessagesTable.counterexamples,
-      })
-      .from(moderatorChatMessagesTable)
-      .where(
-        and(
-          eq(moderatorChatMessagesTable.projectId, projectId),
-          eq(moderatorChatMessagesTable.type, "intervention"),
-          eq(moderatorChatMessagesTable.matched, true),
-        ),
-      )
-      .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
-      .limit(1)
-      .then((rows) => rows[0]),
-  ]);
+  const lastPostedInterventionPromise = db
+    .select({
+      content: moderatorChatMessagesTable.content,
+      classId: moderatorChatMessagesTable.classId,
+      propertyId: moderatorChatMessagesTable.propertyId,
+      createdAt: moderatorChatMessagesTable.createdAt,
+      // Pulled along with the rest of this row (not just content/ids) so
+      // the combined topic+extraction call below can reuse it directly as
+      // "the existing points" when the round turns out to be a plain
+      // continuation -- see isContinuation below -- without a second
+      // round trip to re-fetch the exact same row by classId/propertyId.
+      examples: moderatorChatMessagesTable.examples,
+      counterexamples: moderatorChatMessagesTable.counterexamples,
+    })
+    .from(moderatorChatMessagesTable)
+    .where(
+      and(
+        eq(moderatorChatMessagesTable.projectId, projectId),
+        eq(moderatorChatMessagesTable.type, "intervention"),
+        eq(moderatorChatMessagesTable.matched, true),
+      ),
+    )
+    .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+    .limit(1)
+    .then((rows) => rows[0]);
+
+  // "Every user message exchanged since" the last posted intervention (see
+  // previousInterventionTopic's doc comment further down) -- chained
+  // directly off lastPostedInterventionPromise, rather than awaited
+  // separately afterwards, so its own DB round trip overlaps with
+  // newChunks/users/projectMembers/classes/properties below instead of
+  // only starting once every one of those has already finished. A `null`
+  // lastPostedIntervention resolves this to `null` immediately (no query),
+  // which the code below falls back to `newChunks` for.
+  const sinceLastInterventionChunksPromise = lastPostedInterventionPromise.then((row) =>
+    row
+      ? db.query.moderatorTranscriptChunksTable.findMany({
+          where: and(
+            eq(moderatorTranscriptChunksTable.projectId, projectId),
+            gt(moderatorTranscriptChunksTable.createdAt, row.createdAt),
+          ),
+        })
+      : null,
+  );
+
+  const [newChunks, users, projectMembers, [classes, properties], lastPostedIntervention, sinceLastInterventionChunksRaw] =
+    await Promise.all([
+      db.query.moderatorTranscriptChunksTable.findMany({
+        where: and(eq(moderatorTranscriptChunksTable.projectId, projectId), sinceClause),
+      }),
+      db.query.usersTable.findMany(),
+      db.query.projectMembersTable.findMany({
+        where: eq(projectMembersTable.projectId, projectId),
+      }),
+      Promise.all([
+        db.query.ontologyClassesTable.findMany({ where: eq(ontologyClassesTable.projectId, projectId) }),
+        db.query.propertiesTable.findMany({ where: eq(propertiesTable.projectId, projectId) }),
+      ]),
+      lastPostedInterventionPromise,
+      sinceLastInterventionChunksPromise,
+    ]);
   if (newChunks.length === 0) return; // Silence with nothing new to say — nothing to summarize.
 
   const usernameById = new Map(users.map((u) => [u.id, u.username]));
@@ -651,15 +675,10 @@ async function generateIntervention(projectId: number): Promise<void> {
 
   // "Every user message exchanged since" that last posted intervention --
   // project-wide, since pass 1 doesn't yet know which property (if any)
-  // the new messages concern.
-  const sinceLastInterventionChunks = lastPostedIntervention
-    ? await db.query.moderatorTranscriptChunksTable.findMany({
-        where: and(
-          eq(moderatorTranscriptChunksTable.projectId, projectId),
-          gt(moderatorTranscriptChunksTable.createdAt, lastPostedIntervention.createdAt),
-        ),
-      })
-    : newChunks;
+  // the new messages concern. Already fetched above (overlapped with the
+  // other independent reads via sinceLastInterventionChunksPromise) --
+  // nothing left to await here.
+  const sinceLastInterventionChunks = sinceLastInterventionChunksRaw ?? newChunks;
   const sinceLastInterventionTranscript = formatChunksAsTranscript(sinceLastInterventionChunks, usernameById);
 
   // The bulk of the extraction rules (merge/stability/color-reference logic)
@@ -670,11 +689,6 @@ async function generateIntervention(projectId: number): Promise<void> {
   // copies silently drifting apart.
   function extractionRules(className: string, propertyName: string): string {
     return (
-      `IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain ` +
-      "near-homophone transcription errors -- words, names, or short phrases mis-heard as something that " +
-      "sounds similar but isn't what was actually said. When a message doesn't quite make sense as written, " +
-      "don't take it at face value -- sound it out and interpret the speaker's actual intended meaning from " +
-      "context before deciding whether it's an example, a counterexample, an agreement, or a disagreement. " +
       `Extract every concrete EXAMPLE given in support of keeping/adding ${className}.${propertyName}, and every ` +
       "COUNTEREXAMPLE or objection given against it -- include something even if it was only mentioned once and " +
       "never repeated, but leave it out if someone explicitly retracted or contradicted it. For each one, note " +
@@ -817,16 +831,14 @@ async function generateIntervention(projectId: number): Promise<void> {
       const combined = await callOpenAiJson(
         apiKey,
         config.model,
-        "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
-          "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
-          "retained, removed, or how it should be defined). " +
-          "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
-          "near-homophone transcription errors -- words or names that sound similar to what was actually said but " +
-          "were transcribed wrong (e.g. a class or property name mis-heard as an ordinary word or a different " +
-          "name that sounds alike, or small mangled phrasing around it). Do not take the literal text at face " +
-          "value when it doesn't quite make sense; sound out the words and infer the speaker's actual intended " +
-          "meaning, matching it against the real catalog names below by sound and context, not just exact " +
-          "spelling. " +
+        "You are an AI moderator for a group ontology-design conversation, doing TWO jobs in this one pass: " +
+          "(1) identify the SINGLE class and property the speakers are currently discussing (whether it should " +
+          "be retained, removed, or how it should be defined), and (2), conditionally, extract an updated " +
+          "examples/counterexamples list for that property -- see the SECOND section below for exactly when " +
+          "that applies. Every message below is from real-time speech-to-text and can contain near-homophone " +
+          "errors (a name or word transcribed as something that merely sounds alike); infer intended meaning " +
+          "by sound and context rather than taking odd literal text at face value -- this applies throughout " +
+          "both jobs below, not just topic identification. " +
           "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
           catalogText +
           `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, about ` +
@@ -1004,6 +1016,9 @@ async function generateIntervention(projectId: number): Promise<void> {
           apiKey,
           config.model,
           `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
+            "Every message below is from real-time speech-to-text and can contain near-homophone errors (a " +
+            "name or word transcribed as something that merely sounds alike); infer intended meaning by sound " +
+            "and context rather than taking odd literal text at face value. " +
             "Below is the PREVIOUS INTERVENTION MESSAGE you already sent the group about this property (if any), " +
             "followed by every user message exchanged SINCE that message. Base your answer ONLY on these two " +
             "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
@@ -1183,11 +1198,30 @@ async function generateIntervention(projectId: number): Promise<void> {
   // and only if the project's moderator config row is still the one we
   // generated this intervention for.
   const [insertedRow, committed] = await db.transaction(async (tx) => {
-    const [current] = await tx
-      .select()
-      .from(projectModeratorTable)
-      .where(eq(projectModeratorTable.projectId, projectId))
-      .for("update");
+    // These two reads touch different tables and neither depends on the
+    // other's result -- firing them together instead of sequentially saves
+    // a DB round trip inside the transaction, on the critical path right
+    // before the message is actually committed.
+    const [[current], [previousIntervention]] = await Promise.all([
+      tx
+        .select()
+        .from(projectModeratorTable)
+        .where(eq(projectModeratorTable.projectId, projectId))
+        .for("update"),
+      tx
+        .select({
+          content: moderatorChatMessagesTable.content,
+          matched: moderatorChatMessagesTable.matched,
+          classId: moderatorChatMessagesTable.classId,
+          propertyId: moderatorChatMessagesTable.propertyId,
+          examples: moderatorChatMessagesTable.examples,
+          counterexamples: moderatorChatMessagesTable.counterexamples,
+        })
+        .from(moderatorChatMessagesTable)
+        .where(and(eq(moderatorChatMessagesTable.projectId, projectId), eq(moderatorChatMessagesTable.type, "intervention")))
+        .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
+        .limit(1),
+    ]);
     if (!current) return [undefined, false] as const;
 
     // Never re-post over the same underlying content back-to-back -- e.g.
@@ -1222,19 +1256,8 @@ async function generateIntervention(projectId: number): Promise<void> {
         })
         .sort()
         .join("\u0001");
-    const [previousIntervention] = await tx
-      .select({
-        content: moderatorChatMessagesTable.content,
-        matched: moderatorChatMessagesTable.matched,
-        classId: moderatorChatMessagesTable.classId,
-        propertyId: moderatorChatMessagesTable.propertyId,
-        examples: moderatorChatMessagesTable.examples,
-        counterexamples: moderatorChatMessagesTable.counterexamples,
-      })
-      .from(moderatorChatMessagesTable)
-      .where(and(eq(moderatorChatMessagesTable.projectId, projectId), eq(moderatorChatMessagesTable.type, "intervention")))
-      .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
-      .limit(1);
+    // previousIntervention was already fetched above, in parallel with the
+    // row-locked `current` select.
     const isSameAsPrevious = (() => {
       if (!previousIntervention) return false;
       if (!matched) {
