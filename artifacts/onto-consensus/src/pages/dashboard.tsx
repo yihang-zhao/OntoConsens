@@ -283,7 +283,7 @@ export default function Dashboard() {
                         <FormItem>
                           <FormLabel>Project Name</FormLabel>
                           <FormControl>
-                            <Input {...field} />
+                            <Input {...field} disabled={createProject.isPending} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -295,7 +295,7 @@ export default function Dashboard() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Number of Members</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
+                          <Select onValueChange={field.onChange} value={field.value} disabled={createProject.isPending}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select number of members" />
@@ -323,6 +323,7 @@ export default function Dashboard() {
                                 <input
                                   type="file"
                                   className="sr-only"
+                                  disabled={createProject.isPending}
                                   ref={(el) => {
                                     fileInputRef.current = el;
                                     ref(el);
@@ -335,8 +336,9 @@ export default function Dashboard() {
                                 />
                                 <button
                                   type="button"
+                                  disabled={createProject.isPending}
                                   onClick={() => fileInputRef.current?.click()}
-                                  className="flex w-full items-center gap-3 rounded-md border border-dashed border-input bg-transparent px-3 py-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  className="flex w-full items-center gap-3 rounded-md border border-dashed border-input bg-transparent px-3 py-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
                                 >
                                   {selectedFile ? (
                                     <>
