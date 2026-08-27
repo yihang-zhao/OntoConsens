@@ -679,6 +679,12 @@ async function generateIntervention(projectId: number): Promise<void> {
       "COUNTEREXAMPLE or objection given against it -- include something even if it was only mentioned once and " +
       "never repeated, but leave it out if someone explicitly retracted or contradicted it. For each one, note " +
       "who said it. " +
+      "Write every \"text\" value in the SAME language the users are speaking in the transcript below (if the " +
+      "transcript mixes languages, use whichever language is predominant) -- never translate it into English or " +
+      "any other language. The one exception is the class name and property name themselves: whenever a class " +
+      `or property name (such as "${className}" or "${propertyName}") appears within that text, keep it exactly ` +
+      "as it's spelled in the catalog, untranslated and unchanged, even though the rest of the sentence around " +
+      "it is written in the transcript's language. " +
       "If the SAME underlying point was made more than once -- whether by the same person repeating " +
       "themselves, or by different people independently making an equivalent point -- merge it into a " +
       "single entry rather than listing it twice, and list every person who made that point (in the order " +
