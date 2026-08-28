@@ -224,12 +224,50 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     // grows within one session, so everything before this offset is simply
     // ignored by textFromResults from then on; it's reset to 0 only when a
     // brand-new recognition session actually starts (see start()).
+    //
+    // This offset can only safely skip a results[] entry the browser has
+    // itself marked `isFinal` -- that entry is locked in and will never
+    // change again. Our own SILENCE_FINALIZE_MS pause detector runs on a
+    // fixed wall-clock timer that is completely independent of (and, in
+    // practice, usually a bit faster than) the browser's OWN internal
+    // endpointing, which decides isFinal on its own schedule. That means at
+    // the moment WE decide to finalize, the last results[] entry is very
+    // often STILL interim -- the browser hasn't yet decided that phrase is
+    // over, and will keep growing that SAME entry (not start a new one) with
+    // whatever the user says as they resume talking. Naively setting
+    // resultsOffset past that still-mutable entry (e.g. to `results.length`
+    // as of the finalize instant) makes every word the browser goes on to
+    // append to it invisible to textFromResults from then on -- this is
+    // what was silently swallowing the first few words of every new
+    // utterance, deterministically, since our timer being faster than the
+    // browser's own is the common case, not a rare race.
+    //
+    // The fix: never skip past a still-interim entry. If the boundary entry
+    // is interim at finalize time, remember its current text as
+    // `resultsOffsetPrefix` and keep reading from that same index -- but
+    // strip that remembered prefix back off its (possibly still-growing)
+    // text first, so only whatever the browser appends AFTER this point
+    // counts as the new utterance. Once the browser marks that entry final
+    // or starts a genuinely new one, the prefix naturally stops applying.
     let resultsOffset = 0;
+    let resultsOffsetPrefix = "";
 
-    function textFromResults(results: any, offset = 0): string {
+    function textFromResults(results: any, offset = 0, stripPrefixAtOffset = ""): string {
       const parts: string[] = [];
       for (let i = offset; i < results.length; i++) {
-        const text = results[i]?.[0]?.transcript?.trim();
+        let text = results[i]?.[0]?.transcript?.trim() ?? "";
+        if (i === offset && stripPrefixAtOffset) {
+          // The common case: the browser is still growing the same entry
+          // that was already partly accounted for by the utterance just
+          // finalized -- only the growth beyond that snapshot is new.
+          // If the browser instead revised/replaced that entry's text
+          // outright (observed for some languages, see priorSessionsText's
+          // comment above) rather than simply appending to it, the prefix
+          // no longer matches -- fall back to the full text rather than
+          // silently dropping it again; an occasional duplicated word here
+          // is far preferable to the guaranteed word loss this replaces.
+          text = text.startsWith(stripPrefixAtOffset) ? text.slice(stripPrefixAtOffset.length).trim() : text;
+        }
         if (text) parts.push(text);
       }
       return parts.join(" ").trim();
@@ -278,7 +316,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     // state so the effect-teardown flush below finds nothing left to
     // (redundantly) finalize once `active` actually flips to false.
     flushRef.current = () => {
-      const text = currentText(lastResults ? textFromResults(lastResults, resultsOffset) : "");
+      const text = currentText(lastResults ? textFromResults(lastResults, resultsOffset, resultsOffsetPrefix) : "");
       const flushedId = utteranceId;
       priorSessionsText = "";
       lastResults = null;
@@ -296,9 +334,12 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     function start() {
       if (stopped) return;
       // A brand-new recognition session means a brand-new, empty `results`
-      // array from the browser's side -- the offset only ever makes sense
-      // relative to the session it was measured against.
+      // array from the browser's side -- the offset (and any pending
+      // boundary prefix, which only makes sense relative to an entry in the
+      // OLD session's array) only ever makes sense relative to the session
+      // it was measured against.
       resultsOffset = 0;
+      resultsOffsetPrefix = "";
       sessionStartedAt = Date.now();
       forcedRestartPending = false;
       const rec = new Ctor();
@@ -307,7 +348,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       rec.lang = lang;
       rec.onresult = (event: any) => {
         lastResults = event.results;
-        const sessionText = textFromResults(event.results, resultsOffset);
+        const sessionText = textFromResults(event.results, resultsOffset, resultsOffsetPrefix);
         lastSpeechAt = Date.now();
         // The new utterance has now produced real output -- the tighter
         // post-finalize watchdog window (see its constants above) is over;
@@ -324,7 +365,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         // never got folded into priorSessionsText -- carry them forward so
         // the restart below is invisible rather than dropping the tail end
         // of what was just said.
-        if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset));
+        if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset, resultsOffsetPrefix));
         lastResults = null;
         // Restart IMMEDIATELY, not after an artificial delay. The browser
         // stops delivering audio to this session the instant onend fires --
@@ -355,7 +396,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
 
       if (lastSpeechAt && now - lastSpeechAt >= SILENCE_FINALIZE_MS) {
         lastSpeechAt = 0;
-        finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset) : "");
+        finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset, resultsOffsetPrefix) : "");
         // The browser's own results array for this recognition session keeps
         // growing for as long as the session runs -- it never forgets what
         // was already recognized. Left alone, the NEXT onresult would rebuild
@@ -364,10 +405,29 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         // restarting the recognizer here, but stopping and restarting the
         // browser's recognizer briefly drops mic capture -- swallowing the
         // first word or two of whatever's said right after the pause.
-        // Instead, just move the offset forward: the recognizer keeps
-        // running uninterrupted, and everything before this point in its
-        // results array is simply ignored from now on.
-        resultsOffset = lastResults ? lastResults.length : resultsOffset;
+        // Instead, just move the offset forward -- but ONLY past entries the
+        // browser has itself already marked final. Our wall-clock silence
+        // timer routinely fires before the browser's own (independent, and
+        // usually slower) endpointing has decided the trailing phrase is
+        // over, so that last entry is very often still interim and will
+        // keep growing with whatever the user says next -- skipping past it
+        // outright (the old behavior) made that growth invisible, which is
+        // what was silently dropping the first few words of every new
+        // utterance. If it's still interim, stay at that same index and
+        // remember its current text so it can be subtracted back out (see
+        // textFromResults) -- only growth beyond this snapshot counts as the
+        // new utterance.
+        if (lastResults) {
+          const results = lastResults;
+          let newOffset = resultsOffset;
+          while (newOffset < results.length && results[newOffset]?.isFinal) {
+            newOffset++;
+          }
+          resultsOffsetPrefix = newOffset < results.length ? (results[newOffset]?.[0]?.transcript?.trim() ?? "") : "";
+          resultsOffset = newOffset;
+        } else {
+          resultsOffsetPrefix = "";
+        }
         lastResults = null;
       }
 
@@ -411,7 +471,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
             staleRecognition.onend = null;
             staleRecognition.onerror = null;
             staleRecognition.onresult = null;
-            if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset));
+            if (lastResults) priorSessionsText = currentText(textFromResults(lastResults, resultsOffset, resultsOffsetPrefix));
             lastResults = null;
             recognition = null;
             start();
@@ -426,7 +486,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       if (silenceTimer) clearInterval(silenceTimer);
       // Flush whatever's in progress immediately -- e.g. the mic was turned
       // off mid-sentence, which shouldn't silently drop that utterance.
-      finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset) : "");
+      finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset, resultsOffsetPrefix) : "");
       if (recognition) {
         recognition.onend = null;
         recognition.onerror = null;
