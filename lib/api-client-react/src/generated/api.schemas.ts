@@ -118,12 +118,6 @@ export interface ModeratorConfigInput {
   model?: string;
 }
 
-export interface ModeratorTranscriptInput {
-  text: string;
-  /** Client-generated, per-browser-session counter identifying which in-progress utterance this finalized text belongs to. Not persisted -- it's only echoed back on the live "moderator_chat_message" broadcast so every viewer can tell whether the speaker has already started a NEW utterance (and its own live caption) by the time this one's storage round trip completes, so the wrong caption never gets cleared out from under it. */
-  utteranceId?: number;
-}
-
 export interface ModeratorInterventionEntry {
   text: string;
   /** Usernames of every member who made this same point, in the order first raised. */

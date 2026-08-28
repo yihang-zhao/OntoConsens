@@ -21,7 +21,6 @@ export * from './moderatorChatMessageType';
 export * from './moderatorConfigInput';
 export * from './moderatorInterventionEntry';
 export * from './moderatorStatus';
-export * from './moderatorTranscriptInput';
 export * from './ontologyClass';
 export * from './ontologyRelation';
 export * from './projectDetail';

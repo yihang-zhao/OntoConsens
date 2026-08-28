@@ -12,7 +12,6 @@ import { broadcastToProject } from "../lib/wsHub";
 import {
   activateParticipant,
   deactivateParticipant,
-  ensureActiveParticipant,
   generateActivationId,
   getParticipant,
   getProjectOwnerApiKey,
@@ -20,8 +19,6 @@ import {
   postRecordingStartedMessage,
   postRecordingStoppedMessage,
   projectOwnerHasApiKey,
-  recordTranscriptChunk,
-  noteSpeechActivity,
 } from "../lib/moderatorEngine";
 
 const router: IRouter = Router();
@@ -151,54 +148,10 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
   res.json({ active: false, configured: await projectOwnerHasApiKey(projectId, project.ownerId) });
 });
 
-// The client recognizes speech entirely in the member's own browser (Web
-// Speech API) and only calls this once an utterance is finalized (2s of
-// silence, or the mic being turned off) -- there is no server-side
-// transcription step and no OpenAI audio call involved here at all.
-router.post("/projects/:id/moderator/transcript", async (req, res) => {
-  const userId = req.userId!;
-  const projectId = Number(req.params.id);
-  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-  // Client-generated, per-browser-session utterance counter (see
-  // useModeratorAudio's onFinalize) -- not persisted, just echoed back on
-  // the live broadcast below so every viewer's live-caption cleanup can
-  // tell this utterance apart from one the speaker may have already
-  // started while this request was still in flight.
-  const utteranceId = typeof req.body?.utteranceId === "number" ? req.body.utteranceId : undefined;
-
-  const membership = await getMembership(projectId, userId);
-  if (!membership) {
-    res.status(403).json({ error: "You are not a member of this project" });
-    return;
-  }
-  if (!text) {
-    res.status(400).json({ error: "Transcript text is required" });
-    return;
-  }
-
-  // ensureActiveParticipant re-validates against the DB row every time
-  // (not a cached in-memory flag), so a disable that happened while this
-  // was still in flight (or a server restart) is always caught.
-  const active = await ensureActiveParticipant(projectId, userId);
-  if (!active) {
-    res.status(403).json({ error: "You have not turned on the AI moderator for yourself" });
-    return;
-  }
-
-  // recordTranscriptChunk performs the "is this member's participation
-  // still current" check and the insert as one row-locked transaction, so
-  // a disable that happened concurrently can't land this text under a
-  // period this member never consented to.
-  const committed = await recordTranscriptChunk(projectId, userId, text, active.activationId, utteranceId);
-  if (!committed) {
-    res.status(409).json({ error: "Your AI moderator session changed; please try again." });
-    return;
-  }
-
-  // Only armed once we know the chunk actually landed -- never on the
-  // strength of a write that was rejected.
-  noteSpeechActivity(projectId);
-  res.status(204).end();
-});
+// Transcription itself now happens server-side, over the project WebSocket
+// (see wsHub's "mic_start"/"mic_stop"/binary-audio handling and
+// realtimeTranscription.ts, which calls recordTranscriptChunk directly as
+// OpenAI's Realtime API finalizes each utterance) -- there is no longer a
+// REST endpoint for a client to submit a finalized transcript itself.
 
 export default router;

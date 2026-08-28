@@ -467,32 +467,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ModeratorStatus"
 
-  /projects/{id}/moderator/transcript:
-    post:
-      operationId: submitModeratorTranscript
-      tags: [moderator]
-      summary: >-
-        Submit a finalized utterance recognized entirely in the member's own
-        browser (Web Speech API) to append to the moderator transcript --
-        there is no separate server-side transcription step.
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ModeratorTranscriptInput"
-      responses:
-        "204":
-          description: Appended
-        "400":
-          description: Moderator not active or empty text
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
   /projects/{id}/moderator/messages:
     get:
       operationId: listModeratorChatMessages
@@ -710,23 +684,6 @@ components:
             Exact OpenAI model id to use for AI-generated summaries. Defaults
             to the project's already-configured model, or "gpt-5.6-luna" the
             first time a project is configured.
-
-    ModeratorTranscriptInput:
-      type: object
-      required: [text]
-      properties:
-        text:
-          type: string
-        utteranceId:
-          type: integer
-          description: >-
-            Client-generated, per-browser-session counter identifying which
-            in-progress utterance this finalized text belongs to. Not
-            persisted -- it's only echoed back on the live "moderator_chat_message"
-            broadcast so every viewer can tell whether the speaker has
-            already started a NEW utterance (and its own live caption) by
-            the time this one's storage round trip completes, so the wrong
-            caption never gets cleared out from under it.
 
     ModeratorInterventionEntry:
       type: object

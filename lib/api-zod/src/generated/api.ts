@@ -436,21 +436,6 @@ export const DisableModeratorResponse = zod.object({
 
 
 /**
- * @summary Submit a finalized utterance recognized entirely in the member's own browser (Web Speech API) to append to the moderator transcript -- there is no separate server-side transcription step.
- */
-export const SubmitModeratorTranscriptParams = zod.object({
-  "id": zod.coerce.number().int()
-})
-
-export const SubmitModeratorTranscriptBody = zod.object({
-  "text": zod.string(),
-  "utteranceId": zod.number().int().optional().describe('Client-generated, per-browser-session counter identifying which in-progress utterance this finalized text belongs to. Not persisted -- it\'s only echoed back on the live \"moderator_chat_message\" broadcast so every viewer can tell whether the speaker has already started a NEW utterance (and its own live caption) by the time this one\'s storage round trip completes, so the wrong caption never gets cleared out from under it.')
-})
-
-export const SubmitModeratorTranscriptResponse = zod.void()
-
-
-/**
  * @summary Full persisted moderator chat history for this project (intro, system, transcript, and intervention messages), visible to every member regardless of their own mic state.
  */
 export const ListModeratorChatMessagesParams = zod.object({

@@ -1,7 +1,12 @@
 import type { IncomingMessage } from "node:http";
 import crypto from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import { noteSpeechActivity } from "./moderatorEngine";
+import {
+  appendAudioChunk,
+  closeTranscriptionSession,
+  openTranscriptionSession,
+} from "./realtimeTranscription";
+import { logger } from "./logger";
 
 interface Ticket {
   userId: number;
@@ -42,9 +47,50 @@ interface ClientInfo {
   // Absent for a dashboard (user-scoped) connection.
   projectId?: number;
   isAlive: boolean;
+  // Token-bucket rate limit for binary audio frames (see the "message"
+  // handler below) -- without this, a member's socket could forward
+  // arbitrary binary data to the project owner's billed OpenAI Realtime
+  // session as fast as the connection allows, running up their bill and/or
+  // exhausting server resources. Only allocated the first time this client
+  // sends a binary frame.
+  audioBudget?: { tokens: number; lastRefillMs: number; violations: number };
 }
 
 const clients = new Map<WebSocket, ClientInfo>();
+
+// Real audio chunks are raw PCM16 mono at 24kHz -- 48,000 bytes/second.
+// Client-side chunking (see useModeratorAudio's PROCESSOR_BUFFER_SIZE) sends
+// far smaller frames than this ceiling; it exists purely to reject anything
+// wildly larger than any legitimate single frame could ever be, before it's
+// even considered against the rate limit below.
+const MAX_AUDIO_FRAME_BYTES = 64 * 1024;
+// Sustained-rate cap matches the real PCM stream rate (48,000 bytes/sec);
+// the bucket capacity allows a couple of seconds of burst so normal jitter
+// in the client's send timing is never mistaken for abuse.
+const AUDIO_BYTES_PER_SECOND = 48_000;
+const AUDIO_BUCKET_CAPACITY_BYTES = AUDIO_BYTES_PER_SECOND * 2;
+// A client that keeps exceeding the budget after this many consecutive
+// dropped frames isn't hitting a one-off burst -- it's sending audio (or
+// non-audio junk) far beyond what real mic capture could ever produce, so
+// the connection itself is closed rather than silently dropping forever.
+const MAX_AUDIO_VIOLATIONS = 20;
+
+// Returns true if this frame is within budget (and should be forwarded),
+// false if it must be dropped. Mutates the client's token bucket either way.
+function allowAudioFrame(info: ClientInfo, byteLength: number): boolean {
+  if (byteLength > MAX_AUDIO_FRAME_BYTES) return false;
+  const now = Date.now();
+  if (!info.audioBudget) {
+    info.audioBudget = { tokens: AUDIO_BUCKET_CAPACITY_BYTES, lastRefillMs: now, violations: 0 };
+  }
+  const budget = info.audioBudget;
+  const elapsedMs = now - budget.lastRefillMs;
+  budget.lastRefillMs = now;
+  budget.tokens = Math.min(AUDIO_BUCKET_CAPACITY_BYTES, budget.tokens + (elapsedMs / 1000) * AUDIO_BYTES_PER_SECOND);
+  if (byteLength > budget.tokens) return false;
+  budget.tokens -= byteLength;
+  return true;
+}
 
 export type ServerEvent =
   | { type: "cursor"; userId: number; x: number; y: number }
@@ -89,6 +135,12 @@ export type ServerEvent =
       };
     }
   | { type: "moderator_error"; message: string }
+  // Server-to-caller-only ack that a "mic_stop" control message (see
+  // socket.on("message") below) has finished its teardown -- including
+  // durably persisting any last utterance OpenAI was still transcribing.
+  // Never broadcast to the rest of the project, only sent back down the
+  // same socket that asked to stop.
+  | { type: "mic_stop_ack" }
   // Broadcast once all three intervention conditions (silence, a new
   // finalized message, and genuinely new content) are already confirmed
   // true and the message itself is durably committed -- purely tells
@@ -151,6 +203,13 @@ export function setupWebSocketServer(): WebSocketServer {
     if (!info) return;
     clients.delete(socket);
     if (info.projectId === undefined) return; // dashboard connection, nothing to broadcast
+    // A tab closed/navigated away without ever sending "mic_stop" (e.g. a
+    // crash, or just closing the tab mid-sentence) must still tear down any
+    // OpenAI realtime session this member had open -- otherwise it leaks
+    // until it eventually errors out on its own.
+    closeTranscriptionSession(info.projectId, info.userId).catch((err) => {
+      logger.error({ err, projectId: info.projectId, userId: info.userId }, "Failed to close transcription session on disconnect");
+    });
     // Let everyone still in the project know this cursor is gone immediately,
     // instead of leaving a stale cursor on screen until it times out client-side.
     broadcastToProject(info.projectId, { type: "cursor_left", userId: info.userId });
@@ -178,8 +237,36 @@ export function setupWebSocketServer(): WebSocketServer {
       if (info) info.isAlive = true;
     });
 
-    socket.on("message", (raw) => {
+    socket.on("message", (raw, isBinary) => {
       if (ticket.projectId === undefined) return; // dashboard connections don't send anything
+
+      // Raw PCM16/24kHz audio chunks for live transcription arrive as
+      // binary frames -- never JSON -- and are forwarded straight into
+      // this member's OpenAI realtime session (if one is open).
+      if (isBinary) {
+        const info = clients.get(socket);
+        if (!info) return;
+        const buffer = raw as Buffer;
+        if (!allowAudioFrame(info, buffer.length)) {
+          const budget = info.audioBudget!;
+          budget.violations += 1;
+          logger.warn(
+            { projectId: ticket.projectId, userId: ticket.userId, byteLength: buffer.length },
+            "Dropped over-budget audio frame",
+          );
+          if (budget.violations > MAX_AUDIO_VIOLATIONS) {
+            logger.warn(
+              { projectId: ticket.projectId, userId: ticket.userId },
+              "Closing socket for sustained audio rate-limit abuse",
+            );
+            socket.close(1008, "Audio rate limit exceeded");
+          }
+          return;
+        }
+        appendAudioChunk(ticket.projectId, ticket.userId, buffer);
+        return;
+      }
+
       let data: unknown;
       try {
         data = JSON.parse(raw.toString());
@@ -218,26 +305,30 @@ export function setupWebSocketServer(): WebSocketServer {
         data &&
         typeof data === "object" &&
         "type" in data &&
-        (data as { type: unknown }).type === "caption" &&
-        "text" in data &&
-        typeof (data as { text: unknown }).text === "string"
+        (data as { type: unknown }).type === "mic_start"
       ) {
-        const { text } = data as { text: string };
-        const rawUtteranceId = (data as { utteranceId?: unknown }).utteranceId;
-        const utteranceId = typeof rawUtteranceId === "number" ? rawUtteranceId : 0;
-        // Live captions round-trip back to the speaker too, so everyone
-        // (including them) renders the exact same growing text in the same
-        // place -- one source of truth instead of a local echo that could
-        // drift from what peers see.
-        broadcastToProject(ticket.projectId, { type: "live_caption", userId: ticket.userId, text, utteranceId });
-        // Non-empty text means someone currently has words actively filling
-        // into their live box -- that counts as speech activity for the AI
-        // moderator's silence clock, even though nothing has been finalized
-        // into a real message yet. An empty string is just a box being
-        // cleared, not new activity, so it must NOT reset the clock.
-        if (text.trim()) {
-          noteSpeechActivity(ticket.projectId);
-        }
+        const langRaw = (data as { lang?: unknown }).lang;
+        const lang = typeof langRaw === "string" && langRaw ? langRaw : "en-US";
+        // Fire-and-forget: audio chunks that arrive before this resolves are
+        // simply dropped by appendAudioChunk (see realtimeTranscription.ts).
+        openTranscriptionSession(ticket.projectId, ticket.userId, lang).catch((err) => {
+          logger.error({ err, projectId: ticket.projectId, userId: ticket.userId }, "Failed to open transcription session");
+        });
+      } else if (
+        data &&
+        typeof data === "object" &&
+        "type" in data &&
+        (data as { type: unknown }).type === "mic_stop"
+      ) {
+        closeTranscriptionSession(ticket.projectId, ticket.userId)
+          .catch((err) => {
+            logger.error({ err, projectId: ticket.projectId, userId: ticket.userId }, "Failed to close transcription session");
+          })
+          .finally(() => {
+            if (socket.readyState === socket.OPEN) {
+              socket.send(JSON.stringify({ type: "mic_stop_ack" }));
+            }
+          });
       }
     });
 

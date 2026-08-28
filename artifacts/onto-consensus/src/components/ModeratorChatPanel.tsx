@@ -3,7 +3,6 @@ import {
   useConfigureModerator,
   useDisableModerator,
   useListModeratorChatMessages,
-  useSubmitModeratorTranscript,
   getGetModeratorStatusQueryKey,
   getListModeratorChatMessagesQueryKey,
 } from "@workspace/api-client-react";
@@ -74,7 +73,11 @@ interface ModeratorChatPanelProps {
    *  caption (Teams-style), not the final persisted transcript. Only
    *  populated for members whose browser supports the Web Speech API. */
   liveCaptions: Map<number, LiveCaption>;
-  sendCaption: (text: string, utteranceId: number) => void;
+  /** Streams this member's mic audio to the server for live transcription
+   *  (see useModeratorAudio). */
+  sendAudioChunk: (chunk: Int16Array) => void;
+  sendMicStart: (lang: string) => void;
+  sendMicStop: () => Promise<void>;
   clearLiveCaption: (userId: number, utteranceId: number) => void;
   members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
@@ -110,7 +113,9 @@ export function ModeratorChatPanel({
   onVolume,
   speakerVolumes,
   liveCaptions,
-  sendCaption,
+  sendAudioChunk,
+  sendMicStart,
+  sendMicStop,
   clearLiveCaption,
   members,
   moderatorErrorMessage,
@@ -121,7 +126,6 @@ export function ModeratorChatPanel({
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
   const disable = useDisableModerator();
-  const submitTranscript = useSubmitModeratorTranscript();
 
   const { data: history } = useListModeratorChatMessages(projectId, {
     query: { queryKey: getListModeratorChatMessagesQueryKey(projectId) },
@@ -148,44 +152,19 @@ export function ModeratorChatPanel({
   // capturing your mic. The browser's own permission prompt is the only
   // thing the user sees the first time; if they've already granted it, the
   // mic just opens.
-  const { micError, speechSupported, flush } = useModeratorAudio({
+  // Transcription itself now happens server-side (see useModeratorAudio and
+  // realtimeTranscription.ts): this hook just captures and streams the raw
+  // audio. Live captions and finalized transcript messages both arrive back
+  // over the same project socket as before (liveCaptions / liveMessages),
+  // so the rest of this component's rendering is unchanged.
+  const { micError } = useModeratorAudio({
     projectId,
     active: moderatorActive,
     lang: recognitionLang,
     onVolume,
-    // Live, word-by-word text as it's recognized -- this IS the transcript
-    // now, broadcast to everyone (including the speaker) so one growing
-    // message box is visible in real time while they keep talking. Nothing
-    // else touches this bubble's content.
-    onCaption: sendCaption,
-    // Fires once per utterance, 1 second after the last recognized word (or
-    // immediately if the mic is turned off mid-utterance) -- this is the
-    // only point where a permanent chat message gets created, so continuous
-    // talking never fragments into several boxes.
-    onFinalize: (text, utteranceId) => {
-      // Deliberately NOT clearing the caption here. Clearing it immediately
-      // sends an empty caption over the socket and waits on its own
-      // round trip to come back before the box disappears -- an entirely
-      // separate race against the submitTranscript round trip below, and
-      // whichever one lands first, there's a real gap between the box
-      // vanishing and the permanent message appearing (or, the other way
-      // around, a moment where both are visible at once). Either way it
-      // reads as a flash/flicker even though the two round trips carry the
-      // exact same text. Leaving the box showing its already-finalized text
-      // makes the swap invisible: the effect below clears it in the exact
-      // same tick the real message lands, never before and never after.
-      //
-      // This call is fire-and-forget on purpose: finalizing this utterance
-      // and capturing whatever the speaker says next are independent,
-      // parallel processes. The recognizer (see useModeratorAudio) is
-      // already free to keep recognizing immediately -- nothing here waits
-      // on this mutation before the next onCaption can fire -- and
-      // utteranceId travels all the way through the persisted-message
-      // broadcast so the "message landed" effect below can tell whether
-      // this box still belongs to THIS utterance by the time storage
-      // finally confirms it.
-      submitTranscript.mutate({ id: projectId, data: { text, utteranceId } });
-    },
+    sendAudioChunk,
+    sendMicStart,
+    sendMicStop,
   });
 
   // The instant a real transcript message lands, drop its speaker's interim
@@ -226,22 +205,15 @@ export function ModeratorChatPanel({
       // Deactivating first (the old order) would often win the race: the
       // disable request reaches the server, flips this member inactive,
       // and only *then* does turning the mic off trigger the audio hook's
-      // own flush -- whose transcript submission the server now rejects as
-      // coming from an inactive participant, silently dropping whatever
-      // was said right before the mic closed. Sequencing it this way (via
-      // onSettled, so a failed submission still lets disable proceed)
-      // guarantees the transcript is fully accepted or rejected before the
+      // own "mic_stop" round trip (which persists whatever OpenAI was still
+      // transcribing) -- whose write the server now rejects as coming from
+      // an inactive participant, silently dropping whatever was said right
+      // before the mic closed. Awaiting sendMicStop's ack first guarantees
+      // that last utterance is fully accepted or rejected before the
       // deactivation request is even sent.
-      const { text: pendingText, utteranceId: pendingUtteranceId } = flush();
-      const proceedToDisable = () => disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
-      if (pendingText) {
-        submitTranscript.mutate(
-          { id: projectId, data: { text: pendingText, utteranceId: pendingUtteranceId } },
-          { onSettled: proceedToDisable },
-        );
-      } else {
-        proceedToDisable();
-      }
+      sendMicStop().finally(() => {
+        disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
+      });
     } else {
       configure.mutate(
         { id: projectId },
@@ -588,12 +560,6 @@ export function ModeratorChatPanel({
       </div>
 
       <div className="border-t shrink-0 p-3 flex flex-col gap-2">
-        {moderatorActive && !speechSupported && (
-          <p className="text-[11px] font-medium text-muted-foreground bg-muted/50 border rounded-lg px-2.5 py-1.5">
-            Live transcription needs Chrome or Edge -- your mic is on, but your speech can't be turned into text in
-            this browser.
-          </p>
-        )}
         {configure.isError && !moderatorActive && (
           <p className="text-[11px] font-medium text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-2.5 py-1.5">
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
@@ -613,21 +579,19 @@ export function ModeratorChatPanel({
               disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
             />
           </div>
-          {speechSupported && (
-            <Select value={recognitionLang} onValueChange={handleLangChange}>
-              <SelectTrigger className="h-9 w-1/3 shrink-0 rounded-full bg-muted/50 border text-xs pl-3">
-                <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {RECOGNITION_LANGUAGES.map((l) => (
-                  <SelectItem key={l.value} value={l.value} className="text-xs">
-                    {l.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <Select value={recognitionLang} onValueChange={handleLangChange}>
+            <SelectTrigger className="h-9 w-1/3 shrink-0 rounded-full bg-muted/50 border text-xs pl-3">
+              <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RECOGNITION_LANGUAGES.map((l) => (
+                <SelectItem key={l.value} value={l.value} className="text-xs">
+                  {l.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
     </aside>

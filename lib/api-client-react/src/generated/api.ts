@@ -30,7 +30,6 @@ import type {
   Member,
   ModeratorConfigInput,
   ModeratorStatus,
-  ModeratorTranscriptInput,
   ProjectDetail,
   ProjectInput,
   ProjectSummary,
@@ -1760,78 +1759,6 @@ export const useDisableModerator = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDisableModeratorMutationOptions(options));
-    }
-
-export const getSubmitModeratorTranscriptUrl = (id: number,) => {
-
-
-
-
-  return `/api/projects/${id}/moderator/transcript`
-}
-
-/**
- * @summary Submit a finalized utterance recognized entirely in the member's own browser (Web Speech API) to append to the moderator transcript -- there is no separate server-side transcription step.
- */
-export const submitModeratorTranscript = async (id: number,
-    moderatorTranscriptInput: ModeratorTranscriptInput, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
-
-  return customFetch<void>(getSubmitModeratorTranscriptUrl(id),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(moderatorTranscriptInput)
-  }
-);}
-
-
-
-
-
-export const getSubmitModeratorTranscriptMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitModeratorTranscript>>, TError,{id: number;data: BodyType<ModeratorTranscriptInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof submitModeratorTranscript>>, TError,{id: number;data: BodyType<ModeratorTranscriptInput>}, TContext> => {
-
-const mutationKey = ['submitModeratorTranscript'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof submitModeratorTranscript>>, {id: number;data: BodyType<ModeratorTranscriptInput>}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  submitModeratorTranscript(id,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SubmitModeratorTranscriptMutationResult = NonNullable<Awaited<ReturnType<typeof submitModeratorTranscript>>>
-    export type SubmitModeratorTranscriptMutationBody = BodyType<ModeratorTranscriptInput>
-    export type SubmitModeratorTranscriptMutationError = ErrorType<ErrorResponse>
-
-    /**
- * @summary Submit a finalized utterance recognized entirely in the member's own browser (Web Speech API) to append to the moderator transcript -- there is no separate server-side transcription step.
- */
-export const useSubmitModeratorTranscript = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof submitModeratorTranscript>>, TError,{id: number;data: BodyType<ModeratorTranscriptInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof submitModeratorTranscript>>,
-        TError,
-        {id: number;data: BodyType<ModeratorTranscriptInput>},
-        TContext
-      > => {
-      return useMutation(getSubmitModeratorTranscriptMutationOptions(options));
     }
 
 export const getListModeratorChatMessagesUrl = (id: number,) => {

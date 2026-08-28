@@ -144,7 +144,9 @@ export default function ProjectWorkspace() {
     speakerVolumes,
     sendVolume,
     liveCaptions,
-    sendCaption,
+    sendAudioChunk,
+    sendMicStart,
+    sendMicStop,
     clearLiveCaption,
   } = useProjectSocket({
     projectId,
@@ -427,7 +429,9 @@ export default function ProjectWorkspace() {
             onVolume={sendVolume}
             speakerVolumes={speakerVolumes}
             liveCaptions={liveCaptions}
-            sendCaption={sendCaption}
+            sendAudioChunk={sendAudioChunk}
+            sendMicStart={sendMicStart}
+            sendMicStop={sendMicStop}
             clearLiveCaption={clearLiveCaption}
             members={project.members}
             moderatorErrorMessage={moderatorErrorMessage}

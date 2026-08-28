@@ -66,7 +66,8 @@ type ServerEvent =
   | { type: "live_caption"; userId: number; text: string; utteranceId: number }
   | { type: "moderator_chat_message"; message: ModeratorChatMessage }
   | { type: "moderator_error"; message: string }
-  | { type: "moderator_intervention_typing" };
+  | { type: "moderator_intervention_typing" }
+  | { type: "mic_stop_ack" };
 
 export interface LiveCaption {
   userId: number;
@@ -138,6 +139,21 @@ export function useProjectSocket({
   const [onlineUserIds, setOnlineUserIds] = useState<Set<number>>(new Set());
   const [speakerVolumes, setSpeakerVolumes] = useState<Map<number, SpeakerVolume>>(new Map());
   const [liveCaptions, setLiveCaptions] = useState<Map<number, LiveCaption>>(new Map());
+  // Resolves whichever sendMicStop() promise is currently pending, once the
+  // server confirms it has finished tearing the transcription session down
+  // (see the "mic_stop_ack" case below). Only ever one at a time -- a
+  // member can't be turning their mic off twice concurrently.
+  const micStopAckRef = useRef<(() => void) | null>(null);
+  // The language this member's mic was most recently told to start with, or
+  // null while it's off. The server tears down a member's transcription
+  // session the instant their project socket disconnects (see wsHub's
+  // leaveProject), so a reconnect after any drop -- not just an explicit
+  // toggle-off -- silently ends transcription unless something re-sends
+  // mic_start on the fresh socket. Tracking it here (rather than relying on
+  // useModeratorAudio's effect to notice and resend) means it happens
+  // automatically on every reconnect, including ones that occur without any
+  // React re-render of the component that owns the mic.
+  const activeMicLangRef = useRef<string | null>(null);
   const callbacksRef = useRef({
     onProjectChanged,
     onPropertiesChanged,
@@ -210,6 +226,14 @@ export function useProjectSocket({
         // until something else happens to trigger a refetch.
         callbacksRef.current.onProjectChanged?.();
         callbacksRef.current.onPropertiesChanged?.();
+        // The mic itself (getUserMedia/AudioContext capture) never noticed
+        // the drop and keeps streaming audio the whole time -- only the
+        // server-side transcription session was lost with the old socket.
+        // Re-arm it here so a brief reconnect blip doesn't permanently end
+        // transcription for the rest of the call.
+        if (activeMicLangRef.current !== null) {
+          socket?.send(JSON.stringify({ type: "mic_start", lang: activeMicLangRef.current }));
+        }
       });
 
       socket.addEventListener("message", (event) => {
@@ -284,6 +308,9 @@ export function useProjectSocket({
             break;
           case "moderator_intervention_typing":
             callbacksRef.current.onModeratorInterventionTyping?.();
+            break;
+          case "mic_stop_ack":
+            micStopAckRef.current?.();
             break;
         }
       });
@@ -392,11 +419,66 @@ export function useProjectSocket({
     }
   }, []);
 
-  const sendCaption = useCallback((text: string, utteranceId: number) => {
+  // Tells the server to open (or, on a language change, replace) this
+  // member's OpenAI realtime transcription session -- see
+  // useModeratorAudio, which calls this the moment mic access is granted.
+  const sendMicStart = useCallback((lang: string) => {
+    activeMicLangRef.current = lang;
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "caption", text, utteranceId }));
+      socket.send(JSON.stringify({ type: "mic_start", lang }));
     }
+  }, []);
+
+  // Raw PCM16/24kHz audio, resampled client-side (see useModeratorAudio) and
+  // sent as a binary WebSocket frame -- forwarded straight into this
+  // member's realtime transcription session (see wsHub.ts/
+  // realtimeTranscription.ts).
+  const sendAudioChunk = useCallback((chunk: Int16Array) => {
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(chunk.buffer as ArrayBuffer);
+    }
+  }, []);
+
+  // Comfortably above the server's own worst-case drain time (see
+  // CLOSE_GRACE_MS in realtimeTranscription.ts, currently 3s) plus margin
+  // for the round trip itself. If this were shorter than the server could
+  // legitimately still be taking to flush the last utterance, the client
+  // would give up and disable the participant BEFORE the server's write
+  // lands -- reintroducing exactly the drop-the-last-utterance race this
+  // whole request/ack handshake exists to prevent.
+  const MIC_STOP_ACK_TIMEOUT_MS = 5_000;
+
+  // Resolves once the server confirms it has finished tearing this member's
+  // transcription session down -- including durably persisting whatever
+  // last utterance OpenAI was still transcribing. The moderator toggle-off
+  // flow awaits this BEFORE calling the disable-participant endpoint (see
+  // ModeratorChatPanel's handleToggleClick): deactivating first would let
+  // that last utterance's write land under an already-inactive participant
+  // and get silently rejected. Falls back to resolving after a timeout so a
+  // lost ack (dropped socket, server restart) can never hang the caller
+  // forever -- by then the best-effort persistence already happened or
+  // didn't, and there's nothing further to wait for.
+  const sendMicStop = useCallback((): Promise<void> => {
+    activeMicLangRef.current = null;
+    return new Promise((resolve) => {
+      const socket = socketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (micStopAckRef.current === done) micStopAckRef.current = null;
+        resolve();
+      };
+      micStopAckRef.current = done;
+      setTimeout(done, MIC_STOP_ACK_TIMEOUT_MS);
+      socket.send(JSON.stringify({ type: "mic_stop" }));
+    });
   }, []);
 
   // Clears this user's live caption once their real, persisted transcript
@@ -427,7 +509,9 @@ export function useProjectSocket({
     speakerVolumes,
     sendVolume,
     liveCaptions,
-    sendCaption,
+    sendMicStart,
+    sendAudioChunk,
+    sendMicStop,
     clearLiveCaption,
   };
 }
