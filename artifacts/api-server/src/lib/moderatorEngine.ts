@@ -1235,7 +1235,21 @@ async function generateIntervention(projectId: number): Promise<void> {
           counterexamples: moderatorChatMessagesTable.counterexamples,
         })
         .from(moderatorChatMessagesTable)
-        .where(and(eq(moderatorChatMessagesTable.projectId, projectId), eq(moderatorChatMessagesTable.type, "intervention")))
+        .where(
+          and(
+            eq(moderatorChatMessagesTable.projectId, projectId),
+            eq(moderatorChatMessagesTable.type, "intervention"),
+            // The generic "couldn't tell which class or property this was
+            // about" fallback carries no class/property/examples of its own,
+            // so it can never meaningfully match or mismatch a freshly
+            // generated intervention -- it's a "no signal" placeholder, not
+            // a real prior round. Skip past any of those and compare against
+            // the last intervention that actually landed on a topic, so a
+            // fallback round in between two identical matched interventions
+            // doesn't hide the fact that the second one is a repeat.
+            eq(moderatorChatMessagesTable.matched, true),
+          ),
+        )
         .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
         .limit(1),
     ]);
@@ -1273,17 +1287,16 @@ async function generateIntervention(projectId: number): Promise<void> {
         })
         .sort()
         .join("\u0001");
-    // previousIntervention was already fetched above, in parallel with the
+    // previousIntervention was already fetched above (filtered to matched
+    // rows only -- see comment on that query), in parallel with the
     // row-locked `current` select.
     const isSameAsPrevious = (() => {
       if (!previousIntervention) return false;
-      if (!matched) {
-        // Unmatched rounds only ever produce one fixed generic reminder
-        // string, so literal equality is already exact here.
-        return !previousIntervention.matched && previousIntervention.content === interventionContent;
-      }
+      // A fresh unmatched round (the generic fallback) never counts as a
+      // repeat: `previousIntervention` is always a matched row now, so it
+      // has no class/property/examples to compare the fallback against.
+      if (!matched) return false;
       return (
-        previousIntervention.matched === true &&
         previousIntervention.classId === (matchedEntry?.classId ?? null) &&
         previousIntervention.propertyId === (matchedEntry?.propertyId ?? null) &&
         canonicalTextSet(previousIntervention.examples) === canonicalTextSet(interventionExamples) &&
