@@ -177,15 +177,6 @@ function stopSilenceWatch(session: Session): void {
   }
 }
 
-// A regional BCP-47 recognition tag (e.g. "en-US", "zh-CN") down to the
-// ISO-639-1 hint OpenAI's `languages` field expects. Realtime transcription
-// only wants a language hint, not a full locale, and passing an unsupported
-// full tag would be silently useless at best.
-function languageHint(bcp47: string): string[] {
-  const base = bcp47.split("-")[0]?.toLowerCase();
-  return base ? [base] : [];
-}
-
 // Ontology class labels and property names already in this project, used as
 // a vocabulary hint so uncommon domain terms are more likely to be
 // recognized correctly -- a value-add straight from a documented model
@@ -241,25 +232,19 @@ function utteranceIdForItem(session: Session, itemId: string): number {
   return id;
 }
 
-// Opens (or, if one is already active for this member, replaces -- e.g. on
-// a language change) the OpenAI Realtime transcription session backing
-// their mic. Fire-and-forget from the caller's point of view: audio chunks
-// that arrive before this resolves are simply dropped (mirrors the same
-// brief "recognizer starting up" gap the old browser-recognition code
-// already tolerated).
-export async function openTranscriptionSession(
-  projectId: number,
-  userId: number,
-  lang: string,
-): Promise<void> {
+// Opens (or, if one is already active for this member, replaces) the
+// OpenAI Realtime transcription session backing their mic. Fire-and-forget
+// from the caller's point of view: audio chunks that arrive before this
+// resolves are buffered (see pendingAudio/appendAudioChunk) rather than
+// dropped.
+export async function openTranscriptionSession(projectId: number, userId: number): Promise<void> {
   const key = sessionKey(projectId, userId);
   const existing = sessions.get(key);
   if (existing) await closeTranscriptionSession(projectId, userId);
   // Stamped now, after the possible close above (which bumps the
   // generation itself) -- everything below checks this before taking any
-  // action visible outside this function, so a mic_stop (or another
-  // mic_start, e.g. a fast language change) that lands while this is still
-  // awaiting always wins.
+  // action visible outside this function, so a mic_stop that lands while
+  // this is still awaiting always wins.
   const myGeneration = nextGeneration(key);
 
   const active = await ensureActiveParticipant(projectId, userId);
@@ -322,10 +307,9 @@ export async function openTranscriptionSession(
               format: { type: "audio/pcm", rate: 24000 },
               transcription: {
                 model: TRANSCRIPTION_MODEL,
-                // Plural, per OpenAI's Realtime transcription docs --
-                // `language` (singular) is silently not a valid field on
-                // this payload and would leave the hint not applied at all.
-                languages: languageHint(lang),
+                // No `languages` hint -- gpt-live-transcribe adapts to
+                // whatever language is actually spoken on its own, so
+                // there's nothing for a per-member picker to configure.
                 ...(keywords.length ? { keywords } : {}),
               },
               // gpt-live-transcribe rejects any non-null turn_detection

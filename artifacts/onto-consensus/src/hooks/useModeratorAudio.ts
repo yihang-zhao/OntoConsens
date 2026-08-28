@@ -4,11 +4,6 @@ interface UseModeratorAudioOptions {
   projectId: number;
   /** Mic capture only runs while this is true (moderator on AND user opted in). */
   active: boolean;
-  /** BCP-47 language tag (e.g. "en-US", "zh-CN") -- stripped down to its
-   *  ISO-639-1 prefix and sent to the server as a recognition hint (see
-   *  sendMicStart), letting each member transcribe their own spoken
-   *  language independently of everyone else's. */
-  lang: string;
   /** Called ~8x/second with a 0..1 volume level while active, for the
    *  per-member "speaking" indicator. */
   onVolume: (level: number) => void;
@@ -18,15 +13,14 @@ interface UseModeratorAudioOptions {
    *  transcription itself, and persisting each finalized utterance, all
    *  happen server-side now. */
   sendAudioChunk: (chunk: Int16Array) => void;
-  /** Tells the server to open this member's transcription session, with the
-   *  given language hint. Called once mic access is granted, and again on a
-   *  language change while already active. */
-  sendMicStart: (lang: string) => void;
+  /** Tells the server to open this member's transcription session. Called
+   *  once mic access is granted. */
+  sendMicStart: () => void;
   /** Tells the server to close this member's transcription session. Called
-   *  as a fallback on unmount/language-change/mic-error -- the toggle-off
-   *  flow itself calls the same underlying function directly (via
-   *  useProjectSocket) and awaits its ack before deactivating, see
-   *  ModeratorChatPanel's handleToggleClick. Fire-and-forget from here. */
+   *  as a fallback on unmount/mic-error -- the toggle-off flow itself calls
+   *  the same underlying function directly (via useProjectSocket) and
+   *  awaits its ack before deactivating, see ModeratorChatPanel's
+   *  handleToggleClick. Fire-and-forget from here. */
   sendMicStop: () => void;
 }
 
@@ -84,7 +78,6 @@ class Resampler {
 export function useModeratorAudio({
   projectId,
   active,
-  lang,
   onVolume,
   sendAudioChunk,
   sendMicStart,
@@ -181,7 +174,7 @@ export function useModeratorAudio({
       processor.connect(audioCtx.destination);
 
       micStarted = true;
-      sendMicStartRef.current(lang);
+      sendMicStartRef.current();
 
       rafId = requestAnimationFrame(tick);
     })();
@@ -205,18 +198,15 @@ export function useModeratorAudio({
       stream?.getTracks().forEach((t) => t.stop());
       audioCtx?.close().catch(() => {});
       // Fallback teardown for paths other than the explicit toggle-off click
-      // (language change restarting this effect, mic error, unmount) -- the
-      // toggle-off flow itself awaits the real ack via useProjectSocket's
-      // sendMicStop directly (see ModeratorChatPanel), so a duplicate call
-      // here is harmless (closeTranscriptionSession is a no-op if the
-      // session is already gone).
+      // (mic error, unmount) -- the toggle-off flow itself awaits the real
+      // ack via useProjectSocket's sendMicStop directly (see
+      // ModeratorChatPanel), so a duplicate call here is harmless
+      // (closeTranscriptionSession is a no-op if the session is already
+      // gone).
       if (micStarted) sendMicStopRef.current();
     };
-    // Restart on a language change too, not just on/off -- otherwise
-    // switching languages mid-session keeps transcribing in the old one
-    // until the mic is toggled off and back on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, active, lang]);
+  }, [projectId, active]);
 
   return { micError };
 }

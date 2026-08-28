@@ -8,28 +8,11 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sparkles, AlertTriangle, X, Mic, MicOff, Languages, ArrowDown } from "lucide-react";
+import { Sparkles, AlertTriangle, X, Mic, MicOff, ArrowDown } from "lucide-react";
 import { useModeratorAudio } from "@/hooks/useModeratorAudio";
 import { colorForSlot } from "@/lib/memberColors";
 import type { LiveCaption, ModeratorChatMessage, SpeakerVolume } from "@/hooks/useProjectSocket";
 
-// Languages the live transcript can recognize -- each member picks their own
-// independently of everyone else's, since the mic and recognizer are
-// per-browser. BCP-47 tags are passed straight to the Web Speech API.
-const RECOGNITION_LANGUAGES: { value: string; label: string }[] = [
-  { value: "en-US", label: "English" },
-  { value: "zh-CN", label: "中文" },
-  { value: "es-ES", label: "Español" },
-  { value: "fr-FR", label: "Français" },
-  { value: "de-DE", label: "Deutsch" },
-  { value: "ja-JP", label: "日本語" },
-  { value: "ko-KR", label: "한국어" },
-  { value: "hi-IN", label: "हिन्दी" },
-  { value: "pt-BR", label: "Português" },
-  { value: "ru-RU", label: "Русский" },
-];
-const RECOGNITION_LANG_STORAGE_KEY = "onto-consensus-moderator-lang";
 // One flag per project, per browser -- flips to "seen" the first time this
 // member's panel finishes loading history for that project. Lets the intro
 // bullets (which are already sitting in "history" by the time the panel
@@ -38,19 +21,6 @@ const RECOGNITION_LANG_STORAGE_KEY = "onto-consensus-moderator-lang";
 // first load, instead of being dumped onto the screen all at once the way
 // ordinary history replay works.
 const introSeenStorageKey = (projectId: number) => `onto-consensus-moderator-intro-seen-${projectId}`;
-
-// Defaults to whichever of the supported languages best matches the
-// browser's own language setting, falling back to English -- most users
-// never need to touch the picker at all.
-function defaultRecognitionLang(): string {
-  const stored = localStorage.getItem(RECOGNITION_LANG_STORAGE_KEY);
-  if (stored && RECOGNITION_LANGUAGES.some((l) => l.value === stored)) return stored;
-  const browserLang = (navigator.language || "en-US").toLowerCase();
-  const match = RECOGNITION_LANGUAGES.find((l) => l.value.toLowerCase() === browserLang);
-  if (match) return match.value;
-  const prefixMatch = RECOGNITION_LANGUAGES.find((l) => l.value.toLowerCase().split("-")[0] === browserLang.split("-")[0]);
-  return prefixMatch?.value ?? "en-US";
-}
 
 interface ModeratorChatPanelProps {
   projectId: number;
@@ -76,7 +46,7 @@ interface ModeratorChatPanelProps {
   /** Streams this member's mic audio to the server for live transcription
    *  (see useModeratorAudio). */
   sendAudioChunk: (chunk: Int16Array) => void;
-  sendMicStart: (lang: string) => void;
+  sendMicStart: () => void;
   sendMicStop: () => Promise<void>;
   clearLiveCaption: (userId: number, utteranceId: number) => void;
   members: { userId: number; username: string; colorSlot: number }[];
@@ -139,15 +109,6 @@ export function ModeratorChatPanel({
   const invalidateStatus = () =>
     queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
 
-  // Which language THIS member's mic is recognized in -- purely a local,
-  // per-browser choice (each member can speak a different language), so it
-  // lives in localStorage rather than anywhere shared/synced.
-  const [recognitionLang, setRecognitionLang] = useState(defaultRecognitionLang);
-  const handleLangChange = (value: string) => {
-    setRecognitionLang(value);
-    localStorage.setItem(RECOGNITION_LANG_STORAGE_KEY, value);
-  };
-
   // Turning the moderator on for yourself is the same click that starts
   // capturing your mic. The browser's own permission prompt is the only
   // thing the user sees the first time; if they've already granted it, the
@@ -156,11 +117,12 @@ export function ModeratorChatPanel({
   // realtimeTranscription.ts): this hook just captures and streams the raw
   // audio. Live captions and finalized transcript messages both arrive back
   // over the same project socket as before (liveCaptions / liveMessages),
-  // so the rest of this component's rendering is unchanged.
+  // so the rest of this component's rendering is unchanged. The
+  // transcription model handles whatever language each member speaks on
+  // its own, so there's no per-member language picker to manage.
   const { micError } = useModeratorAudio({
     projectId,
     active: moderatorActive,
-    lang: recognitionLang,
     onVolume,
     sendAudioChunk,
     sendMicStart,
@@ -565,33 +527,18 @@ export function ModeratorChatPanel({
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
           </p>
         )}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 bg-muted/50 border rounded-full pl-3 pr-2.5 py-2 flex-1 min-w-0">
-            {moderatorActive ? (
-              <Mic className="w-4 h-4 text-primary shrink-0" />
-            ) : (
-              <MicOff className="w-4 h-4 text-muted-foreground shrink-0" />
-            )}
-            <span className="flex-1 text-xs font-medium text-muted-foreground truncate">Microphone</span>
-            <Switch
-              checked={moderatorActive}
-              onCheckedChange={handleToggleClick}
-              disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
-            />
-          </div>
-          <Select value={recognitionLang} onValueChange={handleLangChange}>
-            <SelectTrigger className="h-9 w-1/3 shrink-0 rounded-full bg-muted/50 border text-xs pl-3">
-              <Languages className="w-3.5 h-3.5 text-muted-foreground mr-1.5 shrink-0" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RECOGNITION_LANGUAGES.map((l) => (
-                <SelectItem key={l.value} value={l.value} className="text-xs">
-                  {l.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-2 bg-muted/50 border rounded-full pl-3 pr-2.5 py-2 min-w-0">
+          {moderatorActive ? (
+            <Mic className="w-4 h-4 text-primary shrink-0" />
+          ) : (
+            <MicOff className="w-4 h-4 text-muted-foreground shrink-0" />
+          )}
+          <span className="flex-1 text-xs font-medium text-muted-foreground truncate">Microphone</span>
+          <Switch
+            checked={moderatorActive}
+            onCheckedChange={handleToggleClick}
+            disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
+          />
         </div>
       </div>
     </aside>

@@ -144,16 +144,16 @@ export function useProjectSocket({
   // (see the "mic_stop_ack" case below). Only ever one at a time -- a
   // member can't be turning their mic off twice concurrently.
   const micStopAckRef = useRef<(() => void) | null>(null);
-  // The language this member's mic was most recently told to start with, or
-  // null while it's off. The server tears down a member's transcription
-  // session the instant their project socket disconnects (see wsHub's
-  // leaveProject), so a reconnect after any drop -- not just an explicit
-  // toggle-off -- silently ends transcription unless something re-sends
-  // mic_start on the fresh socket. Tracking it here (rather than relying on
-  // useModeratorAudio's effect to notice and resend) means it happens
-  // automatically on every reconnect, including ones that occur without any
-  // React re-render of the component that owns the mic.
-  const activeMicLangRef = useRef<string | null>(null);
+  // Whether this member's mic is currently supposed to be on. The server
+  // tears down a member's transcription session the instant their project
+  // socket disconnects (see wsHub's leaveProject), so a reconnect after any
+  // drop -- not just an explicit toggle-off -- silently ends transcription
+  // unless something re-sends mic_start on the fresh socket. Tracking it
+  // here (rather than relying on useModeratorAudio's effect to notice and
+  // resend) means it happens automatically on every reconnect, including
+  // ones that occur without any React re-render of the component that owns
+  // the mic.
+  const micActiveRef = useRef(false);
   const callbacksRef = useRef({
     onProjectChanged,
     onPropertiesChanged,
@@ -231,8 +231,8 @@ export function useProjectSocket({
         // server-side transcription session was lost with the old socket.
         // Re-arm it here so a brief reconnect blip doesn't permanently end
         // transcription for the rest of the call.
-        if (activeMicLangRef.current !== null) {
-          socket?.send(JSON.stringify({ type: "mic_start", lang: activeMicLangRef.current }));
+        if (micActiveRef.current) {
+          socket?.send(JSON.stringify({ type: "mic_start" }));
         }
       });
 
@@ -419,14 +419,15 @@ export function useProjectSocket({
     }
   }, []);
 
-  // Tells the server to open (or, on a language change, replace) this
-  // member's OpenAI realtime transcription session -- see
-  // useModeratorAudio, which calls this the moment mic access is granted.
-  const sendMicStart = useCallback((lang: string) => {
-    activeMicLangRef.current = lang;
+  // Tells the server to open this member's OpenAI realtime transcription
+  // session -- see useModeratorAudio, which calls this the moment mic
+  // access is granted. The model handles whatever language is spoken on
+  // its own, so there's no hint to pass.
+  const sendMicStart = useCallback(() => {
+    micActiveRef.current = true;
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "mic_start", lang }));
+      socket.send(JSON.stringify({ type: "mic_start" }));
     }
   }, []);
 
@@ -461,7 +462,7 @@ export function useProjectSocket({
   // forever -- by then the best-effort persistence already happened or
   // didn't, and there's nothing further to wait for.
   const sendMicStop = useCallback((): Promise<void> => {
-    activeMicLangRef.current = null;
+    micActiveRef.current = false;
     return new Promise((resolve) => {
       const socket = socketRef.current;
       if (!socket || socket.readyState !== WebSocket.OPEN) {

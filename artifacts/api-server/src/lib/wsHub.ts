@@ -307,11 +307,10 @@ export function setupWebSocketServer(): WebSocketServer {
         "type" in data &&
         (data as { type: unknown }).type === "mic_start"
       ) {
-        const langRaw = (data as { lang?: unknown }).lang;
-        const lang = typeof langRaw === "string" && langRaw ? langRaw : "en-US";
         // Fire-and-forget: audio chunks that arrive before this resolves are
-        // simply dropped by appendAudioChunk (see realtimeTranscription.ts).
-        openTranscriptionSession(ticket.projectId, ticket.userId, lang).catch((err) => {
+        // buffered by appendAudioChunk until the session is ready (see
+        // realtimeTranscription.ts).
+        openTranscriptionSession(ticket.projectId, ticket.userId).catch((err) => {
           logger.error({ err, projectId: ticket.projectId, userId: ticket.userId }, "Failed to open transcription session");
         });
       } else if (
