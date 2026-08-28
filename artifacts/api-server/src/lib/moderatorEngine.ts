@@ -28,15 +28,6 @@ import { logger } from "./logger";
 // condition 2 (a NEW, finalized message) below -- see generateIntervention.
 const SILENCE_TIMEOUT_MS = 2_000;
 
-// After an intervention is actually delivered (see the end of
-// generateIntervention below), silence detection is paused for this long --
-// even if everyone falls silent again immediately, condition 1 can't be
-// re-met until this cooldown elapses. Without it, a new finalized message
-// that lands right as the previous intervention is delivered can trigger a
-// second intervention just SILENCE_TIMEOUT_MS later, which reads as the
-// moderator talking over itself.
-const INTERVENTION_COOLDOWN_MS = 5_000;
-
 // How long the "AI moderator is typing" indicator shows before the actual
 // intervention message appears, once conditions 1-3 have all already been
 // confirmed true (see generateIntervention) -- purely a display delay, the
@@ -81,30 +72,6 @@ export function clearModeratorSilenceTimer(projectId: number) {
   const timer = silenceTimers.get(projectId);
   if (timer) clearTimeout(timer);
   silenceTimers.delete(projectId);
-}
-
-// Wall-clock timestamp (ms) up to which silence detection is paused for a
-// given project, per INTERVENTION_COOLDOWN_MS above. Read by
-// noteSpeechActivity when scheduling its next check.
-const interventionPausedUntil = new Map<number, number>();
-
-// Called once an intervention message has actually been broadcast (end of
-// generateIntervention). Starts the cooldown, and -- in case a silence timer
-// is already pending from activity that happened while this intervention
-// was being generated -- makes sure it can't fire before the cooldown ends,
-// exactly as if noteSpeechActivity were called again right now.
-function pauseSilenceDetection(projectId: number): void {
-  const until = Date.now() + INTERVENTION_COOLDOWN_MS;
-  interventionPausedUntil.set(projectId, until);
-  const pending = silenceTimers.get(projectId);
-  if (pending) {
-    clearTimeout(pending);
-    const timer = setTimeout(() => {
-      silenceTimers.delete(projectId);
-      enqueueIntervention(projectId);
-    }, until - Date.now());
-    silenceTimers.set(projectId, timer);
-  }
 }
 
 export async function getParticipant(projectId: number, userId: number) {
@@ -440,12 +407,10 @@ export async function recordTranscriptChunk(
 // doing anything else -- there is no separate cooldown or other gate here.
 export function noteSpeechActivity(projectId: number): void {
   clearModeratorSilenceTimer(projectId);
-  const pausedUntil = interventionPausedUntil.get(projectId) ?? 0;
-  const delay = Math.max(SILENCE_TIMEOUT_MS, pausedUntil - Date.now());
   const timer = setTimeout(() => {
     silenceTimers.delete(projectId);
     enqueueIntervention(projectId);
-  }, delay);
+  }, SILENCE_TIMEOUT_MS);
   silenceTimers.set(projectId, timer);
 }
 
@@ -1402,5 +1367,4 @@ async function generateIntervention(projectId: number): Promise<void> {
   const message = await serializeChatMessage(insertedRow);
   await new Promise((resolve) => setTimeout(resolve, INTERVENTION_TYPING_DELAY_MS));
   broadcastToProject(projectId, { type: "moderator_chat_message", message });
-  pauseSilenceDetection(projectId);
 }
