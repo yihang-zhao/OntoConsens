@@ -586,8 +586,38 @@ async function generateIntervention(projectId: number): Promise<void> {
       : null,
   );
 
-  const [newChunks, users, projectMembers, [classes, properties], lastPostedIntervention, sinceLastInterventionChunksRaw] =
-    await Promise.all([
+  // Latest matched intervention message for EVERY catalog property (not
+  // just the one project-wide last posted) -- needed so the single combined
+  // call below can perform extraction for WHICHEVER property it identifies
+  // the topic to be, without a second round trip to fetch that specific
+  // property's existing points only after the fact.
+  const priorInterventionsByPropertyPromise = db
+    .select({
+      classId: moderatorChatMessagesTable.classId,
+      propertyId: moderatorChatMessagesTable.propertyId,
+      examples: moderatorChatMessagesTable.examples,
+      counterexamples: moderatorChatMessagesTable.counterexamples,
+      createdAt: moderatorChatMessagesTable.createdAt,
+    })
+    .from(moderatorChatMessagesTable)
+    .where(
+      and(
+        eq(moderatorChatMessagesTable.projectId, projectId),
+        eq(moderatorChatMessagesTable.type, "intervention"),
+        eq(moderatorChatMessagesTable.matched, true),
+      ),
+    )
+    .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id));
+
+  const [
+    newChunks,
+    users,
+    projectMembers,
+    [classes, properties],
+    lastPostedIntervention,
+    sinceLastInterventionChunksRaw,
+    priorInterventionRows,
+  ] = await Promise.all([
       db.query.moderatorTranscriptChunksTable.findMany({
         where: and(eq(moderatorTranscriptChunksTable.projectId, projectId), sinceClause),
       }),
@@ -601,6 +631,7 @@ async function generateIntervention(projectId: number): Promise<void> {
       ]),
       lastPostedInterventionPromise,
       sinceLastInterventionChunksPromise,
+      priorInterventionsByPropertyPromise,
     ]);
   if (newChunks.length === 0) return; // Silence with nothing new to say — nothing to summarize.
 
@@ -659,6 +690,16 @@ async function generateIntervention(projectId: number): Promise<void> {
       ? catalog.map((entry) => `- ${entry.className}.${entry.propertyName}`).join("\n")
       : "(the workspace has no classes/properties yet)";
 
+  // Most recent matched intervention row per property, keyed by
+  // "classId:propertyId" -- priorInterventionRows is ordered newest-first,
+  // so the first row seen for a given key IS that property's latest one.
+  const priorInterventionByProperty = new Map<string, (typeof priorInterventionRows)[number]>();
+  for (const row of priorInterventionRows) {
+    if (row.classId === null || row.propertyId === null) continue;
+    const key = `${row.classId}:${row.propertyId}`;
+    if (!priorInterventionByProperty.has(key)) priorInterventionByProperty.set(key, row);
+  }
+
   let matchedEntry: CatalogEntry | undefined;
   let interventionContent: string;
   let matched: boolean;
@@ -678,48 +719,31 @@ async function generateIntervention(projectId: number): Promise<void> {
   // fails to resolve a class/property (see the `else` branch below).
   let hasNothingToShow = false;
 
-  // The anchor for "is this still about the same property" continuity is
-  // the single most recent intervention message this moderator has
-  // actually POSTED (any property, project-wide) -- not a lighter-weight
-  // "what did pass 1 last resolve to" hint. Per design, pass 1 must decide
-  // continuation using ONLY two sources: that previous intervention
-  // message's real content, and every user message exchanged since it
-  // (which is a superset of `newChunks` above whenever an earlier round's
-  // checkpoint advanced without ever posting, e.g. a duplicate-content or
-  // hasNothingToShow skip) -- never the raw pre-intervention history, and
-  // never a same-topic guess from a round that itself never got shown to
-  // the group. (Fetched together with the other independent reads above.)
-  const previousInterventionTopic = lastPostedIntervention
-    ? catalog.find(
-        (entry) => entry.classId === lastPostedIntervention.classId && entry.propertyId === lastPostedIntervention.propertyId,
-      )
-    : undefined;
-
-  // "Every user message exchanged since" that last posted intervention --
-  // project-wide, since pass 1 doesn't yet know which property (if any)
-  // the new messages concern. Already fetched above (overlapped with the
-  // other independent reads via sinceLastInterventionChunksPromise) --
-  // nothing left to await here.
+  // "Every user message exchanged since" the last posted intervention --
+  // project-wide. Already fetched above (overlapped with the other
+  // independent reads via sinceLastInterventionChunksPromise) -- nothing
+  // left to await here.
   const sinceLastInterventionChunks = sinceLastInterventionChunksRaw ?? newChunks;
   const sinceLastInterventionTranscript = formatChunksAsTranscript(sinceLastInterventionChunks, usernameById);
 
   // The bulk of the extraction rules (merge/stability/color-reference logic)
-  // is identical whether it runs as its own standalone call (a genuine topic
-  // switch, or the very first intervention ever) or folded into the single
-  // combined call below (the common case: plain continuation of the last
-  // posted topic) -- shared here so both paths stay in sync instead of two
-  // copies silently drifting apart.
-  function extractionRules(className: string, propertyName: string): string {
+  // is written generically -- with no property name baked in -- because
+  // topic identification and extraction now happen together in a SINGLE
+  // model call (see the combined call below): the model doesn't have a
+  // confirmed className/propertyName to hand this function until AFTER its
+  // own response comes back, so the rules can only ever refer to "the
+  // property you identified above" rather than a fixed name.
+  function extractionRules(): string {
     return (
-      `Extract every concrete EXAMPLE given in support of keeping/adding ${className}.${propertyName}, and every ` +
-      "COUNTEREXAMPLE or objection given against it -- include something even if it was only mentioned once and " +
-      "never repeated, but leave it out if someone explicitly retracted or contradicted it. For each one, note " +
-      "who said it. " +
+      "Extract every concrete EXAMPLE given in support of keeping/adding the property you identified above, " +
+      "and every COUNTEREXAMPLE or objection given against it -- include something even if it was only " +
+      "mentioned once and never repeated, but leave it out if someone explicitly retracted or contradicted " +
+      "it. For each one, note who said it. " +
       "Write every \"text\" value in the SAME language the users are speaking in the transcript below (if the " +
       "transcript mixes languages, use whichever language is predominant) -- never translate it into English or " +
-      "any other language. The one exception is the class name and property name themselves: whenever a class " +
-      `or property name (such as "${className}" or "${propertyName}") appears within that text, keep it exactly ` +
-      "as it's spelled in the catalog, untranslated and unchanged, even though the rest of the sentence around " +
+      "any other language. The one exception is class and property names themselves: whenever a class or " +
+      "property name from the catalog above appears within that text, keep it exactly as it's spelled in the " +
+      "catalog, untranslated and unchanged, even though the rest of the sentence around " +
       "it is written in the transcript's language. " +
       "If the SAME underlying point was made more than once -- whether by the same person repeating " +
       "themselves, or by different people independently making an equivalent point -- merge it into a " +
@@ -727,11 +751,9 @@ async function generateIntervention(projectId: number): Promise<void> {
       "they first raised it, no duplicate names even if someone repeated themselves). Only merge points " +
       "that are genuinely the same underlying reason; keep distinct reasons as separate entries even if " +
       "they're about the same property.\n\n" +
-      "These points were ALREADY ESTABLISHED in a previous round -- you MUST treat their wording as frozen, " +
-      "and each current supporter's agreement is assumed to STILL STAND unless the transcript shows " +
-      "otherwise:\n" +
-      "EXISTING_EXAMPLES_PLACEHOLDER\n\n" +
-      "EXISTING_COUNTEREXAMPLES_PLACEHOLDER\n\n" +
+      "The points already listed in the EXISTING STATE section above, under whichever property you identified, " +
+      "were ALREADY ESTABLISHED in a previous round -- you MUST treat their wording as frozen, and each " +
+      "current supporter's agreement is assumed to STILL STAND unless the transcript shows otherwise. " +
       "For each one: if the transcript still supports it (repeated or not), return it with its EXACT SAME id " +
       "and EXACT SAME text (copy the text verbatim, do not rephrase it even slightly). ONLY change an " +
       "existing id's text if a member EXPLICITLY asks to reword, correct, or replace that specific existing " +
@@ -807,11 +829,6 @@ async function generateIntervention(projectId: number): Promise<void> {
     points.length === 0
       ? "(none yet)"
       : points.map((p) => `- id ${p.id}: "${p.text}" (currently credited to: ${p.by.join(", ") || "no one"})`).join("\n");
-  const fillExtractionRules = (className: string, propertyName: string, existing: TransientPoint[], existingCounter: TransientPoint[]) =>
-    extractionRules(className, propertyName)
-      .replace("EXISTING_EXAMPLES_PLACEHOLDER", `Examples:\n${describeExisting(existing)}`)
-      .replace("EXISTING_COUNTEREXAMPLES_PLACEHOLDER", `Counterexamples:\n${describeExisting(existingCounter)}`);
-
   const normalize = (s: string) => s.trim().toLowerCase();
   const resolveMatch = (rawClassName: string | null, rawPropertyName: string | null) =>
     rawClassName && rawPropertyName
@@ -822,135 +839,123 @@ async function generateIntervention(projectId: number): Promise<void> {
         )
       : undefined;
 
-  // Populated only when the single combined call below both (a) confirms
-  // the topic is a plain continuation of previousInterventionTopic and (b)
-  // performed the extraction inline -- letting the matched branch skip an
-  // entire second OpenAI round trip in that (by far most common) case,
-  // which is the whole point of combining the two calls together here.
-  let inlineExtraction: { examples: unknown[]; counterexamples: unknown[] } | null = null;
   let existingExamplePoints: TransientPoint[] = [];
   let existingCounterexamplePoints: TransientPoint[] = [];
 
+  // Precompute EVERY catalog property's transient existing-points (id'd
+  // 1..n, same scheme reused for reconcile() below) up front, once -- both
+  // to render the EXISTING STATE section of the single combined prompt
+  // below, and to look the matched property's own points back up after the
+  // call returns, WITHOUT recomputing them (which could reassign different
+  // ids than what the model was actually shown).
+  const pointsByProperty = new Map<
+    string,
+    { examplePoints: TransientPoint[]; counterexamplePoints: TransientPoint[] }
+  >();
+  for (const entry of catalog) {
+    const key = `${entry.classId}:${entry.propertyId}`;
+    const prior = priorInterventionByProperty.get(key);
+    pointsByProperty.set(key, {
+      examplePoints: toTransientPoints(prior?.examples ?? null),
+      counterexamplePoints: toTransientPoints(prior?.counterexamples ?? null),
+    });
+  }
+  const priorStateText =
+    catalog.length > 0
+      ? catalog
+          .map((entry) => {
+            const { examplePoints, counterexamplePoints } = pointsByProperty.get(
+              `${entry.classId}:${entry.propertyId}`,
+            )!;
+            if (examplePoints.length === 0 && counterexamplePoints.length === 0) {
+              return `${entry.className}.${entry.propertyName}: (never discussed yet -- any point raised for it is brand new)`;
+            }
+            return (
+              `${entry.className}.${entry.propertyName}:\n` +
+              `  Examples:\n${describeExisting(examplePoints)}\n` +
+              `  Counterexamples:\n${describeExisting(counterexamplePoints)}`
+            );
+          })
+          .join("\n\n")
+      : "(the workspace has no classes/properties yet)";
+
   try {
-    let rawClassName: string | null;
-    let rawPropertyName: string | null;
+    // ONE model call performs BOTH jobs every time: (1) identify the
+    // className/propertyName the speakers are currently discussing (or
+    // null/null), the same way regardless of whether that turns out to be
+    // a continuation of the last posted topic, a genuine switch to a
+    // different property, or this project's first-ever intervention; and
+    // (2) extract that property's updated examples/counterexamples in the
+    // same response, using the EXISTING STATE section below (covering
+    // every catalog property, not just the previous topic) as the
+    // baseline for whichever one it lands on. There is no longer a
+    // separate follow-up call for a topic switch or a first intervention.
+    const combined = await callOpenAiJson(
+      apiKey,
+      config.model,
+      "You are an AI moderator for a group ontology-design conversation, doing TWO jobs in ONE pass: " +
+        "(1) identify the SINGLE class and property the speakers are currently discussing (whether it should " +
+        "be retained, removed, or how it should be defined), and (2) extract an updated " +
+        "examples/counterexamples list for THAT property -- see the SECOND section below for exactly when " +
+        "that applies. Every message below is from real-time speech-to-text and can contain near-homophone " +
+        "errors (a name or word transcribed as something that merely sounds alike); infer intended meaning " +
+        "by sound and context rather than taking odd literal text at face value -- this applies throughout " +
+        "both jobs below, not just topic identification. " +
+        "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
+        catalogText +
+        (lastPostedIntervention
+          ? `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, followed by every user message ` +
+            "exchanged since then. Base your topic decision ONLY on these two things -- not on any earlier " +
+            "history beyond what that previous intervention message itself already states. Conversation " +
+            "commonly continues about the same property without re-stating its name -- via pronouns (\"it\", " +
+            "\"that\"), direct replies/agreement/disagreement/reactions, or follow-up refinements, even across " +
+            "several more messages. If the messages since that intervention read as a natural continuation of " +
+            "the same discussion, report that SAME className/propertyName again even though it isn't " +
+            "explicitly named. Only report a DIFFERENT property if a message clearly and specifically names or " +
+            "unambiguously describes a different one. Only report null/null if the messages have moved on to " +
+            "something unrelated to any listed property entirely (small talk, a topic outside the catalog, " +
+            "etc). "
+          : "\n\nThere is no previous intervention yet, so below is simply the transcript of what's been said " +
+            "so far. Only report a className/propertyName if a message clearly names or unambiguously " +
+            "describes one from the list; report null/null if nothing in the workspace catalog is being " +
+            "discussed. ") +
+        "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
+        "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
+        "list. " +
+        "\n\nSECOND, ONLY IF your className/propertyName answer above is NOT null/null: also perform an " +
+        "extraction update for that property, using the SAME messages-since-then transcript below as the " +
+        "source, and fill the \"examples\"/\"counterexamples\" fields of your response accordingly. If your " +
+        "answer is null/null, leave \"examples\" and \"counterexamples\" as empty arrays.\n\n" +
+        "Here is the EXISTING STATE already recorded for each catalog property -- once you've identified " +
+        "className/propertyName above, use ONLY the block below for that exact property (matching by its " +
+        "exact catalog name) as the baseline for extraction; ignore every other property's block entirely:\n" +
+        priorStateText +
+        "\n\n" +
+        extractionRules() +
+        'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+        '{"className": string | null, "propertyName": string | null, ' +
+        '"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
+        '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
+        "Use the exact usernames as they appear as speaker labels in the transcript.",
+      `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention?.content ?? "(none yet)"}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`,
+    );
 
-    if (previousInterventionTopic && lastPostedIntervention) {
-      // --- Combined pass: decide the topic AND, if it's a continuation of
-      // the same property, extract the update -- both from ONE model call.
-      // This is safe specifically because the continuation case needs no
-      // extra data beyond what's already in hand: the previous topic's own
-      // examples/counterexamples (from lastPostedIntervention, fetched
-      // above) ARE this property's "existing points", and the transcript
-      // since that same message IS the extraction delta -- there is
-      // nothing left to fetch before asking the model to do both jobs at
-      // once. A genuine topic switch (or a first-ever intervention) can't
-      // be combined this way, since the OTHER property's existing points
-      // haven't been fetched -- those fall back to the separate two-call
-      // path below, exactly as before.
-      const priorExamples = toTransientPoints(lastPostedIntervention.examples);
-      const priorCounterexamples = toTransientPoints(lastPostedIntervention.counterexamples);
-      const combined = await callOpenAiJson(
-        apiKey,
-        config.model,
-        "You are an AI moderator for a group ontology-design conversation, doing TWO jobs in this one pass: " +
-          "(1) identify the SINGLE class and property the speakers are currently discussing (whether it should " +
-          "be retained, removed, or how it should be defined), and (2), conditionally, extract an updated " +
-          "examples/counterexamples list for that property -- see the SECOND section below for exactly when " +
-          "that applies. Every message below is from real-time speech-to-text and can contain near-homophone " +
-          "errors (a name or word transcribed as something that merely sounds alike); infer intended meaning " +
-          "by sound and context rather than taking odd literal text at face value -- this applies throughout " +
-          "both jobs below, not just topic identification. " +
-          "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
-          catalogText +
-          `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, about ` +
-          `${previousInterventionTopic.className}.${previousInterventionTopic.propertyName}, followed by every ` +
-          "user message exchanged since then. Base your answer ONLY on these two things -- not on any earlier " +
-          "history beyond what that previous intervention message itself already states. Conversation commonly " +
-          "continues about the same property without re-stating its name -- via pronouns (\"it\", \"that\"), " +
-          "direct replies/agreement/disagreement/reactions, or follow-up refinements, even across several more " +
-          "messages. If the messages since that intervention read as a natural continuation of the same " +
-          `discussion, report that SAME className/propertyName (${previousInterventionTopic.className}.` +
-          `${previousInterventionTopic.propertyName}) again even though it isn't explicitly named. Only report ` +
-          "a DIFFERENT property if a message clearly and specifically names or unambiguously describes a " +
-          "different one. Only report null/null if the messages have moved on to something unrelated to any " +
-          "listed property entirely (small talk, a topic outside the catalog, etc). " +
-          "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
-          "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
-          "list. " +
-          `\n\nSECOND, ONLY IF your className/propertyName answer above is EXACTLY ` +
-          `${previousInterventionTopic.className}.${previousInterventionTopic.propertyName} (i.e. a plain ` +
-          "continuation, not a switch to a different property and not null/null): also perform this extraction " +
-          "update, using the exact same MESSAGES SINCE THEN transcript above as the source, and fill the " +
-          "\"examples\"/\"counterexamples\" fields of your response accordingly. If your className/propertyName " +
-          "answer is anything else (a different property, or null/null), leave \"examples\" and " +
-          "\"counterexamples\" as empty arrays -- do not attempt this extraction for a property whose " +
-          "established points you have not been shown.\n\n" +
-          fillExtractionRules(
-            previousInterventionTopic.className,
-            previousInterventionTopic.propertyName,
-            priorExamples,
-            priorCounterexamples,
-          ) +
-          'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-          '{"className": string | null, "propertyName": string | null, ' +
-          '"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
-          '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
-          "Use the exact usernames as they appear as speaker labels in the transcript.",
-        `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention.content}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`,
-      );
-
-      rawClassName = typeof combined?.className === "string" ? combined.className : null;
-      rawPropertyName = typeof combined?.propertyName === "string" ? combined.propertyName : null;
-
-      const isConfirmedContinuation =
-        rawClassName !== null &&
-        rawPropertyName !== null &&
-        normalize(rawClassName) === normalize(previousInterventionTopic.className) &&
-        normalize(rawPropertyName) === normalize(previousInterventionTopic.propertyName);
-      if (isConfirmedContinuation) {
-        inlineExtraction = {
-          examples: Array.isArray(combined?.examples) ? combined.examples : [],
-          counterexamples: Array.isArray(combined?.counterexamples) ? combined.counterexamples : [],
-        };
-        existingExamplePoints = priorExamples;
-        existingCounterexamplePoints = priorCounterexamples;
-      }
-    } else {
-      // --- Pass 1 only: no previous intervention to anchor continuity on
-      // (this project's very first one), so there's nothing to combine
-      // extraction with yet -- decide the topic alone, exactly as before.
-      const topicResult = await callOpenAiJson(
-        apiKey,
-        config.model,
-        "You are an AI moderator for a group ontology-design conversation. Look at the material below and " +
-          "identify the SINGLE class and property the speakers are currently discussing (whether it should be " +
-          "retained, removed, or how it should be defined). " +
-          "IMPORTANT: every message below was produced by real-time speech-to-text, so it will sometimes contain " +
-          "near-homophone transcription errors -- words or names that sound similar to what was actually said but " +
-          "were transcribed wrong (e.g. a class or property name mis-heard as an ordinary word or a different " +
-          "name that sounds alike, or small mangled phrasing around it). Do not take the literal text at face " +
-          "value when it doesn't quite make sense; sound out the words and infer the speaker's actual intended " +
-          "meaning, matching it against the real catalog names below by sound and context, not just exact " +
-          "spelling. " +
-          "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
-          catalogText +
-          "\n\nThere is no previous intervention yet, so below is simply the transcript of what's been said so " +
-          "far. Only report a className/propertyName if a message clearly names or unambiguously describes " +
-          "one from the list; report null/null if nothing in the workspace catalog is being discussed." +
-          "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
-          "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
-          "list. " +
-          'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-          '{"className": string | null, "propertyName": string | null}.',
-        sinceLastInterventionTranscript,
-      );
-      rawClassName = typeof topicResult?.className === "string" ? topicResult.className : null;
-      rawPropertyName = typeof topicResult?.propertyName === "string" ? topicResult.propertyName : null;
-    }
+    const rawClassName = typeof combined?.className === "string" ? combined.className : null;
+    const rawPropertyName = typeof combined?.propertyName === "string" ? combined.propertyName : null;
 
     matchedEntry = resolveMatch(rawClassName, rawPropertyName);
     matched = matchedEntry !== undefined;
+
+    const extraction: { examples: unknown[]; counterexamples: unknown[] } = {
+      examples: Array.isArray(combined?.examples) ? combined.examples : [],
+      counterexamples: Array.isArray(combined?.counterexamples) ? combined.counterexamples : [],
+    };
+
+    if (matchedEntry) {
+      const matchedPoints = pointsByProperty.get(`${matchedEntry.classId}:${matchedEntry.propertyId}`)!;
+      existingExamplePoints = matchedPoints.examplePoints;
+      existingCounterexamplePoints = matchedPoints.counterexamplePoints;
+    }
 
     if (matched && matchedEntry) {
       const { classId, propertyId, className, propertyName } = matchedEntry;
@@ -971,90 +976,9 @@ async function generateIntervention(projectId: number): Promise<void> {
           );
       }
 
-      // --- Pass 2: update from the last intervention message + what's new. ---
-      // Skipped ENTIRELY when the combined call above already confirmed
-      // this is a plain continuation and performed the extraction inline
-      // (inlineExtraction set) -- that's the common case and the whole
-      // reason for combining the two calls above. This separate call only
-      // still runs for a genuine topic switch (a DIFFERENT matched property
-      // than previousInterventionTopic) or this project's first-ever
-      // intervention, where the target property's own existing points
-      // haven't been fetched yet. By design it uses ONLY two sources,
-      // nothing else: the actual content of the last intervention message
-      // this moderator posted for this specific class/property (its
-      // established, group-visible record of where things stood), and the
-      // transcript of user messages exchanged since that message. It
-      // deliberately does NOT re-read the property's entire speech history
-      // from the start -- the previous intervention message already IS the
-      // durable summary of everything before it, so re-scanning all of that
-      // raw history again would be redundant and would reopen the door to
-      // re-deriving slightly different wording/attributions each round
-      // purely from re-reading the same old lines (see the "MAXIMUM
-      // STABILITY" instruction above).
-      let extraction: { examples: unknown[]; counterexamples: unknown[] };
-      if (inlineExtraction) {
-        extraction = inlineExtraction;
-      } else {
-        const [previousPropertyIntervention] = await db
-          .select({
-            content: moderatorChatMessagesTable.content,
-            examples: moderatorChatMessagesTable.examples,
-            counterexamples: moderatorChatMessagesTable.counterexamples,
-            createdAt: moderatorChatMessagesTable.createdAt,
-          })
-          .from(moderatorChatMessagesTable)
-          .where(
-            and(
-              eq(moderatorChatMessagesTable.projectId, projectId),
-              eq(moderatorChatMessagesTable.type, "intervention"),
-              eq(moderatorChatMessagesTable.matched, true),
-              eq(moderatorChatMessagesTable.classId, classId),
-              eq(moderatorChatMessagesTable.propertyId, propertyId),
-            ),
-          )
-          .orderBy(desc(moderatorChatMessagesTable.createdAt), desc(moderatorChatMessagesTable.id))
-          .limit(1);
-
-        // "Messages exchanged since that last intervention" -- if this is
-        // the very first intervention for this property, that's every
-        // chunk ever tagged to it (there's no previous message to have
-        // already covered any of them).
-        const deltaChunks = await db.query.moderatorTranscriptChunksTable.findMany({
-          where: and(
-            eq(moderatorTranscriptChunksTable.projectId, projectId),
-            eq(moderatorTranscriptChunksTable.classId, classId),
-            eq(moderatorTranscriptChunksTable.propertyId, propertyId),
-            previousPropertyIntervention
-              ? gt(moderatorTranscriptChunksTable.createdAt, previousPropertyIntervention.createdAt)
-              : undefined,
-          ),
-        });
-        const deltaTranscript = formatChunksAsTranscript(deltaChunks, usernameById);
-
-        existingExamplePoints = toTransientPoints(previousPropertyIntervention?.examples ?? null);
-        existingCounterexamplePoints = toTransientPoints(previousPropertyIntervention?.counterexamples ?? null);
-
-        extraction = await callOpenAiJson(
-          apiKey,
-          config.model,
-          `You are an AI moderator for a group ontology-design conversation, currently focused on ${className}.${propertyName}. ` +
-            "Every message below is from real-time speech-to-text and can contain near-homophone errors (a " +
-            "name or word transcribed as something that merely sounds alike); infer intended meaning by sound " +
-            "and context rather than taking odd literal text at face value. " +
-            "Below is the PREVIOUS INTERVENTION MESSAGE you already sent the group about this property (if any), " +
-            "followed by every user message exchanged SINCE that message. Base your answer ONLY on these two " +
-            "things -- do not assume anything about earlier conversation beyond what the previous intervention " +
-            "message itself already states.\n\n" +
-            fillExtractionRules(className, propertyName, existingExamplePoints, existingCounterexamplePoints) +
-            'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-            '{"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
-            '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
-            "Use the exact usernames as they appear as speaker labels in the transcript.",
-          `PREVIOUS INTERVENTION MESSAGE:\n${previousPropertyIntervention?.content ?? "(none yet -- this is the first intervention for this property)"}` +
-            `\n\nMESSAGES SINCE THEN:\n${deltaTranscript || "(none)"}`,
-        );
-      }
-
+      // Extraction was already performed in the single combined call above,
+      // using this property's EXISTING STATE block as the baseline -- no
+      // further OpenAI call needed here.
       const rawExamples = Array.isArray(extraction?.examples) ? extraction.examples : [];
       const rawCounterexamples = Array.isArray(extraction?.counterexamples) ? extraction.counterexamples : [];
 
