@@ -85,6 +85,19 @@ interface Session {
   // be silently discarded when the socket closes, dropping the very last
   // thing the member said. Cleared once a commit is actually sent.
   hasUncommittedAudio: boolean;
+  // gpt-live-transcribe rejects `turn_detection` entirely (confirmed live:
+  // "Turn detection is not supported for this transcription model") -- so
+  // unlike a conversational Realtime session, OpenAI never decides on its
+  // own when one utterance ends and the next begins. This server-side
+  // silence timer (see maybeAutoCommit/appendAudioChunk's RMS check) plays
+  // that role instead: the last time a chunk looked like actual speech
+  // rather than near-silence.
+  lastVoiceActivity: number;
+  // Polls whether enough silence has passed since lastVoiceActivity to
+  // finalize the current utterance with a manual commit. Cleared on
+  // teardown (closeTranscriptionSession, or an unexpected ws close) so it
+  // never outlives its session.
+  silenceInterval: ReturnType<typeof setInterval> | null;
 }
 
 const sessions = new Map<string, Session>();
@@ -111,6 +124,57 @@ function sessionKey(projectId: number, userId: number): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// How long a session must look silent (see rmsOf below) before its current
+// utterance is force-finalized with a manual commit. Matches the pause
+// length the previous browser-based recognizer used to treat as "sentence
+// over" (see the LIVE_CAPTION_TTL_MS comment in useProjectSocket.ts).
+const SILENCE_COMMIT_MS = 2_000;
+// How often to check whether SILENCE_COMMIT_MS has elapsed since the last
+// voice-like chunk. Short enough that a commit fires close to on time,
+// long enough not to matter for CPU cost against a handful of concurrent
+// mics.
+const SILENCE_CHECK_INTERVAL_MS = 250;
+// A chunk's RMS (root-mean-square of its Int16 samples) above this is
+// treated as speech rather than background noise/silence. Int16 samples
+// range +/-32767; this is a conservative floor picked to reject typical
+// room-noise floors and mic self-noise without requiring near-total
+// silence, not a calibrated voice-activity model.
+const VOICE_RMS_THRESHOLD = 400;
+
+function rmsOf(chunk: Buffer): number {
+  const sampleCount = chunk.length >> 1;
+  if (sampleCount === 0) return 0;
+  let sumSquares = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = chunk.readInt16LE(i * 2);
+    sumSquares += sample * sample;
+  }
+  return Math.sqrt(sumSquares / sampleCount);
+}
+
+// Sends a manual commit (forcing OpenAI to finalize whatever's currently
+// buffered into a completed transcription item) once the session has gone
+// quiet for SILENCE_COMMIT_MS. This is the ENTIRE turn-taking mechanism for
+// this integration -- gpt-live-transcribe has no VAD/turn_detection of its
+// own (see the Session.lastVoiceActivity comment), so without this an
+// entire call's audio would only ever finalize once, at mic-off.
+function startSilenceWatch(session: Session): void {
+  session.silenceInterval = setInterval(() => {
+    if (!session.hasUncommittedAudio) return;
+    if (session.ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - session.lastVoiceActivity < SILENCE_COMMIT_MS) return;
+    session.ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    session.hasUncommittedAudio = false;
+  }, SILENCE_CHECK_INTERVAL_MS);
+}
+
+function stopSilenceWatch(session: Session): void {
+  if (session.silenceInterval) {
+    clearInterval(session.silenceInterval);
+    session.silenceInterval = null;
+  }
 }
 
 // A regional BCP-47 recognition tag (e.g. "en-US", "zh-CN") down to the
@@ -242,6 +306,8 @@ export async function openTranscriptionSession(
     pendingWrites: new Set(),
     onDrain: null,
     hasUncommittedAudio: false,
+    lastVoiceActivity: Date.now(),
+    silenceInterval: null,
   };
   sessions.set(key, session);
 
@@ -262,7 +328,12 @@ export async function openTranscriptionSession(
                 languages: languageHint(lang),
                 ...(keywords.length ? { keywords } : {}),
               },
-              turn_detection: { type: "server_vad", silence_duration_ms: 700 },
+              // gpt-live-transcribe rejects any non-null turn_detection
+              // outright ("Turn detection is not supported for this
+              // transcription model") -- confirmed live, not just inferred
+              // from docs. Turn-taking is handled entirely server-side
+              // instead, via startSilenceWatch below.
+              turn_detection: null,
             },
           },
         },
@@ -280,6 +351,11 @@ export async function openTranscriptionSession(
       }
       session.hasUncommittedAudio = true;
     }
+    // Treat connection setup itself as "recent activity" so the silence
+    // watch doesn't fire on its very first tick before any real audio (or
+    // silence) has had a chance to be observed post-connect.
+    session.lastVoiceActivity = Date.now();
+    startSilenceWatch(session);
   });
 
   ws.on("message", (raw) => {
@@ -349,6 +425,7 @@ export async function openTranscriptionSession(
   });
 
   ws.on("close", () => {
+    stopSilenceWatch(session);
     if (sessions.get(key) === session) sessions.delete(key);
     if (!session.expectedClose) {
       logger.warn({ projectId, userId }, "OpenAI realtime transcription session closed unexpectedly");
@@ -376,6 +453,9 @@ export function appendAudioChunk(projectId: number, userId: number, chunk: Buffe
   if (session && session.ws.readyState === WebSocket.OPEN) {
     session.ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: chunk.toString("base64") }));
     session.hasUncommittedAudio = true;
+    if (rmsOf(chunk) > VOICE_RMS_THRESHOLD) {
+      session.lastVoiceActivity = Date.now();
+    }
     return;
   }
   // No open session for this member yet -- queue it (see pendingAudio)
@@ -428,6 +508,7 @@ export async function closeTranscriptionSession(projectId: number, userId: numbe
   if (!session) return;
   session.expectedClose = true;
   sessions.delete(key);
+  stopSilenceWatch(session);
 
   // Anything appended since the last commit -- whether or not OpenAI has
   // emitted a single delta for it yet -- must be committed and drained, or
