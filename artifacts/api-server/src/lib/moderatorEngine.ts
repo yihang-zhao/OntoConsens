@@ -274,6 +274,9 @@ async function postChatMessage(
     examples?: ModeratorInterventionEntry[] | null;
     counterexamples?: ModeratorInterventionEntry[] | null;
   },
+  // Broadcast-only, never persisted -- see recordTranscriptChunk's own
+  // utteranceId parameter for why this exists.
+  broadcastUtteranceId?: number,
 ): Promise<void> {
   const [row] = await db
     .insert(moderatorChatMessagesTable)
@@ -281,7 +284,10 @@ async function postChatMessage(
     .returning();
   if (!row) return;
   const message = await serializeChatMessage(row);
-  broadcastToProject(projectId, { type: "moderator_chat_message", message });
+  broadcastToProject(projectId, {
+    type: "moderator_chat_message",
+    message: broadcastUtteranceId === undefined ? message : { ...message, utteranceId: broadcastUtteranceId },
+  });
 }
 
 // Posted exactly once per project, the moment the shared space opens (every
@@ -329,8 +335,13 @@ export async function postRecordingStoppedMessage(projectId: number, userId: num
 
 // Mirrors a transcribed chunk into the shared chat log the moment it's
 // recorded, so every member sees it live regardless of their own mic state.
-async function postTranscriptMessage(projectId: number, userId: number, text: string): Promise<void> {
-  await postChatMessage(projectId, { type: "transcript", userId, content: text });
+async function postTranscriptMessage(
+  projectId: number,
+  userId: number,
+  text: string,
+  utteranceId?: number,
+): Promise<void> {
+  await postChatMessage(projectId, { type: "transcript", userId, content: text }, utteranceId);
 }
 
 // Persists a transcribed chunk IFF this member is still an active
@@ -350,6 +361,12 @@ export async function recordTranscriptChunk(
   userId: number,
   text: string,
   activationId: string,
+  // Client-generated, per-browser-session utterance counter (see
+  // useModeratorAudio's onFinalize) -- purely echoed back on the live
+  // broadcast below, never persisted, so every viewer can tell whether the
+  // speaker's live caption still belongs to THIS utterance or has already
+  // moved on to a new one by the time this request's storage completes.
+  utteranceId?: number,
 ): Promise<boolean> {
   const committed = await db.transaction(async (tx) => {
     const [current] = await tx
@@ -372,7 +389,7 @@ export async function recordTranscriptChunk(
     // Broadcasting the chat message is independent of the transcript-chunk
     // transaction above (it doesn't need to be atomic with it -- worst case
     // a chat message shows up a moment after the row that backs it).
-    await postTranscriptMessage(projectId, userId, text);
+    await postTranscriptMessage(projectId, userId, text, utteranceId);
   }
   return committed;
 }

@@ -74,8 +74,8 @@ interface ModeratorChatPanelProps {
    *  caption (Teams-style), not the final persisted transcript. Only
    *  populated for members whose browser supports the Web Speech API. */
   liveCaptions: Map<number, LiveCaption>;
-  sendCaption: (text: string) => void;
-  clearLiveCaption: (userId: number) => void;
+  sendCaption: (text: string, utteranceId: number) => void;
+  clearLiveCaption: (userId: number, utteranceId: number) => void;
   members: { userId: number; username: string; colorSlot: number }[];
   moderatorErrorMessage: string | null;
   onDismissError: () => void;
@@ -152,11 +152,11 @@ export function ModeratorChatPanel({
     // message box is visible in real time while they keep talking. Nothing
     // else touches this bubble's content.
     onCaption: sendCaption,
-    // Fires once per utterance, 2 seconds after the last recognized word (or
+    // Fires once per utterance, 1 second after the last recognized word (or
     // immediately if the mic is turned off mid-utterance) -- this is the
     // only point where a permanent chat message gets created, so continuous
     // talking never fragments into several boxes.
-    onFinalize: (text) => {
+    onFinalize: (text, utteranceId) => {
       // Deliberately NOT clearing the caption here. Clearing it immediately
       // sends an empty caption over the socket and waits on its own
       // round trip to come back before the box disappears -- an entirely
@@ -168,21 +168,35 @@ export function ModeratorChatPanel({
       // exact same text. Leaving the box showing its already-finalized text
       // makes the swap invisible: the effect below clears it in the exact
       // same tick the real message lands, never before and never after.
-      submitTranscript.mutate({ id: projectId, data: { text } });
+      //
+      // This call is fire-and-forget on purpose: finalizing this utterance
+      // and capturing whatever the speaker says next are independent,
+      // parallel processes. The recognizer (see useModeratorAudio) is
+      // already free to keep recognizing immediately -- nothing here waits
+      // on this mutation before the next onCaption can fire -- and
+      // utteranceId travels all the way through the persisted-message
+      // broadcast so the "message landed" effect below can tell whether
+      // this box still belongs to THIS utterance by the time storage
+      // finally confirms it.
+      submitTranscript.mutate({ id: projectId, data: { text, utteranceId } });
     },
   });
 
   // The instant a real transcript message lands, drop its speaker's interim
-  // caption -- this is the ONLY place the interim box for a finalized
-  // utterance gets cleared, so it can never disappear before, or linger
-  // after, the permanent message it's standing in for actually shows up.
+  // caption -- but only if it's still showing the utterance that message
+  // carries. Storing a finalized utterance and capturing a new one the
+  // speaker has already resumed are parallel, independent processes (see
+  // useModeratorAudio's onFinalize), so this confirmation can easily arrive
+  // after the speaker is already partway through their next sentence --
+  // clearLiveCaption itself no-ops in that case rather than wiping out that
+  // in-progress caption.
   const lastMessageIdRef = useRef<number | null>(null);
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (!last || last.id === lastMessageIdRef.current) return;
     lastMessageIdRef.current = last.id;
-    if (last.type === "transcript" && last.userId !== null) {
-      clearLiveCaption(last.userId);
+    if (last.type === "transcript" && last.userId !== null && last.utteranceId !== undefined) {
+      clearLiveCaption(last.userId, last.utteranceId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
@@ -212,10 +226,13 @@ export function ModeratorChatPanel({
       // onSettled, so a failed submission still lets disable proceed)
       // guarantees the transcript is fully accepted or rejected before the
       // deactivation request is even sent.
-      const pendingText = flush();
+      const { text: pendingText, utteranceId: pendingUtteranceId } = flush();
       const proceedToDisable = () => disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
       if (pendingText) {
-        submitTranscript.mutate({ id: projectId, data: { text: pendingText } }, { onSettled: proceedToDisable });
+        submitTranscript.mutate(
+          { id: projectId, data: { text: pendingText, utteranceId: pendingUtteranceId } },
+          { onSettled: proceedToDisable },
+        );
       } else {
         proceedToDisable();
       }

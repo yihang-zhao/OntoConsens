@@ -159,6 +159,12 @@ router.post("/projects/:id/moderator/transcript", async (req, res) => {
   const userId = req.userId!;
   const projectId = Number(req.params.id);
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  // Client-generated, per-browser-session utterance counter (see
+  // useModeratorAudio's onFinalize) -- not persisted, just echoed back on
+  // the live broadcast below so every viewer's live-caption cleanup can
+  // tell this utterance apart from one the speaker may have already
+  // started while this request was still in flight.
+  const utteranceId = typeof req.body?.utteranceId === "number" ? req.body.utteranceId : undefined;
 
   const membership = await getMembership(projectId, userId);
   if (!membership) {
@@ -183,7 +189,7 @@ router.post("/projects/:id/moderator/transcript", async (req, res) => {
   // still current" check and the insert as one row-locked transaction, so
   // a disable that happened concurrently can't land this text under a
   // period this member never consented to.
-  const committed = await recordTranscriptChunk(projectId, userId, text, active.activationId);
+  const committed = await recordTranscriptChunk(projectId, userId, text, active.activationId, utteranceId);
   if (!committed) {
     res.status(409).json({ error: "Your AI moderator session changed; please try again." });
     return;

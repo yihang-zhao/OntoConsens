@@ -443,7 +443,8 @@ export const SubmitModeratorTranscriptParams = zod.object({
 })
 
 export const SubmitModeratorTranscriptBody = zod.object({
-  "text": zod.string()
+  "text": zod.string(),
+  "utteranceId": zod.number().int().optional().describe('Client-generated, per-browser-session counter identifying which in-progress utterance this finalized text belongs to. Not persisted -- it\'s only echoed back on the live \"moderator_chat_message\" broadcast so every viewer can tell whether the speaker has already started a NEW utterance (and its own live caption) by the time this one\'s storage round trip completes, so the wrong caption never gets cleared out from under it.')
 })
 
 export const SubmitModeratorTranscriptResponse = zod.void()

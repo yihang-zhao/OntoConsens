@@ -40,6 +40,15 @@ export interface ModeratorChatMessage {
   examples: ModeratorInterventionEntry[] | null;
   counterexamples: ModeratorInterventionEntry[] | null;
   createdAt: string;
+  /** Only present on a freshly-broadcast "transcript" message, echoing back
+   *  the same per-browser-session utterance counter the speaker's client
+   *  sent along with it (see useModeratorAudio's onFinalize) -- never
+   *  persisted, so it's absent from history fetched via GET
+   *  /projects/:id/moderator/messages. Lets every viewer's "a real message
+   *  landed" handling tell whether the speaker's live caption still shows
+   *  THIS utterance (safe to clear) or has already moved on to a new one
+   *  (must be left alone). */
+  utteranceId?: number;
 }
 
 type ServerEvent =
@@ -54,7 +63,7 @@ type ServerEvent =
   | { type: "member_ready" }
   | { type: "project_deleted" }
   | { type: "speaker_volume"; userId: number; level: number }
-  | { type: "live_caption"; userId: number; text: string }
+  | { type: "live_caption"; userId: number; text: string; utteranceId: number }
   | { type: "moderator_chat_message"; message: ModeratorChatMessage }
   | { type: "moderator_error"; message: string }
   | { type: "moderator_intervention_typing" };
@@ -63,6 +72,9 @@ export interface LiveCaption {
   userId: number;
   text: string;
   updatedAt: number;
+  /** Which utterance (per the speaker's own useModeratorAudio session) this
+   *  text belongs to -- see clearLiveCaption below for why this matters. */
+  utteranceId: number;
 }
 
 interface UseProjectSocketOptions {
@@ -255,7 +267,12 @@ export function useProjectSocket({
           case "live_caption":
             setLiveCaptions((prev) => {
               const next = new Map(prev);
-              next.set(data.userId, { userId: data.userId, text: data.text, updatedAt: Date.now() });
+              next.set(data.userId, {
+                userId: data.userId,
+                text: data.text,
+                updatedAt: Date.now(),
+                utteranceId: data.utteranceId,
+              });
               return next;
             });
             break;
@@ -375,20 +392,27 @@ export function useProjectSocket({
     }
   }, []);
 
-  const sendCaption = useCallback((text: string) => {
+  const sendCaption = useCallback((text: string, utteranceId: number) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "caption", text }));
+      socket.send(JSON.stringify({ type: "caption", text, utteranceId }));
     }
   }, []);
 
-  // Clears this user's own live caption immediately once their real,
-  // persisted transcript message shows up in the chat -- otherwise the
-  // interim caption bubble can briefly linger under/above the final message
-  // until its own TTL expires.
-  const clearLiveCaption = useCallback((userId: number) => {
+  // Clears this user's live caption once their real, persisted transcript
+  // message shows up in the chat -- otherwise the interim caption bubble
+  // can briefly linger under/above the final message until its own TTL
+  // expires. Only clears it if it's STILL showing the utterance that just
+  // got persisted: finalizing an utterance and storing it are independent,
+  // parallel processes (see useModeratorAudio's onFinalize), so by the time
+  // this arrives the speaker may already be several words into a new
+  // utterance. Deleting unconditionally would wipe out that in-progress
+  // caption every time -- a visible stutter/loss right as someone resumes
+  // talking -- instead of just tidying up the one that's now redundant.
+  const clearLiveCaption = useCallback((userId: number, utteranceId: number) => {
     setLiveCaptions((prev) => {
-      if (!prev.has(userId)) return prev;
+      const current = prev.get(userId);
+      if (!current || current.utteranceId !== utteranceId) return prev;
       const next = new Map(prev);
       next.delete(userId);
       return next;

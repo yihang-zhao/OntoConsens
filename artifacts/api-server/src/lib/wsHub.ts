@@ -59,7 +59,7 @@ export type ServerEvent =
   | { type: "project_deleted"; projectId?: number }
   | { type: "member_count_changed"; projectId: number; memberCount: number }
   | { type: "speaker_volume"; userId: number; level: number }
-  | { type: "live_caption"; userId: number; text: string }
+  | { type: "live_caption"; userId: number; text: string; utteranceId: number }
   | {
       type: "moderator_chat_message";
       // A single, fully-serialized row from the persisted moderator chat
@@ -79,6 +79,13 @@ export type ServerEvent =
         classId: number | null;
         propertyId: number | null;
         createdAt: string;
+        // Only present on a freshly-broadcast "transcript" message -- echoes
+        // back the client-generated utteranceId the speaker submitted it
+        // with, so every viewer's live-caption cleanup can tell whether the
+        // speaker's caption box still shows THIS utterance or has already
+        // moved on to a new one. Never persisted to the DB, so it's absent
+        // from history replay.
+        utteranceId?: number;
       };
     }
   | { type: "moderator_error"; message: string }
@@ -216,11 +223,13 @@ export function setupWebSocketServer(): WebSocketServer {
         typeof (data as { text: unknown }).text === "string"
       ) {
         const { text } = data as { text: string };
+        const rawUtteranceId = (data as { utteranceId?: unknown }).utteranceId;
+        const utteranceId = typeof rawUtteranceId === "number" ? rawUtteranceId : 0;
         // Live captions round-trip back to the speaker too, so everyone
         // (including them) renders the exact same growing text in the same
         // place -- one source of truth instead of a local echo that could
         // drift from what peers see.
-        broadcastToProject(ticket.projectId, { type: "live_caption", userId: ticket.userId, text });
+        broadcastToProject(ticket.projectId, { type: "live_caption", userId: ticket.userId, text, utteranceId });
         // Non-empty text means someone currently has words actively filling
         // into their live box -- that counts as speech activity for the AI
         // moderator's silence clock, even though nothing has been finalized

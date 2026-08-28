@@ -17,15 +17,30 @@ interface UseModeratorAudioOptions {
    *  is no separate server-side transcription step). Called with an empty
    *  string when there's no utterance in progress. Only fires in browsers
    *  that support the Web Speech API (Chrome/Edge); Firefox/Safari have no
-   *  implementation, so live transcription is simply unavailable there. */
-  onCaption?: (text: string) => void;
+   *  implementation, so live transcription is simply unavailable there.
+   *  The second argument identifies WHICH utterance this text belongs to
+   *  (see onFinalize) -- the caller needs it to tell apart "this is still
+   *  growing text for the utterance that's currently being persisted" from
+   *  "this is a brand-new utterance that started while the previous one's
+   *  storage round trip is still in flight". */
+  onCaption?: (text: string, utteranceId: number) => void;
   /** Called once per utterance, with its full recognized text, the moment
-   *  2 seconds pass with no further speech (or the mic is turned off mid-
+   *  1 second passes with no further speech (or the mic is turned off mid-
    *  utterance) -- this is the point where the text should be persisted as
    *  a real, permanent chat message. While the user keeps talking with less
-   *  than 2s of silence between words, onCaption keeps growing the SAME
-   *  in-progress utterance instead of this firing. */
-  onFinalize?: (text: string) => void;
+   *  than 1s of silence between words, onCaption keeps growing the SAME
+   *  in-progress utterance instead of this firing.
+   *  Persisting this text (a network round trip) and capturing whatever the
+   *  user says next are two fully independent processes: this call returns
+   *  immediately (it never awaits the caller's own persistence), and the
+   *  recognizer keeps running uninterrupted so the very next onCaption can
+   *  fire before this utterance has finished being stored. utteranceId is a
+   *  simple per-session counter, incremented the instant this utterance is
+   *  handed off -- everything onCaption reports afterward belongs to
+   *  utteranceId + 1, letting the caller distinguish a late-arriving
+   *  "stored" confirmation for THIS utterance from a next utterance that's
+   *  already begun. */
+  onFinalize?: (text: string, utteranceId: number) => void;
 }
 
 // Chrome/Edge ship this as the prefixed webkitSpeechRecognition; Firefox and
@@ -117,14 +132,14 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
   // transcript submission can arrive too late to be accepted. Calling this
   // first lets the caller submit the text and wait for that to be accepted
   // BEFORE deactivating, closing that race.
-  const flushRef = useRef<() => string>(() => "");
+  const flushRef = useRef<() => { text: string; utteranceId: number }>(() => ({ text: "", utteranceId: 0 }));
 
   // Live speech-to-text runs as its own consumer of the microphone via the
   // browser's speech recognizer -- it manages its own mic access separately
   // from the volume-metering effect below, so the two don't interfere.
   useEffect(() => {
     if (!active) {
-      flushRef.current = () => "";
+      flushRef.current = () => ({ text: "", utteranceId: 0 });
       return;
     }
     const maybeCtor = getSpeechRecognitionCtor();
@@ -157,6 +172,13 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     let priorSessionsText = "";
     let lastSpeechAt = 0;
     let lastResults: any = null;
+    // Identifies the utterance currently being accumulated by onCaption.
+    // Bumped the instant an utterance is handed off to onFinalize, so
+    // anything reported afterward (even a millisecond later) is correctly
+    // tagged as belonging to the NEXT utterance -- this is what lets the
+    // caller tell a delayed "your previous message finished storing"
+    // confirmation apart from "the user already started talking again".
+    let utteranceId = 0;
     // When the CURRENT recognition session actually started -- used by the
     // stuck-recognizer watchdog below to (a) give a freshly (re)started
     // session a moment before judging it unresponsive, and (b) naturally
@@ -196,6 +218,13 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     function finalizeIfAny(sessionText = "") {
       const text = currentText(sessionText);
       priorSessionsText = "";
+      // Hand this utterance's id to the finalize callback, then immediately
+      // move on to the next one -- from this point on, any further
+      // recognized speech (the user resuming right away) is a NEW utterance
+      // and must never be confused with the one just handed off, no matter
+      // how long its own persistence round trip takes.
+      const finalizedId = utteranceId;
+      utteranceId += 1;
       // Deliberately NOT calling onCaption("") here. That would broadcast an
       // empty caption immediately, racing the onFinalize round trip below
       // (which persists the same text as a real message) over two entirely
@@ -204,7 +233,11 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       // once. The box should keep showing this same finalized text right up
       // until the permanent message actually replaces it; that swap is the
       // sole responsibility of the caller's "message arrived" handling.
-      if (text) onFinalizeRef.current?.(text);
+      // Note this call is fire-and-forget from here on: nothing below in
+      // this closure waits on whatever the caller does with it (e.g. a
+      // network request to persist it), so the recognizer keeps running and
+      // the very next onresult can fire before this one's storage settles.
+      if (text) onFinalizeRef.current?.(text, finalizedId);
     }
 
     // Exposed to the caller via the hook's returned `flush()`. Pulls
@@ -218,6 +251,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     // (redundantly) finalize once `active` actually flips to false.
     flushRef.current = () => {
       const text = currentText(lastResults ? textFromResults(lastResults, resultsOffset) : "");
+      const flushedId = utteranceId;
       priorSessionsText = "";
       lastResults = null;
       lastSpeechAt = 0;
@@ -228,7 +262,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
           // already stopped
         }
       }
-      return text;
+      return { text, utteranceId: flushedId };
     };
 
     function start() {
@@ -247,7 +281,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         lastResults = event.results;
         const sessionText = textFromResults(event.results, resultsOffset);
         lastSpeechAt = Date.now();
-        onCaptionRef.current?.(currentText(sessionText));
+        onCaptionRef.current?.(currentText(sessionText), utteranceId);
       };
       rec.onerror = () => {
         // "no-speech"/"aborted" etc. — just let onend's restart handle it.

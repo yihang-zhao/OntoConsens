@@ -17,3 +17,4 @@
 - [Browser Web Speech API as the live transcript source](browser-speech-recognition-transcript.md) — group utterances by wall-clock silence since last word, not recognizer restart lifecycle.
 - [Live-caption-to-permanent-message swap flicker](live-to-final-message-swap.md) — 4 independent flash causes (placeholder frame, racing round trips, markup mismatch, TTL race); check all when a "swap flash" is reported.
 - [Missing effect dependency stalls reveal chain](effect-missing-dep-stalls-chain.md) — a gating flag read but not listed in an effect's deps can deadlock a "reveal one at a time" state machine; only reproduces live, masked by reload.
+- [Live caption cleared out from under a resumed utterance](live-caption-utterance-id-race.md) — decoupling finalize/persist from next-capture needs a per-utterance id threaded end to end, or a late "stored" confirmation wipes the next utterance's box.
