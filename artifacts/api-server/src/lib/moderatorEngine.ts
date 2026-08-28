@@ -706,6 +706,11 @@ async function generateIntervention(projectId: number): Promise<void> {
   // interruption with nothing to say is worse than no interruption, so
   // this is treated the same as the exact-duplicate-content case below:
   // silently advance the checkpoint, never post.
+  // The generic unmatched fallback ("I noticed the discussion has stalled,
+  // but couldn't tell which class or property this was about...") gets the
+  // exact same treatment and for the same reason -- it tells the group
+  // nothing they can act on -- so this is also set true whenever pass 1
+  // fails to resolve a class/property (see the `else` branch below).
   let hasNothingToShow = false;
 
   // The anchor for "is this still about the same property" continuity is
@@ -1236,6 +1241,10 @@ async function generateIntervention(projectId: number): Promise<void> {
       interventionContent =
         "I noticed the discussion has stalled, but couldn't tell which class or property this was about. " +
         "Try focusing the discussion on properties already in this shared workspace.";
+      // This generic fallback gives the group nothing to act on -- same
+      // treatment as a matched property with no examples/counterexamples
+      // at all: silently advance the checkpoint, never actually post it.
+      hasNothingToShow = true;
     }
   } catch (err) {
     logger.error({ err, projectId }, "Moderator intervention generation errored");
