@@ -211,19 +211,20 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="sticky top-0 z-30 w-full border-b bg-card/80 backdrop-blur-md">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="container mx-auto px-3 sm:px-4 py-2 sm:h-16 sm:py-0 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shrink-0">
               <Network className="w-4 h-4 text-primary-foreground" />
             </div>
             <span className="font-mono font-bold text-lg">OntoConsensus</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-2">
                   <ArrowRight className="w-4 h-4" />
-                  Join Project
+                  <span className="hidden sm:inline">Join Project</span>
+                  <span className="sm:hidden">Join</span>
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -267,7 +268,8 @@ export default function Dashboard() {
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-2">
                   <Plus className="w-4 h-4" />
-                  New Project
+                  <span className="hidden sm:inline">New Project</span>
+                  <span className="sm:hidden">New</span>
                 </Button>
               </DialogTrigger>
               <DialogContent closeButtonDisabled={createProject.isPending}>
@@ -379,7 +381,7 @@ export default function Dashboard() {
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-2">
                   <KeyRound className="w-4 h-4" />
-                  API Key
+                  <span className="hidden sm:inline">API Key</span>
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -494,7 +496,7 @@ export default function Dashboard() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute top-3 right-3 h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-opacity"
+                        className="absolute top-3 right-3 h-7 w-7 text-muted-foreground opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-opacity"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>

@@ -84,6 +84,11 @@ interface ModeratorChatPanelProps {
    *  durably committed the message -- it's exactly INTERVENTION_TYPING_DELAY_MS
    *  away, guaranteed. Cleared the moment that real message arrives. */
   moderatorTyping: boolean;
+  /** Extra classes for the root <aside> -- used by the project workspace to
+   *  toggle visibility for the mobile graph/chat pane switcher (this
+   *  component has no concept of "mobile view" itself, it just accepts
+   *  whatever display it's told to use). */
+  className?: string;
 }
 
 // Deduplicate by id: the persisted-history fetch and live socket messages can
@@ -111,6 +116,7 @@ export function ModeratorChatPanel({
   moderatorErrorMessage,
   onDismissError,
   moderatorTyping,
+  className,
 }: ModeratorChatPanelProps) {
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
@@ -511,7 +517,9 @@ export function ModeratorChatPanel({
   }, [historyReady, visibleMessages.length, isTyping, moderatorTyping, speakingMembers.length, liveCaptionsKey]);
 
   return (
-    <aside className="w-[28vw] min-w-[22rem] shrink-0 h-full flex flex-col border rounded-2xl shadow-sm bg-card overflow-hidden">
+    <aside
+      className={`w-full lg:w-[28vw] lg:min-w-[22rem] shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "flex"}`}
+    >
       <div className="flex items-center gap-2 h-14 px-4 border-b shrink-0">
         <Sparkles className="w-4 h-4 text-primary" />
         <span className="font-semibold text-sm">AI Moderator</span>

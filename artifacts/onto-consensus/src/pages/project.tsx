@@ -24,6 +24,7 @@ import {
   ChevronLeft, 
   Loader2, 
   Network, 
+  Sparkles,
 } from "lucide-react";
 import { useProjectSocket, type ModeratorChatMessage } from "@/hooks/useProjectSocket";
 import { ModeratorChatPanel } from "@/components/ModeratorChatPanel";
@@ -187,6 +188,13 @@ export default function ProjectWorkspace() {
   // workspace. Reconnecting/disconnected states stay visible the whole time
   // since those need the user's attention.
   const [showLive, setShowLive] = useState(false);
+  // Below the lg breakpoint the graph and the moderator chat can't fit
+  // side by side (the chat panel alone needs a real minimum width to stay
+  // usable) -- so on narrow screens only one of them is shown at a time,
+  // switched via a small tab control, instead of the two-pane desktop
+  // layout. Both panes stay mounted; only visibility (via CSS) toggles,
+  // so switching back to a pane never loses its scroll position or state.
+  const [mobileView, setMobileView] = useState<"graph" | "chat">("graph");
   const prevSyncStatus = useRef(syncStatus);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -268,19 +276,19 @@ export default function ProjectWorkspace() {
   return (
     <div className="flex flex-col h-[100dvh] bg-background overflow-hidden">
       {/* Top Bar */}
-      <header className="flex items-center justify-between h-14 px-4 border-b bg-card shrink-0 shadow-sm z-10 relative">
-        <div className="flex items-center gap-4">
+      <header className="flex items-center justify-between h-14 px-2 sm:px-4 border-b bg-card shrink-0 shadow-sm z-10 relative gap-2">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           <Button variant="ghost" size="icon" className="shrink-0 -ml-2" onClick={handleQuitProject}>
             <ChevronLeft className="w-5 h-5" />
           </Button>
-          <div className="flex flex-col">
-            <h1 className="font-semibold text-sm leading-tight">{project.name}</h1>
+          <div className="flex flex-col min-w-0">
+            <h1 className="font-semibold text-sm leading-tight truncate">{project.name}</h1>
           </div>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2 sm:gap-4 md:gap-6 shrink-0">
           {/* Member Chips */}
-          <div className="flex items-center gap-2 bg-muted/50 p-1.5 rounded-full border">
+          <div className="flex items-center gap-1.5 sm:gap-2 bg-muted/50 p-1.5 rounded-full border">
             {project.members.map(member => {
               // The green ring means "in this project right now" (has an open
               // socket connection) — independent of readiness, so someone can
@@ -307,11 +315,13 @@ export default function ProjectWorkspace() {
               );
             })}
             
-            {/* Empty slots placeholders */}
+            {/* Empty slots placeholders -- hidden on the narrowest screens
+                since the top bar is already tight there and they're purely
+                decorative (no actionable state). */}
             {Array.from({ length: project.maxMembers - project.members.length }).map((_, i) => (
               <div 
                 key={`empty-${i}`} 
-                className="w-8 h-8 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center"
+                className="hidden sm:flex w-8 h-8 rounded-full border-2 border-dashed border-muted-foreground/30 items-center justify-center"
               >
                 <span className="text-[10px] text-muted-foreground/50 font-medium">--</span>
               </div>
@@ -321,26 +331,62 @@ export default function ProjectWorkspace() {
           {/* Ready Toggle - one-way: once ready you cannot mark yourself unready */}
           <Button 
             variant={isReady ? "default" : "outline"}
-            className={`min-w-[140px] shadow-sm transition-all duration-300 ${isReady ? 'bg-green-600 hover:bg-green-700 text-white cursor-default opacity-100' : ''}`}
+            className={`shrink-0 sm:min-w-[140px] shadow-sm transition-all duration-300 ${isReady ? 'bg-green-600 hover:bg-green-700 text-white cursor-default opacity-100' : ''}`}
             onClick={handleMarkReady}
             disabled={setReady.isPending || isReady}
           >
             {isReady ? (
               <>
-                <Check className="w-4 h-4 mr-2" />
-                Ready
+                <Check className="w-4 h-4 sm:mr-2" />
+                <span className="hidden sm:inline">Ready</span>
               </>
             ) : (
-              "Mark as Ready"
+              <>
+                <span className="hidden sm:inline">Mark as Ready</span>
+                <span className="sm:hidden">Ready?</span>
+              </>
             )}
           </Button>
         </div>
       </header>
 
+      {/* Mobile pane switcher -- below lg, the graph and the moderator chat
+          can't fit side by side (the chat needs a real minimum width to
+          stay usable), so only one is shown at a time here. Both panes stay
+          mounted underneath; this only toggles which one is visible. */}
+      {allReady && (
+        <div className="lg:hidden flex items-center gap-1.5 px-4 pt-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setMobileView("graph")}
+            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+              mobileView === "graph" ? "bg-foreground text-background border-foreground" : "bg-card text-muted-foreground"
+            }`}
+          >
+            <Network className="w-3.5 h-3.5" />
+            Graph
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileView("chat")}
+            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+              mobileView === "chat" ? "bg-foreground text-background border-foreground" : "bg-card text-muted-foreground"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Chat
+          </button>
+        </div>
+      )}
+
       {/* Main Content Area */}
       <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4">
         {/* Canvas Area */}
-        <main className="flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden">
+        <main
+          className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden ${
+            allReady && mobileView === "chat" ? "hidden lg:block" : "block"
+          }`}
+        >
           {me && (
             <GraphCanvas
               projectId={projectId}
@@ -387,6 +433,7 @@ export default function ProjectWorkspace() {
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
             moderatorTyping={moderatorTyping}
+            className={mobileView === "chat" ? "flex" : "hidden lg:flex"}
           />
         )}
       </div>
