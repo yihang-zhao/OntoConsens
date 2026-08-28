@@ -24,31 +24,6 @@ export interface ParsedOntology {
 // model id (see lib/db schema/moderator.ts) purely for consistency.
 const ONTOLOGY_EXTRACTION_MODEL = "gpt-5.6-terra";
 
-// After any call to ONTOLOGY_EXTRACTION_MODEL, no further call to it is
-// allowed for this long -- process-wide, not per-user/project, since it's
-// the same model account-wide. `cooldownUntil` is a wall-clock timestamp
-// (ms), so it's resilient to calls landing back-to-back from concurrent
-// requests: whichever call's `finally` block runs last wins, which is
-// always the correct (latest) cooldown expiry.
-const MODEL_COOLDOWN_MS = 10_000;
-let cooldownUntil = 0;
-
-function assertModelCooldownElapsed(): void {
-  const remainingMs = cooldownUntil - Date.now();
-  if (remainingMs > 0) {
-    throw new Error(
-      `The AI model is cooling down after its last call. Try again in ${Math.ceil(remainingMs / 1000)}s.`,
-    );
-  }
-}
-
-// Called via `finally` around every request to ONTOLOGY_EXTRACTION_MODEL,
-// so the cooldown starts whether the call succeeded or failed -- a failed
-// call still counts as "a call" for cooldown purposes.
-function startModelCooldown(): void {
-  cooldownUntil = Date.now() + MODEL_COOLDOWN_MS;
-}
-
 export async function getUserApiKey(userId: number): Promise<string | null> {
   const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
   if (!user?.openaiApiKeyEncrypted || !user.openaiApiKeyIv || !user.openaiApiKeyAuthTag) return null;
@@ -128,23 +103,17 @@ function stripCodeFence(text: string): string {
 }
 
 async function extractFromText(apiKey: string, content: string): Promise<RawAiOntology> {
-  assertModelCooldownElapsed();
-  let response: Response;
-  try {
-    response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: ONTOLOGY_EXTRACTION_MODEL,
-        messages: [
-          { role: "system", content: EXTRACTION_INSTRUCTIONS },
-          { role: "user", content },
-        ],
-      }),
-    });
-  } finally {
-    startModelCooldown();
-  }
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: ONTOLOGY_EXTRACTION_MODEL,
+      messages: [
+        { role: "system", content: EXTRACTION_INSTRUCTIONS },
+        { role: "user", content },
+      ],
+    }),
+  });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const message =
@@ -204,28 +173,22 @@ async function extractFromFile(apiKey: string, filename: string, buffer: Buffer,
     ? { type: "input_image", file_id: fileId }
     : { type: "input_file", file_id: fileId };
 
-  assertModelCooldownElapsed();
-  let response: Response;
-  try {
-    response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: ONTOLOGY_EXTRACTION_MODEL,
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: EXTRACTION_INSTRUCTIONS },
-              contentPart,
-            ],
-          },
-        ],
-      }),
-    });
-  } finally {
-    startModelCooldown();
-  }
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: ONTOLOGY_EXTRACTION_MODEL,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: EXTRACTION_INSTRUCTIONS },
+            contentPart,
+          ],
+        },
+      ],
+    }),
+  });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const message =
