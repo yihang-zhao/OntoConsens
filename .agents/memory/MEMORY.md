@@ -18,3 +18,4 @@
 - [Live-caption-to-permanent-message swap flicker](live-to-final-message-swap.md) — 4 independent flash causes (placeholder frame, racing round trips, markup mismatch, TTL race); check all when a "swap flash" is reported.
 - [Missing effect dependency stalls reveal chain](effect-missing-dep-stalls-chain.md) — a gating flag read but not listed in an effect's deps can deadlock a "reveal one at a time" state machine; only reproduces live, masked by reload.
 - [Live caption cleared out from under a resumed utterance](live-caption-utterance-id-race.md) — decoupling finalize/persist from next-capture needs a per-utterance id threaded end to end, or a late "stored" confirmation wipes the next utterance's box.
+- [Speech recognizer stuck-bug clusters at utterance boundaries](speech-recognizer-post-finalize-stuck-window.md) — a general stuck-recognizer watchdog is too slow right at finalize; add a narrower, tighter-threshold window just for that transition.

@@ -94,6 +94,23 @@ const RECOGNITION_RESTART_DELAY_MS = 250;
 // said.
 const RECOGNIZER_STUCK_AUDIO_GRACE_MS = 900;
 const RECOGNIZER_STUCK_NO_RESULT_MS = 1_800;
+// The moment most likely to trigger the above bug is exactly the pause that
+// our OWN silence timer just used to finalize an utterance into its own
+// message box -- that pause is precisely the "pause of varying length"
+// Chrome's bug is keyed on, so the recognizer going silently stuck right as
+// the user resumes talking for a brand-new utterance is common, not rare.
+// Waiting out the general-purpose thresholds above before recovering means
+// losing up to ~2.7s of the new utterance's opening words every time this
+// hits -- exactly the "first few words of the new message aren't
+// recognized" complaint. Rather than widen the general thresholds (which
+// would make the watchdog fire too eagerly on normal recognizer latency
+// during genuine mid-utterance pauses, where a false trigger costs a real
+// restart gap for no reason), a separate, tighter pair applies ONLY in the
+// narrow window between "an utterance was just finalized" and "the new
+// utterance's first result has arrived" -- see awaitingFirstResultOfNewUtterance
+// below.
+const RECOGNIZER_STUCK_AUDIO_GRACE_MS_AFTER_FINALIZE = 400;
+const RECOGNIZER_STUCK_NO_RESULT_MS_AFTER_FINALIZE = 700;
 const MIN_SESSION_AGE_BEFORE_FORCED_RESTART_MS = 1_000;
 // Raw (unscaled) RMS floor above which incoming audio counts as "someone is
 // plausibly making speech-level sound right now" for the watchdog above --
@@ -191,6 +208,13 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     // calling abort() again on every tick while it waits for that abort to
     // actually take effect and hand off to onend.
     let forcedRestartPending = false;
+    // True from the instant an utterance is finalized on silence until the
+    // new utterance's first onresult actually arrives -- narrows down
+    // exactly the window where the tighter *_AFTER_FINALIZE watchdog
+    // thresholds above apply (see their comment for why this window in
+    // particular needs faster stuck-recognizer recovery than the general
+    // case).
+    let awaitingFirstResultOfNewUtterance = false;
     // Index into the CURRENT recognition session's `results` array from
     // which words belong to the utterance-in-progress. Advanced (not the
     // recognizer restarted) every time an utterance is finalized on silence
@@ -225,6 +249,10 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       // how long its own persistence round trip takes.
       const finalizedId = utteranceId;
       utteranceId += 1;
+      // The new utterance officially starts here -- arm the tighter
+      // stuck-recognizer thresholds until its first word actually comes
+      // back through onresult.
+      awaitingFirstResultOfNewUtterance = true;
       // Deliberately NOT calling onCaption("") here. That would broadcast an
       // empty caption immediately, racing the onFinalize round trip below
       // (which persists the same text as a real message) over two entirely
@@ -281,6 +309,10 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         lastResults = event.results;
         const sessionText = textFromResults(event.results, resultsOffset);
         lastSpeechAt = Date.now();
+        // The new utterance has now produced real output -- the tighter
+        // post-finalize watchdog window (see its constants above) is over;
+        // fall back to the general-purpose thresholds for the rest of it.
+        awaitingFirstResultOfNewUtterance = false;
         onCaptionRef.current?.(currentText(sessionText), utteranceId);
       };
       rec.onerror = () => {
@@ -346,9 +378,19 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       // when this session started if it hasn't produced a single result yet.
       if (!forcedRestartPending && recognition) {
         const lastActivityAt = lastSpeechAt || sessionStartedAt;
-        const audioActiveRecently = now - lastLoudAtRef.current < RECOGNIZER_STUCK_AUDIO_GRACE_MS;
+        // Right after a finalize, use the tighter pair (see their comment)
+        // since that's exactly the moment Chrome's silent-stuck bug tends to
+        // hit -- once the new utterance has produced any real output, fall
+        // back to the general-purpose thresholds for the remainder of it.
+        const audioGraceMs = awaitingFirstResultOfNewUtterance
+          ? RECOGNIZER_STUCK_AUDIO_GRACE_MS_AFTER_FINALIZE
+          : RECOGNIZER_STUCK_AUDIO_GRACE_MS;
+        const noResultMs = awaitingFirstResultOfNewUtterance
+          ? RECOGNIZER_STUCK_NO_RESULT_MS_AFTER_FINALIZE
+          : RECOGNIZER_STUCK_NO_RESULT_MS;
+        const audioActiveRecently = now - lastLoudAtRef.current < audioGraceMs;
         const sessionOldEnough = now - sessionStartedAt >= MIN_SESSION_AGE_BEFORE_FORCED_RESTART_MS;
-        const recognizerUnresponsive = now - lastActivityAt >= RECOGNIZER_STUCK_NO_RESULT_MS;
+        const recognizerUnresponsive = now - lastActivityAt >= noResultMs;
         if (audioActiveRecently && sessionOldEnough && recognizerUnresponsive) {
           forcedRestartPending = true;
           const staleRecognition = recognition;
