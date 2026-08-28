@@ -446,35 +446,7 @@ interface CatalogEntry {
   propertyName: string;
 }
 
-// Minimum gap enforced between the START of one call to a given model and
-// the start of the next -- applies per model name (not globally, and not
-// per project), since two projects configured with different models are
-// independent rate-limit-wise, while two projects sharing the same model
-// name are not. Each pass of generateIntervention's two-pass design (topic
-// detection, then extraction) calls this, so a single intervention attempt
-// can itself be slowed down by this if both passes land inside one
-// cooldown window.
-const MODEL_CALL_COOLDOWN_MS = 10_000;
-
-// Wall-clock timestamp (ms) at which each model's next call is allowed to
-// start. Reserved synchronously below (no `await` before the reservation is
-// written) so two calls to the same model racing in at the same instant
-// still claim distinct, correctly-spaced slots instead of both reading the
-// same stale timestamp and both proceeding immediately.
-const nextModelCallAllowedAt = new Map<string, number>();
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function callOpenAiJson(apiKey: string, model: string, systemPrompt: string, userContent: string): Promise<any | null> {
-  const now = Date.now();
-  const earliestAllowed = Math.max(now, nextModelCallAllowedAt.get(model) ?? 0);
-  nextModelCallAllowedAt.set(model, earliestAllowed + MODEL_CALL_COOLDOWN_MS);
-  if (earliestAllowed > now) {
-    await sleep(earliestAllowed - now);
-  }
-
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
