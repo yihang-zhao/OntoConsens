@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   useConfigureModerator,
   useDisableModerator,
@@ -659,7 +659,15 @@ function TypingIndicatorBubble() {
 // replaced by a separately-transcribed version. It only exists once there
 // is actual recognized text to show -- no separate "someone is speaking"
 // indicator or animation of any kind.
-function LiveTranscriptBubble({
+// Memoized: with multiple speakers active at once, each one's caption
+// updates on its own throttled cadence (see CAPTION_SEND_INTERVAL_MS in
+// useModeratorAudio.ts) and triggers a state update in the parent's
+// liveCaptions map. Without memoizing, that re-renders every OTHER
+// speaker's bubble and the entire persisted message list too, even though
+// their props didn't change -- multiplying the render cost by however many
+// people are talking. Memoizing means only the bubble whose own caption
+// text actually changed re-renders.
+const LiveTranscriptBubble = memo(function LiveTranscriptBubble({
   username,
   colorSlot,
   caption,
@@ -687,9 +695,12 @@ function LiveTranscriptBubble({
       </div>
     </div>
   );
-}
+});
 
-function ChatMessageBubble({
+// Memoized for the same reason as LiveTranscriptBubble above: a persisted
+// message's props never change once rendered, so it should never
+// re-render just because some other speaker's live caption ticked.
+const ChatMessageBubble = memo(function ChatMessageBubble({
   message,
   members,
 }: {
@@ -752,7 +763,7 @@ function ChatMessageBubble({
       </div>
     </div>
   );
-}
+});
 
 // A stalled-discussion intervention that resolved to a real class/property:
 // two stacked "supporter pill" cards -- green for reasons to keep the

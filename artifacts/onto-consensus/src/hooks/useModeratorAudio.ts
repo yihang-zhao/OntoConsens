@@ -65,6 +65,25 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 
 const VOLUME_SEND_INTERVAL_MS = 120;
 
+// The browser's recognizer can fire onresult many times a second while
+// someone is actively talking (interim results refine on almost every
+// syllable) -- with no throttle at all, EVERY one of those immediately
+// went out over the websocket, got broadcast to every connected client,
+// and forced a full re-render of everyone's chat panel. That's cheap with
+// one speaker; with several people talking at once (exactly the
+// multi-speaker scenario this exists to support), it multiplies into a
+// steady flood of renders and messages on every single participant's tab,
+// competing for the same main thread the local recognizer's own event
+// handling runs on -- the more it's starved, the more likely a stuck
+// recognizer or a dropped/delayed result looks like "recognition missed
+// what was said". Coalescing to a fixed cadence (leading edge fires
+// immediately so the very first word of a new utterance is never delayed,
+// trailing edge guarantees the latest text is never left stuck mid-word)
+// cuts that traffic by an order of magnitude without making captions feel
+// less live than the volume meter above, which already samples at a
+// similar rate.
+const CAPTION_SEND_INTERVAL_MS = 150;
+
 // How long an utterance can go without any new recognized word before it's
 // considered over and gets finalized into its own permanent message.
 const SILENCE_FINALIZE_MS = 1_000;
@@ -252,6 +271,45 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
     let resultsOffset = 0;
     let resultsOffsetPrefix = "";
 
+    // Coalesces onCaption dispatches to CAPTION_SEND_INTERVAL_MS (see its
+    // comment above) instead of firing on every single onresult. Leading
+    // edge: if enough time has passed since the last dispatch, send right
+    // away -- the first word of a fresh utterance is never held back.
+    // Trailing edge: otherwise remember the latest text and schedule exactly
+    // one more send for whenever the interval is up, so the box never gets
+    // stuck showing stale text while the browser keeps refining the same
+    // phrase faster than the interval allows.
+    let lastCaptionSentAt = 0;
+    let pendingCaptionTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingCaptionText: string | null = null;
+    let pendingCaptionUtteranceId = 0;
+    function sendCaptionThrottled(text: string, id: number) {
+      const now = Date.now();
+      const elapsed = now - lastCaptionSentAt;
+      if (elapsed >= CAPTION_SEND_INTERVAL_MS) {
+        lastCaptionSentAt = now;
+        pendingCaptionText = null;
+        if (pendingCaptionTimer) {
+          clearTimeout(pendingCaptionTimer);
+          pendingCaptionTimer = null;
+        }
+        onCaptionRef.current?.(text, id);
+        return;
+      }
+      pendingCaptionText = text;
+      pendingCaptionUtteranceId = id;
+      if (!pendingCaptionTimer) {
+        pendingCaptionTimer = setTimeout(() => {
+          pendingCaptionTimer = null;
+          lastCaptionSentAt = Date.now();
+          if (pendingCaptionText !== null) {
+            onCaptionRef.current?.(pendingCaptionText, pendingCaptionUtteranceId);
+            pendingCaptionText = null;
+          }
+        }, CAPTION_SEND_INTERVAL_MS - elapsed);
+      }
+    }
+
     function textFromResults(results: any, offset = 0, stripPrefixAtOffset = ""): string {
       const parts: string[] = [];
       for (let i = offset; i < results.length; i++) {
@@ -354,7 +412,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
         // post-finalize watchdog window (see its constants above) is over;
         // fall back to the general-purpose thresholds for the rest of it.
         awaitingFirstResultOfNewUtterance = false;
-        onCaptionRef.current?.(currentText(sessionText), utteranceId);
+        sendCaptionThrottled(currentText(sessionText), utteranceId);
       };
       rec.onerror = () => {
         // "no-speech"/"aborted" etc. — just let onend's restart handle it.
@@ -484,6 +542,7 @@ export function useModeratorAudio({ projectId, active, lang, onVolume, onCaption
       stopped = true;
       if (restartTimer) clearTimeout(restartTimer);
       if (silenceTimer) clearInterval(silenceTimer);
+      if (pendingCaptionTimer) clearTimeout(pendingCaptionTimer);
       // Flush whatever's in progress immediately -- e.g. the mic was turned
       // off mid-sentence, which shouldn't silently drop that utterance.
       finalizeIfAny(lastResults ? textFromResults(lastResults, resultsOffset, resultsOffsetPrefix) : "");

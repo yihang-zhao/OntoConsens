@@ -1,0 +1,12 @@
+---
+name: Multi-speaker live-caption fanout needs client-side throttling
+description: Unthrottled per-onresult caption broadcasts (websocket + full chat-panel re-render on every client) compound badly with 2+ simultaneous speakers; the real bottleneck is client render load, not backend/LLM concurrency.
+---
+
+In a browser-side Web Speech API + websocket-broadcast live-caption design (one `SpeechRecognition` per user, `onresult` firing interim results several times/sec while someone talks), sending every single `onresult` straight over the socket with no throttling means: N speakers x M connected clients x several updates/sec each, and each one force-re-rendered the WHOLE chat panel (all persisted messages + all other speakers' bubbles) on every client because the message/bubble components weren't memoized.
+
+**Why:** with only one speaker this is unnoticeable; the complaint "recognition misses speech when multiple people talk at once / in quick succession" surfaces exactly because more simultaneous speakers multiply both the render count AND the websocket traffic, competing with the local tab's own recognizer event handling on the same single JS main thread — plausible enough to look like "the recognizer itself is failing" even though each recognizer instance is otherwise independent per browser.
+
+Investigated first via two independent explore passes confirming the backend has NO shared bottleneck: transcript ingest is per-`(projectId,userId)` row-locked (not global), intervention analysis is a per-project promise-tail queue (serializes, never drops), and there's no LLM call in the caption/transcript hot path at all — only in the separate, already-serialized intervention-generation pipeline. So "API called too frequently" pointed at the wrong layer; the actual overload was client-side render/broadcast fanout from *live interim captions*, not any external API.
+
+**How to apply:** when a live-typing/live-caption-style feature broadcasts interim state at recognizer/input-event frequency, throttle the outbound rate (leading-edge-immediate + trailing-edge-guaranteed pattern, same shape as an existing volume-meter throttle if one exists in the codebase) AND memoize the list-item components that shouldn't re-render just because an unrelated live value ticked. Do both — throttling alone still leaves full-list re-renders on every throttled tick; memoizing alone still leaves full broadcast/network traffic at native event frequency.
