@@ -890,53 +890,68 @@ async function generateIntervention(projectId: number): Promise<void> {
     // every catalog property, not just the previous topic) as the
     // baseline for whichever one it lands on. There is no longer a
     // separate follow-up call for a topic switch or a first intervention.
+    // Prompt sections below are deliberately ordered from MOST stable to
+    // LEAST stable -- fully-static instructions/rules first, then the
+    // catalog (only changes when the workspace's classes/properties
+    // change), then EXISTING STATE (changes whenever any property's points
+    // change, i.e. roughly every successful intervention), and finally the
+    // transcript in the user turn (changes on every single call). Model
+    // providers that support prompt caching discount whatever common
+    // prefix matches the previous call byte-for-byte -- putting the most
+    // volatile content (EXISTING STATE, transcript) last, instead of
+    // interleaved with the static instructions/extractionRules() text,
+    // maximizes how much of each call can hit that cache instead of being
+    // billed at full price.
+    const staticInstructions =
+      "You are an AI moderator for a group ontology-design conversation, doing TWO jobs in ONE pass: " +
+      "(1) identify the SINGLE class and property the speakers are currently discussing (whether it should " +
+      "be retained, removed, or how it should be defined), and (2) extract an updated " +
+      "examples/counterexamples list for THAT property -- see the SECOND section below for exactly when " +
+      "that applies. Every message below is from real-time speech-to-text and can contain near-homophone " +
+      "errors (a name or word transcribed as something that merely sounds alike); infer intended meaning " +
+      "by sound and context rather than taking odd literal text at face value -- this applies throughout " +
+      "both jobs below, not just topic identification. " +
+      (lastPostedIntervention
+        ? `Below (in the user turn) is the PREVIOUS INTERVENTION MESSAGE you already posted, followed by every ` +
+          "user message exchanged since then. Base your topic decision ONLY on these two things -- not on any " +
+          "earlier history beyond what that previous intervention message itself already states. Conversation " +
+          "commonly continues about the same property without re-stating its name -- via pronouns (\"it\", " +
+          "\"that\"), direct replies/agreement/disagreement/reactions, or follow-up refinements, even across " +
+          "several more messages. If the messages since that intervention read as a natural continuation of " +
+          "the same discussion, report that SAME className/propertyName again even though it isn't " +
+          "explicitly named. Only report a DIFFERENT property if a message clearly and specifically names or " +
+          "unambiguously describes a different one. Only report null/null if the messages have moved on to " +
+          "something unrelated to any listed property entirely (small talk, a topic outside the catalog, " +
+          "etc). "
+        : "There is no previous intervention yet, so the user turn below is simply the transcript of what's " +
+          "been said so far. Only report a className/propertyName if a message clearly names or unambiguously " +
+          "describes one from the list; report null/null if nothing in the workspace catalog is being " +
+          "discussed. ") +
+      "\n\nYou MUST only report a className/propertyName from the catalog list below, copied with EXACTLY the " +
+      "same spelling and capitalization shown there -- never invent, paraphrase, or guess a name that isn't in " +
+      "the list. " +
+      "\n\nSECOND, ONLY IF your className/propertyName answer above is NOT null/null: also perform an " +
+      "extraction update for that property, using the same messages-since-then transcript in the user turn as " +
+      "the source, and fill the \"examples\"/\"counterexamples\" fields of your response accordingly. If your " +
+      "answer is null/null, leave \"examples\" and \"counterexamples\" as empty arrays. Once you've identified " +
+      "className/propertyName, use ONLY that property's EXISTING STATE block below as the baseline for " +
+      "extraction; ignore every other property's block entirely.\n\n" +
+      extractionRules() +
+      'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
+      '{"className": string | null, "propertyName": string | null, ' +
+      '"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
+      '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
+      "Use the exact usernames as they appear as speaker labels in the transcript.";
+
     const combined = await callOpenAiJson(
       apiKey,
       config.model,
-      "You are an AI moderator for a group ontology-design conversation, doing TWO jobs in ONE pass: " +
-        "(1) identify the SINGLE class and property the speakers are currently discussing (whether it should " +
-        "be retained, removed, or how it should be defined), and (2) extract an updated " +
-        "examples/counterexamples list for THAT property -- see the SECOND section below for exactly when " +
-        "that applies. Every message below is from real-time speech-to-text and can contain near-homophone " +
-        "errors (a name or word transcribed as something that merely sounds alike); infer intended meaning " +
-        "by sound and context rather than taking odd literal text at face value -- this applies throughout " +
-        "both jobs below, not just topic identification. " +
-        "The shared workspace CURRENTLY contains only the following class.property pairs:\n" +
+      staticInstructions +
+        "\n\nCATALOG -- the shared workspace CURRENTLY contains only the following class.property pairs:\n" +
         catalogText +
-        (lastPostedIntervention
-          ? `\n\nBelow is the PREVIOUS INTERVENTION MESSAGE you already posted, followed by every user message ` +
-            "exchanged since then. Base your topic decision ONLY on these two things -- not on any earlier " +
-            "history beyond what that previous intervention message itself already states. Conversation " +
-            "commonly continues about the same property without re-stating its name -- via pronouns (\"it\", " +
-            "\"that\"), direct replies/agreement/disagreement/reactions, or follow-up refinements, even across " +
-            "several more messages. If the messages since that intervention read as a natural continuation of " +
-            "the same discussion, report that SAME className/propertyName again even though it isn't " +
-            "explicitly named. Only report a DIFFERENT property if a message clearly and specifically names or " +
-            "unambiguously describes a different one. Only report null/null if the messages have moved on to " +
-            "something unrelated to any listed property entirely (small talk, a topic outside the catalog, " +
-            "etc). "
-          : "\n\nThere is no previous intervention yet, so below is simply the transcript of what's been said " +
-            "so far. Only report a className/propertyName if a message clearly names or unambiguously " +
-            "describes one from the list; report null/null if nothing in the workspace catalog is being " +
-            "discussed. ") +
-        "\n\nYou MUST only report a className/propertyName from that exact list, copied with EXACTLY the same " +
-        "spelling and capitalization shown above -- never invent, paraphrase, or guess a name that isn't in the " +
-        "list. " +
-        "\n\nSECOND, ONLY IF your className/propertyName answer above is NOT null/null: also perform an " +
-        "extraction update for that property, using the SAME messages-since-then transcript below as the " +
-        "source, and fill the \"examples\"/\"counterexamples\" fields of your response accordingly. If your " +
-        "answer is null/null, leave \"examples\" and \"counterexamples\" as empty arrays.\n\n" +
-        "Here is the EXISTING STATE already recorded for each catalog property -- once you've identified " +
-        "className/propertyName above, use ONLY the block below for that exact property (matching by its " +
-        "exact catalog name) as the baseline for extraction; ignore every other property's block entirely:\n" +
-        priorStateText +
-        "\n\n" +
-        extractionRules() +
-        'Respond with ONLY a JSON object, no markdown fences, no prose, matching exactly this shape: ' +
-        '{"className": string | null, "propertyName": string | null, ' +
-        '"examples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}], ' +
-        '"counterexamples": [{"id": number | undefined, "text": string, "by": string[], "remove": string[] | undefined, "revise": boolean | undefined, "mergeWithId": number | undefined}]}. ' +
-        "Use the exact usernames as they appear as speaker labels in the transcript.",
+        "\n\nEXISTING STATE already recorded for each catalog property (examples/counterexamples established " +
+        "in earlier rounds):\n" +
+        priorStateText,
       `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention?.content ?? "(none yet)"}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`,
     );
 
