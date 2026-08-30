@@ -23,10 +23,10 @@ import { logger } from "./logger";
 // has new TEXT TRANSCRIPTION filling into their live caption box -- not
 // "no finalized message yet" (see noteSpeechActivity below, which fires on
 // every non-empty live caption update, i.e. raw/partial recognized speech
-// as it streams in, not only on a finalized transcript POST). 3 continuous
+// as it streams in, not only on a finalized transcript POST). 2 continuous
 // seconds of that is condition 1. This is deliberately distinct from
 // condition 2 (a NEW, finalized message) below -- see generateIntervention.
-const SILENCE_TIMEOUT_MS = 3_000;
+const SILENCE_TIMEOUT_MS = 2_000;
 
 // How long the "AI moderator is typing" indicator shows before the actual
 // intervention message appears, once conditions 1-3 have all already been
