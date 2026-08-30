@@ -39,6 +39,17 @@ const SILENCE_TIMEOUT_MS = 2_000;
 // top of that.
 const INTERVENTION_TYPING_DELAY_MS = 0;
 
+// Each intervention attempt's single combined OpenAI call (see
+// generateIntervention) is the expensive part -- a minimum cooldown after
+// EVERY such call, whether or not it ends up posting a message, keeps a
+// burst of short silences (e.g. someone pausing mid-thought several times
+// in a row) from re-triggering a full paid call every ~2 seconds. Nothing
+// is lost by waiting: generateIntervention always reads everything new
+// since lastSummarizedAt, so an attempt delayed by the cooldown still
+// covers every chunk that arrived while it waited.
+const INTERVENTION_COOLDOWN_MS = 15_000;
+const lastInterventionCallAt = new Map<number, number>();
+
 // A fresh, unguessable id minted every time a member turns their OWN
 // participation on. This -- not any in-memory object identity, and not a
 // timestamp -- is the durable source of truth for "which of this member's
@@ -404,14 +415,32 @@ export async function recordTranscriptChunk(
 // message yet. Once condition 1's timer fires, it hands off straight to
 // generateIntervention (via enqueueIntervention), which itself checks
 // condition 2 (a new finalized message since the last checkpoint) before
-// doing anything else -- there is no separate cooldown or other gate here.
+// doing anything else -- once the silence timer fires it hands off to
+// fireWhenCooldownElapsed, which enforces condition 0 (see
+// INTERVENTION_COOLDOWN_MS above) before actually enqueueing an attempt.
 export function noteSpeechActivity(projectId: number): void {
   clearModeratorSilenceTimer(projectId);
   const timer = setTimeout(() => {
     silenceTimers.delete(projectId);
-    enqueueIntervention(projectId);
+    fireWhenCooldownElapsed(projectId);
   }, SILENCE_TIMEOUT_MS);
   silenceTimers.set(projectId, timer);
+}
+
+// Condition 0: never let an attempt actually run sooner than
+// INTERVENTION_COOLDOWN_MS after the last GPT call for this project. If the
+// cooldown hasn't elapsed yet, reschedules itself for whatever's left
+// rather than firing immediately or dropping the attempt -- content is
+// never lost either way, since generateIntervention always reads
+// everything new since lastSummarizedAt whenever it does run.
+function fireWhenCooldownElapsed(projectId: number): void {
+  const last = lastInterventionCallAt.get(projectId) ?? 0;
+  const remaining = INTERVENTION_COOLDOWN_MS - (Date.now() - last);
+  if (remaining <= 0) {
+    enqueueIntervention(projectId);
+    return;
+  }
+  setTimeout(() => fireWhenCooldownElapsed(projectId), remaining);
 }
 
 // Two silence periods can legitimately occur close together -- someone
@@ -954,6 +983,12 @@ async function generateIntervention(projectId: number): Promise<void> {
         priorStateText,
       `PREVIOUS INTERVENTION MESSAGE:\n${lastPostedIntervention?.content ?? "(none yet)"}\n\nMESSAGES SINCE THEN:\n${sinceLastInterventionTranscript || "(none)"}`,
     );
+
+    // The paid call itself has already happened by this point (success or
+    // not doesn't matter -- OpenAI already billed for it), so the cooldown
+    // for the NEXT attempt starts here, not at whatever point later this
+    // attempt happens to finish committing.
+    lastInterventionCallAt.set(projectId, Date.now());
 
     const rawClassName = typeof combined?.className === "string" ? combined.className : null;
     const rawPropertyName = typeof combined?.propertyName === "string" ? combined.propertyName : null;
