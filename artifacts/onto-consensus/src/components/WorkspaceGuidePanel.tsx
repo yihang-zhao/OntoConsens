@@ -24,7 +24,7 @@ const STEPS: GuideStep[] = [
   {
     title: "Wait for everyone to be ready",
     description:
-      "When everyone is ready, the shared workspace will open and you'll see everyone's proposals together. Each person's proposals are shown in their allocated color — check the top right bar to see your color. If two of you proposed the same property, it will be stacked with both of your colors.",
+      "When everyone is ready, the shared workspace will open and you'll see everyone's proposals together. Each member's proposals are shown in their allocated color (check the top right bar to see your color). If any of you proposed the same property, it will be stacked with all of your colors.",
   },
   {
     title: "Reach agreement together",
@@ -65,7 +65,7 @@ export function WorkspaceGuidePanel({
 
   return (
     <aside
-      className={`w-full lg:w-72 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden lg:flex"}`}
+      className={`w-full lg:w-96 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden lg:flex"}`}
     >
       {/* No header row here on purpose: the top of the first step below
           lines up with the top of the "Discussion" panel's title, and the
