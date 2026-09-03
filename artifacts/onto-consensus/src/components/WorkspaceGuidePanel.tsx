@@ -80,7 +80,7 @@ export function WorkspaceGuidePanel({
           arrows), not the step blocks themselves, so all three gaps
           share the leftover vertical space equally regardless of how
           long each step's description is. */}
-      <div className="flex-1 min-h-0 flex flex-col justify-center px-4 pt-3 pb-3">
+      <div className="flex-1 min-h-0 flex flex-col justify-center px-4 pt-3 pb-3 overflow-y-auto [scrollbar-width:thin]">
         {STEPS.map((step, i) => {
           const isCurrent = i === current;
           return (
