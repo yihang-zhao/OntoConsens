@@ -227,7 +227,7 @@ export default function Dashboard() {
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shrink-0">
               <Network className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="font-mono font-bold text-lg">OntoConsensus</span>
+            <span className="font-mono font-bold text-lg">OntoConsens</span>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>

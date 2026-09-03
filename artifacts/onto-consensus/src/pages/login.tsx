@@ -57,7 +57,7 @@ export default function Login() {
           <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center shadow-lg">
             <Network className="w-6 h-6 text-primary-foreground" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground font-mono">OntoConsensus</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground font-mono">OntoConsens</h1>
         </div>
 
         <Card className="border-border/50 shadow-xl shadow-black/5">
