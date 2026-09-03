@@ -64,6 +64,20 @@ interface ModeratorChatPanelProps {
   className?: string;
 }
 
+// Every message (transcript, intro/system, and AI-moderator intervention
+// alike) carries a server-assigned createdAt, so this is the single place
+// that turns it into the exact "HH:MM:SS" wall-clock string shown next to
+// each bubble's sender name -- local time, always zero-padded/24h so it
+// sorts and reads unambiguously regardless of locale.
+function formatTimestamp(createdAt: string): string {
+  return new Date(createdAt).toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 // Deduplicate by id: the persisted-history fetch and live socket messages can
 // legitimately overlap (e.g. a message arrives over the socket just before
 // the history query resolves) -- id is the one stable identity both sides
@@ -635,6 +649,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         examples={message.examples ?? []}
         counterexamples={message.counterexamples ?? []}
         members={members}
+        createdAt={message.createdAt}
       />
     );
   }
@@ -648,6 +663,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
           <Sparkles className="w-3 h-3 text-primary" />
           AI moderator
+          <span className="font-normal opacity-70">{formatTimestamp(message.createdAt)}</span>
         </div>
         <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-primary/10 text-foreground">
           {message.content}
@@ -668,6 +684,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
       <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: color.solid }}>
         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color.solid }} />
         {message.username ?? "unknown"}
+        <span className="font-normal opacity-70">{formatTimestamp(message.createdAt)}</span>
       </div>
       <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-primary/10 text-foreground">
         {message.content}
@@ -690,12 +707,14 @@ function InterventionSummary({
   examples,
   counterexamples,
   members,
+  createdAt,
 }: {
   className: string | null;
   propertyName: string | null;
   examples: { text: string; by: string[] }[];
   counterexamples: { text: string; by: string[] }[];
   members: { userId: number; username: string; colorSlot: number }[];
+  createdAt: string;
 }) {
   const membersByName = useMemo(() => {
     const map = new Map<string, number>();
@@ -708,6 +727,7 @@ function InterventionSummary({
       <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
         <Sparkles className="w-3 h-3 text-primary" />
         AI moderator
+        <span className="font-normal opacity-70">{formatTimestamp(createdAt)}</span>
       </div>
       <div className="rounded-xl rounded-tl-sm px-3 py-2 text-xs leading-relaxed bg-primary/10 text-foreground">
         <span className="font-semibold">
