@@ -325,22 +325,6 @@ export default function Dashboard() {
                     />
                     <FormField
                       control={createForm.control}
-                      name="moderatorEnabled"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-md border px-3 py-2">
-                          <FormLabel className="text-sm">AI Moderator</FormLabel>
-                          <FormControl>
-                            <Switch
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                              disabled={createProject.isPending}
-                            />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={createForm.control}
                       name="file"
                       render={({ field: { value, onChange, ref, ...fieldProps } }) => {
                         const selectedFile = value instanceof File ? value : undefined;
@@ -387,6 +371,22 @@ export default function Dashboard() {
                           </FormItem>
                         );
                       }}
+                    />
+                    <FormField
+                      control={createForm.control}
+                      name="moderatorEnabled"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-col items-center justify-center gap-2 rounded-md border px-3 py-3 text-center">
+                          <FormLabel className="text-sm">AI Moderator</FormLabel>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              disabled={createProject.isPending}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
                     />
                     {createForm.formState.errors.root && (
                       <p className="text-sm font-medium text-destructive">
