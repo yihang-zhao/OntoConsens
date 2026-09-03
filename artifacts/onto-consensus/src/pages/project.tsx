@@ -397,7 +397,7 @@ export default function ProjectWorkspace() {
           the moderator chat can't all fit side by side, so only one is
           shown at a time here. All panes stay mounted underneath; this
           only toggles which one is visible. */}
-      <div className="lg:hidden flex items-center gap-1.5 px-4 pt-3 shrink-0">
+      <div className="xl:hidden flex items-center gap-1.5 px-4 pt-3 shrink-0">
         <button
           type="button"
           onClick={() => setMobileView("guide")}
@@ -440,13 +440,13 @@ export default function ProjectWorkspace() {
           isReady={isReady}
           allReady={allReady}
           workspaceFullyAgreed={workspaceFullyAgreed}
-          className={mobileView === "guide" ? "flex" : "hidden lg:flex"}
+          className={mobileView === "guide" ? "flex" : "hidden xl:flex"}
         />
 
         {/* Canvas Area */}
         <main
           className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
-            mobileView === "graph" ? "flex" : "hidden lg:flex"
+            mobileView === "graph" ? "flex" : "hidden xl:flex"
           }`}
         >
           <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
@@ -504,7 +504,7 @@ export default function ProjectWorkspace() {
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
             moderatorTyping={moderatorTyping}
-            className={mobileView === "chat" ? "flex" : "hidden lg:flex"}
+            className={mobileView === "chat" ? "flex" : "hidden xl:flex"}
           />
         )}
       </div>

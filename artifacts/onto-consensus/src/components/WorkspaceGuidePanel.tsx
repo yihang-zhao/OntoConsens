@@ -65,7 +65,7 @@ export function WorkspaceGuidePanel({
 
   return (
     <aside
-      className={`w-full lg:w-96 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden lg:flex"}`}
+      className={`w-full xl:w-96 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden xl:flex"}`}
     >
       <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
         <span className="font-semibold text-sm">User Guide</span>
