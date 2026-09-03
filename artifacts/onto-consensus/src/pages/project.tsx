@@ -393,11 +393,20 @@ export default function ProjectWorkspace() {
         </div>
       </header>
 
-      {/* Mobile pane switcher -- below lg, the guide, graph, and (once open)
-          the moderator chat can't all fit side by side, so only one is
-          shown at a time here. All panes stay mounted underneath; this
-          only toggles which one is visible. */}
-      <div className="xl:hidden flex flex-wrap items-center justify-center gap-1.5 px-4 py-3 shrink-0">
+      {/* Mobile pane switcher -- once the shared workspace canvas would be
+          squeezed narrower than the fixed-width guide panel, the panes
+          can no longer fit side by side, so only one is shown at a time
+          here instead. That crossover point is 384px (the guide's width)
+          plus the row's own padding/gaps, computed separately for whether
+          the moderator chat pane is in the mix (it only ever appears once
+          the shared workspace is open) -- see min-[816px] / min-[1184px]
+          below. All panes stay mounted underneath; this only toggles
+          which one is visible. */}
+      <div
+        className={`flex flex-wrap items-center justify-center gap-1.5 px-4 py-3 shrink-0 ${
+          allReady ? "min-[1184px]:hidden" : "min-[816px]:hidden"
+        }`}
+      >
         <button
           type="button"
           onClick={() => setMobileView("guide")}
@@ -440,13 +449,19 @@ export default function ProjectWorkspace() {
           isReady={isReady}
           allReady={allReady}
           workspaceFullyAgreed={workspaceFullyAgreed}
-          className={mobileView === "guide" ? "flex" : "hidden xl:flex"}
+          className={
+            mobileView === "guide"
+              ? "w-full flex"
+              : allReady
+                ? "w-full hidden min-[1184px]:flex min-[1184px]:w-96"
+                : "w-full hidden min-[816px]:flex min-[816px]:w-96"
+          }
         />
 
         {/* Canvas Area */}
         <main
           className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
-            mobileView === "graph" ? "flex" : "hidden xl:flex"
+            mobileView === "graph" ? "flex" : allReady ? "hidden min-[1184px]:flex" : "hidden min-[816px]:flex"
           }`}
         >
           <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
@@ -504,7 +519,11 @@ export default function ProjectWorkspace() {
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
             moderatorTyping={moderatorTyping}
-            className={mobileView === "chat" ? "flex" : "hidden xl:flex"}
+            className={
+              mobileView === "chat"
+                ? "w-full flex"
+                : "w-full hidden min-[1184px]:flex min-[1184px]:w-[28vw] min-[1184px]:min-w-[22rem]"
+            }
           />
         )}
       </div>
