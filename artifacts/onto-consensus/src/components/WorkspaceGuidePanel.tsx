@@ -70,7 +70,7 @@ export function WorkspaceGuidePanel({
       className={`w-full lg:w-72 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden lg:flex"}`}
     >
       <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
-        <span className="font-semibold text-sm">Guide</span>
+        <span className="font-semibold text-sm">Tutorial</span>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
