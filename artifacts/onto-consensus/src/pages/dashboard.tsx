@@ -376,7 +376,7 @@ export default function Dashboard() {
                       control={createForm.control}
                       name="moderatorEnabled"
                       render={({ field }) => (
-                        <FormItem className="flex flex-col items-center justify-center gap-2 rounded-md border px-3 py-3 text-center">
+                        <FormItem className="flex flex-col items-center justify-center gap-2 rounded-md border border-input px-3 py-3 text-center">
                           <FormLabel className="text-sm">AI Moderator</FormLabel>
                           <FormControl>
                             <Switch
