@@ -13,5 +13,7 @@ export interface ProjectSummary {
   ownerId: number;
   memberCount: number;
   maxMembers: number;
+  /** Whether the AI moderator's messages are shown in this project's live conversation window. Fixed at creation. */
+  moderatorEnabled: boolean;
   createdAt: Date;
 }

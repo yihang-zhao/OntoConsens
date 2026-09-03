@@ -15,6 +15,8 @@ export interface ProjectDetail {
   inviteCode: string;
   ownerId: number;
   maxMembers: number;
+  /** Whether the AI moderator's messages are shown in this project's live conversation window. Fixed at creation. */
+  moderatorEnabled: boolean;
   createdAt: Date;
   members: Member[];
   classes: OntologyClass[];

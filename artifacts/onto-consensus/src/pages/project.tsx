@@ -174,13 +174,27 @@ export default function ProjectWorkspace() {
       navigate("/");
     },
     onModeratorChatMessage: (message) => {
+      // The moderator keeps running (and this message is still recorded for
+      // the conversation export) even when the project has its live display
+      // disabled -- liveMessages always collects everything, and
+      // ModeratorChatPanel is the one place that filters "intro"/
+      // "intervention" out of what's actually rendered.
       setLiveMessages((prev) => [...prev, message]);
       if (message.type === "intervention") {
         // The real content just arrived -- it's itself the signal to swap
         // out the typing indicator.
         setModeratorTyping(false);
       }
-      if (message.type === "intervention" && message.matched && message.classId !== null && message.propertyId !== null) {
+      // Highlighting a property is itself a visible trace of what the
+      // moderator flagged -- suppress it right alongside the chat messages
+      // when this project has moderator display turned off.
+      if (
+        project?.moderatorEnabled &&
+        message.type === "intervention" &&
+        message.matched &&
+        message.classId !== null &&
+        message.propertyId !== null
+      ) {
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         setHighlightedProperty({ classId: message.classId, propertyId: message.propertyId });
         highlightTimerRef.current = setTimeout(() => setHighlightedProperty(null), HIGHLIGHT_DURATION_MS);
@@ -448,6 +462,7 @@ export default function ProjectWorkspace() {
         {allReady && (
           <ModeratorChatPanel
             projectId={projectId}
+            moderatorEnabled={project.moderatorEnabled}
             moderatorActive={moderatorStatus?.active ?? false}
             moderatorConfigured={moderatorStatus?.configured ?? false}
             liveMessages={liveMessages}

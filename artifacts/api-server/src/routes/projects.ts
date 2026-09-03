@@ -32,6 +32,7 @@ function serializeProject(project: typeof projectsTable.$inferSelect, memberCoun
     ownerId: project.ownerId,
     memberCount,
     maxMembers: project.maxMembers,
+    moderatorEnabled: project.moderatorEnabled,
     createdAt: project.createdAt.toISOString(),
   };
 }
@@ -74,6 +75,10 @@ router.post("/projects", upload.single("file"), async (req, res) => {
   const file = req.file;
   // Multipart text fields always arrive as strings, even for a numeric field.
   const memberCount = Number(req.body.memberCount);
+  // Multipart booleans arrive as strings too, and this field is optional for
+  // backward compatibility (older clients that predate this setting) --
+  // anything other than the literal string "false" defaults to enabled.
+  const moderatorEnabled = req.body.moderatorEnabled !== "false";
 
   if (!name) {
     res.status(400).json({ error: "Project name is required" });
@@ -120,7 +125,7 @@ router.post("/projects", upload.single("file"), async (req, res) => {
 
   const [project] = await db
     .insert(projectsTable)
-    .values({ name, ownerId: userId, inviteCode, maxMembers: memberCount })
+    .values({ name, ownerId: userId, inviteCode, maxMembers: memberCount, moderatorEnabled })
     .returning();
   if (!project) {
     res.status(500).json({ error: "Failed to create project" });
@@ -280,6 +285,7 @@ router.get("/projects/:id", async (req, res) => {
     inviteCode: project.inviteCode,
     ownerId: project.ownerId,
     maxMembers: project.maxMembers,
+    moderatorEnabled: project.moderatorEnabled,
     createdAt: project.createdAt.toISOString(),
     members,
     classes: classes.map((c) => {

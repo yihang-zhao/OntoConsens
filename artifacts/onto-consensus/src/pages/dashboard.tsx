@@ -26,6 +26,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check, KeyRound, Loader2 } from "lucide-react";
 
 const apiKeySchema = z.object({
@@ -36,6 +37,9 @@ const createSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Project name is too long"),
   file: z.instanceof(File, { message: "Ontology file is required" }),
   memberCount: z.enum(["2", "3"], { message: "Choose how many members this project is for" }),
+  // Locked in at creation -- there is no route to change it afterward, so
+  // this is the only place it's ever chosen.
+  moderatorEnabled: z.boolean(),
 });
 
 const joinSchema = z.object({
@@ -152,7 +156,7 @@ export default function Dashboard() {
 
   const createForm = useForm<z.infer<typeof createSchema>>({
     resolver: zodResolver(createSchema),
-    defaultValues: { name: "", memberCount: "2" },
+    defaultValues: { name: "", memberCount: "2", moderatorEnabled: true },
   });
 
   const joinForm = useForm<z.infer<typeof joinSchema>>({
@@ -170,7 +174,14 @@ export default function Dashboard() {
 
   const onCreateSubmit = (values: z.infer<typeof createSchema>) => {
     createProject.mutate(
-      { data: { name: values.name, file: values.file, memberCount: Number(values.memberCount) } },
+      {
+        data: {
+          name: values.name,
+          file: values.file,
+          memberCount: Number(values.memberCount),
+          moderatorEnabled: values.moderatorEnabled,
+        },
+      },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
@@ -309,6 +320,28 @@ export default function Dashboard() {
                             </SelectContent>
                           </Select>
                           <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={createForm.control}
+                      name="moderatorEnabled"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-md border px-3 py-3">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-sm">AI Moderator</FormLabel>
+                            <p className="text-xs text-muted-foreground">
+                              Shows the AI moderator's messages in the conversation. This can't be
+                              changed after the project is created.
+                            </p>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              disabled={createProject.isPending}
+                            />
+                          </FormControl>
                         </FormItem>
                       )}
                     />

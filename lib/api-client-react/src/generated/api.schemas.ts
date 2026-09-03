@@ -75,6 +75,8 @@ export interface ProjectInput {
      * @maximum 3
      */
   memberCount: number;
+  /** Whether the AI moderator's messages are shown in the live conversation window for this project, chosen once at creation and fixed afterward -- there is no route to change it later. The moderator itself always keeps running in the background regardless of this setting (it still listens, transcribes, and generates interventions); disabling this only hides its "intro" and "intervention" messages from the live chat UI. Its messages still appear normally, in their original position, in the conversation export. Defaults to true. */
+  moderatorEnabled?: boolean;
 }
 
 export interface JoinProjectInput {
@@ -189,6 +191,8 @@ export interface ProjectSummary {
   ownerId: number;
   memberCount: number;
   maxMembers: number;
+  /** Whether the AI moderator's messages are shown in this project's live conversation window. Fixed at creation. */
+  moderatorEnabled: boolean;
   createdAt: string;
 }
 
@@ -198,6 +202,8 @@ export interface ProjectDetail {
   inviteCode: string;
   ownerId: number;
   maxMembers: number;
+  /** Whether the AI moderator's messages are shown in this project's live conversation window. Fixed at creation. */
+  moderatorEnabled: boolean;
   createdAt: string;
   members: Member[];
   classes: OntologyClass[];

@@ -24,6 +24,12 @@ const introSeenStorageKey = (projectId: number) => `onto-consensus-moderator-int
 
 interface ModeratorChatPanelProps {
   projectId: number;
+  /** Chosen once at project creation and fixed afterward. The moderator
+   *  itself keeps running in the background either way (still listens,
+   *  transcribes, and generates interventions) -- when this is false, its
+   *  "intro" and "intervention" messages are simply never rendered here.
+   *  They still appear normally in the conversation export. */
+  moderatorEnabled: boolean;
   /** Whether the CURRENT user has turned the moderator on for themselves --
    *  purely per-person, independent of every other member. */
   moderatorActive: boolean;
@@ -91,6 +97,7 @@ function mergeMessages(history: ModeratorChatMessage[], live: ModeratorChatMessa
 
 export function ModeratorChatPanel({
   projectId,
+  moderatorEnabled,
   moderatorActive,
   moderatorConfigured,
   liveMessages,
@@ -115,10 +122,20 @@ export function ModeratorChatPanel({
     query: { queryKey: getListModeratorChatMessagesQueryKey(projectId) },
   });
 
-  const messages = useMemo(
-    () => mergeMessages((history?.messages as ModeratorChatMessage[] | undefined) ?? [], liveMessages),
-    [history, liveMessages],
-  );
+  const messages = useMemo(() => {
+    const merged = mergeMessages(
+      (history?.messages as ModeratorChatMessage[] | undefined) ?? [],
+      liveMessages,
+    );
+    // The moderator keeps running (still listens, transcribes, and
+    // generates interventions) regardless of this project's display
+    // setting -- both the persisted history and the live socket feed
+    // contain its "intro"/"intervention" messages either way. This is the
+    // single point that hides them from the live chat UI when disabled;
+    // they remain untouched in the separate conversation export.
+    if (moderatorEnabled) return merged;
+    return merged.filter((m) => m.type !== "intro" && m.type !== "intervention");
+  }, [history, liveMessages, moderatorEnabled]);
 
   const invalidateStatus = () =>
     queryClient.invalidateQueries({ queryKey: getGetModeratorStatusQueryKey(projectId) });
@@ -493,9 +510,11 @@ export function ModeratorChatPanel({
           className="h-full overflow-y-auto px-3 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           <div ref={scrollContentRef} className="flex flex-col gap-3">
-            {visibleMessages.length === 0 && !isTyping && !moderatorTyping && (
+            {visibleMessages.length === 0 && !isTyping && !(moderatorEnabled && moderatorTyping) && (
               <p className="text-xs text-muted-foreground text-center mt-6">
-                The AI moderator's messages will appear here once the shared workspace is open.
+                {moderatorEnabled
+                  ? "The AI moderator's messages will appear here once the shared workspace is open."
+                  : "Messages will appear here once the shared workspace is open."}
               </p>
             )}
             {visibleMessages.map((message) => (
@@ -504,8 +523,12 @@ export function ModeratorChatPanel({
             {/* The backend only ever sends this once it has already
                 confirmed all 3 intervention conditions and durably
                 committed the message -- so this indicator is a guarantee,
-                not a guess, that real content follows shortly. */}
-            {(isTyping || moderatorTyping) && <TypingIndicatorBubble />}
+                not a guess, that real content follows shortly. Suppressed
+                along with the messages themselves when this project has
+                moderator display turned off: showing "typing..." would
+                still tip members off that the moderator is about to weigh
+                in, even with the eventual message itself hidden. */}
+            {(isTyping || (moderatorEnabled && moderatorTyping)) && <TypingIndicatorBubble />}
             {speakingMembers.map((m) => (
               <LiveTranscriptBubble
                 key={m.userId}

@@ -111,6 +111,7 @@ export const ListProjectsResponseItem = zod.object({
   "ownerId": zod.number().int(),
   "memberCount": zod.number().int(),
   "maxMembers": zod.number().int(),
+  "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
   "createdAt": zod.coerce.date()
 })
 export const ListProjectsResponse = zod.array(ListProjectsResponseItem)
@@ -122,12 +123,13 @@ export const ListProjectsResponse = zod.array(ListProjectsResponseItem)
 
 export const createProjectBodyMemberCountMax = 3;
 
-
+export const createProjectBodyModeratorEnabledDefault = true;
 
 export const CreateProjectBody = zod.object({
   "name": zod.string().min(1),
   "file": zod.instanceof(File),
-  "memberCount": zod.number().int().min(1).max(createProjectBodyMemberCountMax).describe('Exact number of members this project is for, chosen once at creation and fixed afterward. Invites are capped at this number, the shared consensus space only opens once exactly this many members have all marked ready, and each member\'s private property budget is derived from this number from the start.')
+  "memberCount": zod.number().int().min(1).max(createProjectBodyMemberCountMax).describe('Exact number of members this project is for, chosen once at creation and fixed afterward. Invites are capped at this number, the shared consensus space only opens once exactly this many members have all marked ready, and each member\'s private property budget is derived from this number from the start.'),
+  "moderatorEnabled": zod.boolean().default(createProjectBodyModeratorEnabledDefault).describe('Whether the AI moderator\'s messages are shown in the live conversation window for this project, chosen once at creation and fixed afterward -- there is no route to change it later. The moderator itself always keeps running in the background regardless of this setting (it still listens, transcribes, and generates interventions); disabling this only hides its \"intro\" and \"intervention\" messages from the live chat UI. Its messages still appear normally, in their original position, in the conversation export. Defaults to true.')
 })
 
 export const CreateProjectResponse = zod.object({
@@ -137,6 +139,7 @@ export const CreateProjectResponse = zod.object({
   "ownerId": zod.number().int(),
   "memberCount": zod.number().int(),
   "maxMembers": zod.number().int(),
+  "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -155,6 +158,7 @@ export const JoinProjectResponse = zod.object({
   "ownerId": zod.number().int(),
   "memberCount": zod.number().int(),
   "maxMembers": zod.number().int(),
+  "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -172,6 +176,7 @@ export const GetProjectResponse = zod.object({
   "inviteCode": zod.string(),
   "ownerId": zod.number().int(),
   "maxMembers": zod.number().int(),
+  "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
   "createdAt": zod.coerce.date(),
   "members": zod.array(zod.object({
   "userId": zod.number().int(),

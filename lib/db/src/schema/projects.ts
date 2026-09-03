@@ -30,6 +30,14 @@ export const projectsTable = pgTable("projects", {
   // Defaults to the historical global cap for rows created before this
   // column existed.
   maxMembers: integer("max_members").notNull().default(MAX_PROJECT_MEMBERS),
+  // Chosen by the creator at project setup and fixed afterward -- there is
+  // no route to toggle this later. The AI moderator itself keeps running in
+  // the background either way (it still listens, transcribes, and
+  // generates interventions); this only controls whether its "intro" and
+  // "intervention" messages are ever rendered in the live chat window for
+  // this project. Defaults to true both for the column default and for rows
+  // created before this setting existed, matching prior behavior.
+  moderatorEnabled: boolean("moderator_enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -604,6 +604,9 @@ export const createProject = async (projectInput: ProjectInput, options?: Parame
 formData.append(`name`, projectInput.name);
 formData.append(`file`, projectInput.file);
 formData.append(`memberCount`, projectInput.memberCount.toString())
+if(projectInput.moderatorEnabled !== undefined) {
+ formData.append(`moderatorEnabled`, projectInput.moderatorEnabled.toString())
+ }
 
   return customFetch<ProjectSummary>(getCreateProjectUrl(),
   {
