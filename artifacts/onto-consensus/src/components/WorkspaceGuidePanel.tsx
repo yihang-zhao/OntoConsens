@@ -106,7 +106,7 @@ export function WorkspaceGuidePanel({
                       isCurrent
                         ? "text-foreground"
                         : isDone
-                          ? "text-muted-foreground line-through decoration-1"
+                          ? "text-muted-foreground"
                           : isNext
                             ? "text-foreground/80"
                             : "text-muted-foreground/60"
@@ -115,9 +115,13 @@ export function WorkspaceGuidePanel({
                     {step.title}
                   </p>
                 </div>
-                {(isCurrent || isNext) && (
-                  <p className="text-xs text-muted-foreground leading-snug pl-7">{step.description}</p>
-                )}
+                <p
+                  className={`text-xs leading-snug pl-7 ${
+                    isCurrent || isNext ? "text-muted-foreground" : "text-muted-foreground/50"
+                  }`}
+                >
+                  {step.description}
+                </p>
                 {isCurrent && isReady && !allReady && (
                   <p className="text-xs font-medium text-amber-600 dark:text-amber-400 pl-7 mt-2">
                     {membersStillNeeded > 0
