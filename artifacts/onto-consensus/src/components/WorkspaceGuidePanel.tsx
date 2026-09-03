@@ -1,4 +1,4 @@
-import { Check, ArrowDown } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 
 interface GuideStep {
   title: string;
@@ -82,33 +82,21 @@ export function WorkspaceGuidePanel({
           long each step's description is. */}
       <div className="flex-1 min-h-0 flex flex-col px-4 pt-3 pb-3">
         {STEPS.map((step, i) => {
-          const isDone = i < current;
           const isCurrent = i === current;
-          const isNext = i === current + 1;
           return (
             <div key={step.title} className="contents">
               <div className="px-3 shrink-0">
                 <div className="flex items-center gap-2 mb-1">
                   <div
                     className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${
-                      isDone
-                        ? "bg-green-600 text-white"
-                        : isCurrent
-                          ? "bg-foreground text-background"
-                          : "bg-muted text-muted-foreground"
+                      isCurrent ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    {isDone ? <Check className="w-3 h-3" /> : i + 1}
+                    {i + 1}
                   </div>
                   <p
                     className={`text-sm font-semibold leading-tight ${
-                      isCurrent
-                        ? "text-foreground"
-                        : isDone
-                          ? "text-muted-foreground"
-                          : isNext
-                            ? "text-foreground/80"
-                            : "text-muted-foreground/60"
+                      isCurrent ? "text-foreground" : "text-muted-foreground/60"
                     }`}
                   >
                     {step.title}
@@ -116,7 +104,7 @@ export function WorkspaceGuidePanel({
                 </div>
                 <p
                   className={`text-xs leading-snug pl-7 text-justify ${
-                    isCurrent || isNext ? "text-muted-foreground" : "text-muted-foreground/50"
+                    isCurrent ? "text-muted-foreground" : "text-muted-foreground/50"
                   }`}
                 >
                   {step.description}
@@ -125,7 +113,7 @@ export function WorkspaceGuidePanel({
 
               {i < STEPS.length - 1 && (
                 <div className="flex-1 min-h-0 flex items-center justify-center">
-                  <ArrowDown className={`w-4 h-4 ${isDone ? "text-green-600" : "text-muted-foreground/40"}`} />
+                  <ArrowDown className="w-4 h-4 text-muted-foreground/40" />
                 </div>
               )}
             </div>
