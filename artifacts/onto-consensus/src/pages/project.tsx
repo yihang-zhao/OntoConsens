@@ -424,36 +424,42 @@ export default function ProjectWorkspace() {
       <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4">
         {/* Canvas Area */}
         <main
-          className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden ${
-            allReady && mobileView === "chat" ? "hidden lg:block" : "block"
+          className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
+            allReady && mobileView === "chat" ? "hidden lg:block" : "flex"
           }`}
         >
-          {me && (
-            <GraphCanvas
-              projectId={projectId}
-              currentUserId={me.id}
-              cursors={cursors}
-              sendCursor={sendCursor}
-              sharedModeEnabled={allReady}
-              ownSpaceLocked={isReady && !allReady}
-              highlightedProperty={highlightedProperty}
-            />
-          )}
+          <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
+            <span className="font-semibold text-sm">{allReady ? "Shared Workspace" : "Individual Workspace"}</span>
+          </div>
 
-          {/* Sync status - plain text floating on the workspace, no bar/box */}
-          {(syncStatus !== "connected" || showLive) && (
-            <span
-              className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-semibold tracking-wide transition-opacity duration-500 ${
-                syncStatus === "connected"
-                  ? "text-green-600 dark:text-green-400"
-                  : syncStatus === "reconnecting"
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-destructive"
-              }`}
-            >
-              {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
-            </span>
-          )}
+          <div className="flex-1 min-h-0 relative">
+            {me && (
+              <GraphCanvas
+                projectId={projectId}
+                currentUserId={me.id}
+                cursors={cursors}
+                sendCursor={sendCursor}
+                sharedModeEnabled={allReady}
+                ownSpaceLocked={isReady && !allReady}
+                highlightedProperty={highlightedProperty}
+              />
+            )}
+
+            {/* Sync status - plain text floating on the workspace, no bar/box */}
+            {(syncStatus !== "connected" || showLive) && (
+              <span
+                className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-30 text-xs font-semibold tracking-wide transition-opacity duration-500 ${
+                  syncStatus === "connected"
+                    ? "text-green-600 dark:text-green-400"
+                    : syncStatus === "reconnecting"
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-destructive"
+                }`}
+              >
+                {syncStatus === "connected" ? "Live" : syncStatus === "reconnecting" ? "Reconnecting" : "Disconnected"}
+              </span>
+            )}
+          </div>
         </main>
 
         {/* Persistent AI moderator chat panel -- appears once the shared
