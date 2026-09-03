@@ -514,7 +514,7 @@ export function ModeratorChatPanel({
               <p className="text-xs text-muted-foreground text-center mt-6">
                 {moderatorEnabled
                   ? "The AI moderator's messages will appear here once the shared workspace is open."
-                  : "Messages will appear here once the shared workspace is open."}
+                  : "Messages will appear here"}
               </p>
             )}
             {visibleMessages.map((message) => (
