@@ -1,5 +1,7 @@
-import type { ReactElement } from "react";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
 import { Plus, ArrowRight, Check, X, MousePointer2, Download, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 interface GuideStep {
   title: string;
@@ -25,49 +27,88 @@ interface WorkspaceGuidePanelProps {
  *  buttons) so a member recognizes them the moment they look at the actual
  *  page. Each fills the illustration area of the guide panel. */
 
+// Property-pill styling copied straight from GraphCanvas: a "docked" (fully
+// agreed) property is filled in card-foreground with 16px-16px-4px-4px
+// corners; a floating (not yet agreed) one is just outlined the same shape.
+// Reusing the exact same look here means a member recognizes these pills
+// the instant they see the real graph.
+function propertyPillStyle(docked: boolean): CSSProperties {
+  return docked
+    ? {
+        background: "hsl(var(--card-foreground))",
+        color: "hsl(var(--card))",
+        borderColor: "hsl(var(--card-foreground))",
+        borderRadius: "16px 16px 4px 4px",
+        borderWidth: 1.5,
+      }
+    : {
+        borderColor: "hsl(var(--border))",
+        borderRadius: "16px 16px 4px 4px",
+        borderWidth: 1.5,
+      };
+}
+
+function ClassNodeCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="w-full max-w-[200px] rounded-full aspect-square border-2 bg-card shadow-sm flex flex-col items-center justify-center gap-2 p-4 mx-auto">
+      <p className="text-xs font-semibold">Animal</p>
+      {children}
+    </div>
+  );
+}
+
 function ProposePropertiesIllustration() {
   return (
-    <div className="w-full h-full flex items-center justify-center px-2">
-      <div className="w-full max-w-[220px] rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-3">
-        <p className="text-xs font-semibold mb-2">Animal</p>
-        <div className="flex flex-col gap-1.5 mb-2">
-          <span className="text-[11px] rounded-full border border-dashed border-muted-foreground/40 text-muted-foreground px-2 py-1 w-fit">
+    <div className="w-full h-full flex items-center justify-center px-4">
+      <ClassNodeCard>
+        <div className="flex flex-wrap gap-1.5 justify-center">
+          <span className="text-[10px] border px-2 py-1" style={propertyPillStyle(false)}>
             hasLegs
           </span>
-          <span className="text-[11px] rounded-full border border-dashed border-muted-foreground/40 text-muted-foreground px-2 py-1 w-fit">
+          <span className="text-[10px] border px-2 py-1" style={propertyPillStyle(false)}>
             canFly
           </span>
         </div>
-        <div className="flex items-center gap-1 text-[11px] font-medium text-primary animate-pulse w-fit">
+        <div className="flex items-center gap-1 text-[10px] font-medium text-primary animate-pulse">
           <Plus className="w-3 h-3" />
           Add property
         </div>
-      </div>
+      </ClassNodeCard>
     </div>
   );
 }
 
 function MarkReadyIllustration() {
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-4 px-2">
-      <div className="flex items-center gap-1.5">
-        <div className="w-8 h-8 rounded-full border-2 border-green-500 ring-2 ring-green-500/20 bg-muted flex items-center justify-center text-[10px] font-semibold">
-          YOU
-        </div>
-        <div className="w-8 h-8 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
-          <span className="text-[9px] text-muted-foreground/50">--</span>
+    <div className="w-full h-full flex flex-col items-center justify-center gap-5 px-2">
+      <div className="flex items-center gap-1.5 bg-muted/50 p-1.5 rounded-full border">
+        <div className="relative">
+          <Avatar className="w-8 h-8 border-2 scale-105 border-green-500 ring-2 ring-green-500/20">
+            <AvatarFallback className="text-white text-[10px] font-semibold" style={{ backgroundColor: "hsl(var(--member-0))" }}>
+              YO
+            </AvatarFallback>
+          </Avatar>
+          <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-card">
+            <Check className="w-2 h-2" />
+          </div>
         </div>
         <div className="w-8 h-8 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center">
           <span className="text-[9px] text-muted-foreground/50">--</span>
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-[11px] font-medium border rounded-md px-2.5 py-1.5">Mark as Ready</span>
+        <Button size="sm" variant="outline" disabled className="opacity-100 pointer-events-none">
+          Mark as Ready
+        </Button>
         <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        <span className="text-[11px] font-medium rounded-md px-2.5 py-1.5 bg-green-600 text-white flex items-center gap-1">
-          <Check className="w-3 h-3" />
+        <Button
+          size="sm"
+          disabled
+          className="opacity-100 pointer-events-none bg-green-600 text-white"
+        >
+          <Check className="w-4 h-4" />
           Ready
-        </span>
+        </Button>
       </div>
     </div>
   );
@@ -75,45 +116,24 @@ function MarkReadyIllustration() {
 
 function ReachAgreementIllustration() {
   return (
-    <div className="w-full h-full flex items-center justify-center px-2 relative">
-      <div className="w-full max-w-[220px] rounded-xl border-2 bg-card shadow-sm p-3">
-        <p className="text-xs font-semibold mb-2">Animal</p>
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between gap-2 rounded-full pl-2 pr-1 py-1 border" style={{ borderColor: "hsl(var(--member-0))" }}>
-            <span className="text-[11px] font-medium" style={{ color: "hsl(var(--member-0))" }}>
-              hasLegs
-            </span>
-            <div className="flex items-center gap-0.5">
-              <span className="w-4 h-4 rounded-full bg-green-600 flex items-center justify-center">
-                <Check className="w-2.5 h-2.5 text-white" />
-              </span>
-              <span className="w-4 h-4 rounded-full bg-muted flex items-center justify-center">
-                <X className="w-2.5 h-2.5 text-muted-foreground" />
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-2 rounded-full pl-2 pr-1 py-1 border" style={{ borderColor: "hsl(var(--member-1))" }}>
-            <span className="text-[11px] font-medium" style={{ color: "hsl(var(--member-1))" }}>
-              canFly
-            </span>
-            <div className="flex items-center gap-0.5">
-              <span className="w-4 h-4 rounded-full bg-muted flex items-center justify-center">
-                <Check className="w-2.5 h-2.5 text-muted-foreground" />
-              </span>
-              <span className="w-4 h-4 rounded-full bg-muted flex items-center justify-center">
-                <X className="w-2.5 h-2.5 text-muted-foreground" />
-              </span>
-            </div>
-          </div>
+    <div className="w-full h-full flex items-center justify-center px-4 relative">
+      <ClassNodeCard>
+        <div className="flex flex-col gap-1.5 w-full items-center">
+          <span className="text-[10px] border px-2.5 py-1" style={propertyPillStyle(true)}>
+            hasLegs
+          </span>
+          <span className="text-[10px] border px-2.5 py-1" style={propertyPillStyle(false)}>
+            canFly
+          </span>
         </div>
-      </div>
+      </ClassNodeCard>
       <MousePointer2
-        className="w-3.5 h-3.5 absolute top-4 right-8 rotate-12"
+        className="w-3.5 h-3.5 absolute top-6 right-10 rotate-12"
         style={{ color: "hsl(var(--member-0))" }}
         fill="hsl(var(--member-0))"
       />
       <MousePointer2
-        className="w-3.5 h-3.5 absolute bottom-6 left-10 -rotate-12"
+        className="w-3.5 h-3.5 absolute bottom-8 left-12 -rotate-12"
         style={{ color: "hsl(var(--member-1))" }}
         fill="hsl(var(--member-1))"
       />
@@ -123,8 +143,8 @@ function ReachAgreementIllustration() {
 
 function ExportIllustration() {
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-4 px-2">
-      <div className="flex flex-col gap-1.5 w-full max-w-[200px]">
+    <div className="w-full h-full flex flex-col items-center justify-center gap-5 px-2">
+      <div className="flex flex-col gap-1.5 w-full max-w-[180px]">
         {["hasLegs", "canFly", "hasFur"].map((name) => (
           <div key={name} className="flex items-center gap-2 text-[11px]">
             <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
@@ -133,10 +153,10 @@ function ExportIllustration() {
           </div>
         ))}
       </div>
-      <span className="flex items-center gap-2 text-[11px] font-medium rounded-md px-3 py-2 bg-foreground text-background shadow-md">
-        <Download className="w-3.5 h-3.5" />
+      <Button size="sm" disabled className="opacity-100 pointer-events-none gap-2 bg-foreground text-background shadow-md">
+        <Download className="w-4 h-4" />
         Export
-      </span>
+      </Button>
     </div>
   );
 }
