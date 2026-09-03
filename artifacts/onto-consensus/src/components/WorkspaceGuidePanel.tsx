@@ -80,45 +80,58 @@ export function WorkspaceGuidePanel({
           arrows), not the step blocks themselves, so all three gaps
           share the leftover vertical space equally regardless of how
           long each step's description is. */}
-      <div className="flex-1 min-h-0 flex flex-col justify-center px-4 pt-3 pb-3 overflow-y-auto [scrollbar-width:thin]">
-        {STEPS.map((step, i) => {
-          const isCurrent = i === current;
-          return (
-            <div key={step.title} className="contents">
-              <div className="px-3 shrink-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <div
-                    className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${
-                      isCurrent ? "bg-foreground text-background" : "bg-muted/60 text-muted-foreground/40"
-                    }`}
-                  >
-                    {i + 1}
+      {/* The scrolling and the centering are split across two nested divs
+          on purpose: a flex container with justify-center that is also the
+          overflow-y-auto element can't be scrolled up to its own start in
+          most browsers once content is taller than it (the "centered
+          overflow" trap). Making the outer div a plain block scroll
+          container, with an inner flex container that's only as tall as
+          its own content (min-h-full, not h-full), sidesteps that --
+          justify-center still centers the steps when there's extra room,
+          but once content overflows the inner flex box just sizes to fit
+          it exactly (nothing left to center), so normal top-to-bottom
+          scrolling reaches every step including the first. */}
+      <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-width:thin]">
+        <div className="min-h-full flex flex-col justify-center px-4 pt-3 pb-3">
+          {STEPS.map((step, i) => {
+            const isCurrent = i === current;
+            return (
+              <div key={step.title} className="contents">
+                <div className="px-3 shrink-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div
+                      className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${
+                        isCurrent ? "bg-foreground text-background" : "bg-muted/60 text-muted-foreground/40"
+                      }`}
+                    >
+                      {i + 1}
+                    </div>
+                    <p
+                      className={`text-sm font-semibold leading-tight ${
+                        isCurrent ? "text-foreground" : "text-muted-foreground/40"
+                      }`}
+                    >
+                      {step.title}
+                    </p>
                   </div>
                   <p
-                    className={`text-sm font-semibold leading-tight ${
-                      isCurrent ? "text-foreground" : "text-muted-foreground/40"
+                    className={`text-xs leading-snug pl-7 text-justify ${
+                      isCurrent ? "text-muted-foreground" : "text-muted-foreground/30"
                     }`}
                   >
-                    {step.title}
+                    {step.description}
                   </p>
                 </div>
-                <p
-                  className={`text-xs leading-snug pl-7 text-justify ${
-                    isCurrent ? "text-muted-foreground" : "text-muted-foreground/30"
-                  }`}
-                >
-                  {step.description}
-                </p>
-              </div>
 
-              {i < STEPS.length - 1 && (
-                <div className="h-16 shrink-0 flex items-center justify-center">
-                  <ArrowDown className="w-4 h-4 text-muted-foreground/25" />
-                </div>
-              )}
-            </div>
-          );
-        })}
+                {i < STEPS.length - 1 && (
+                  <div className="h-16 shrink-0 flex items-center justify-center">
+                    <ArrowDown className="w-4 h-4 text-muted-foreground/25" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </aside>
   );
