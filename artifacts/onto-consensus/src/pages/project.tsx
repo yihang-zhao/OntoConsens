@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useProjectSocket, type ModeratorChatMessage } from "@/hooks/useProjectSocket";
 import { ModeratorChatPanel } from "@/components/ModeratorChatPanel";
+import { WorkspaceGuidePanel } from "@/components/WorkspaceGuidePanel";
 
 export default function ProjectWorkspace() {
   const { id: idStr } = useParams();
@@ -422,6 +423,15 @@ export default function ProjectWorkspace() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4">
+        {/* Guide panel -- tells the current member what to do next to
+            finish their task on this page. */}
+        <WorkspaceGuidePanel
+          isReady={isReady}
+          allReady={allReady}
+          workspaceFullyAgreed={workspaceFullyAgreed}
+          membersStillNeeded={project.maxMembers - project.members.filter((m) => m.ready).length}
+        />
+
         {/* Canvas Area */}
         <main
           className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
