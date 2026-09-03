@@ -29,7 +29,7 @@ const STEPS: GuideStep[] = [
   {
     title: "Reach agreement together",
     description:
-      "The shared space is open. Proposals are color-coded by member (see the top-right bar). Shared proposals show as a stack of the colors of everyone who proposed them. Open the microphone at the bottom right, and discuss with your group members to reach agreement on all properties that haven't been agreed yet. Click a proposal to agree, click again to remove your agreement. Once agreement has been made on all properties, the export button will be enabled.",
+      "The shared workspace is open. Proposals are color-coded by member (see the top-right bar). Shared proposals show as a stack of the colors of everyone who proposed them. Open the microphone at the bottom right, and discuss with your group members to reach agreement on all properties that haven't been agreed yet. Click a proposal to agree, click again to remove your agreement. Once agreement has been made on all properties, the export button will be enabled.",
   },
   {
     title: "Export",
