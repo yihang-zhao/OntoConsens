@@ -73,13 +73,13 @@ export function WorkspaceGuidePanel({
         <span className="font-semibold text-sm">Tutorial</span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
         {STEPS.map((step, i) => {
           const isDone = i < current;
           const isCurrent = i === current;
           const isNext = i === current + 1;
           return (
-            <div key={step.title}>
+            <div key={step.title} className="flex-1 min-h-0 flex flex-col justify-center">
               <div
                 className={`rounded-xl border px-3 py-3 transition-colors ${
                   isCurrent
