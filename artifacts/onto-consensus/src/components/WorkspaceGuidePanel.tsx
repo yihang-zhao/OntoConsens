@@ -24,7 +24,7 @@ const STEPS: GuideStep[] = [
   {
     title: "Wait for everyone to be ready",
     description:
-      "When everyone is ready, the shared workspace will open and you'll see everyone's proposals together. Proposals are color-coded by member (see the top-right bar). Shared proposals show as a stack of the colors of everyone who proposed them. Click a proposal to agree, click again to remove your agreement.",
+      "When everyone is ready, the shared workspace will open and you'll see everyone's proposals together. Proposals are color-coded by member (see the top-right bar). Shared proposals show as a stack of the colors of everyone who proposed them.",
   },
   {
     title: "Reach agreement together",
