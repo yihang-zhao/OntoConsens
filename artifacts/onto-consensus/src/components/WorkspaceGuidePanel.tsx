@@ -66,11 +66,13 @@ export function WorkspaceGuidePanel({
     <aside
       className={`w-full lg:w-72 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden lg:flex"}`}
     >
-      <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
-        <span className="font-semibold text-sm">Tutorial</span>
-      </div>
-
-      <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
+      {/* No header row here on purpose: the top of the first step below
+          lines up with the top of the "Discussion" panel's title, and the
+          bottom of the last step lines up with the bottom of its
+          microphone toggle -- both computed from that panel's exact
+          spacing (h-14 title vertical-centers text ~18px from the top;
+          its mic row sits ~12px above the panel's bottom edge). */}
+      <div className="h-full flex flex-col px-4 pt-[18px] pb-3">
         {STEPS.map((step, i) => {
           const isDone = i < current;
           const isCurrent = i === current;
@@ -105,7 +107,7 @@ export function WorkspaceGuidePanel({
                   </p>
                 </div>
                 <p
-                  className={`text-xs leading-snug pl-7 ${
+                  className={`text-xs leading-snug pl-7 text-justify ${
                     isCurrent || isNext ? "text-muted-foreground" : "text-muted-foreground/50"
                   }`}
                 >
