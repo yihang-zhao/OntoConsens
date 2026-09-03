@@ -80,15 +80,7 @@ export function WorkspaceGuidePanel({
           const isNext = i === current + 1;
           return (
             <div key={step.title} className="flex-1 min-h-0 flex flex-col justify-center">
-              <div
-                className={`rounded-xl border px-3 py-3 transition-colors ${
-                  isCurrent
-                    ? "border-foreground bg-foreground/5 shadow-sm"
-                    : isNext
-                      ? "border-border bg-muted/40"
-                      : "border-transparent"
-                }`}
-              >
+              <div className="px-3">
                 <div className="flex items-center gap-2 mb-1">
                   <div
                     className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${
