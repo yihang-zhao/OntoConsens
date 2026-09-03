@@ -487,7 +487,7 @@ export function ModeratorChatPanel({
     >
       <div className="flex items-center gap-2 h-14 px-4 border-b shrink-0">
         <Sparkles className="w-4 h-4 text-primary" />
-        <span className="font-semibold text-sm">AI Moderator</span>
+        <span className="font-semibold text-sm">Discussion</span>
       </div>
 
       {moderatorErrorMessage && (
