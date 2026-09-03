@@ -330,10 +330,6 @@ export default function Dashboard() {
                         <FormItem className="flex flex-row items-center justify-between rounded-md border px-3 py-3">
                           <div className="space-y-0.5">
                             <FormLabel className="text-sm">AI Moderator</FormLabel>
-                            <p className="text-xs text-muted-foreground">
-                              Shows the AI moderator's messages in the conversation. This can't be
-                              changed after the project is created.
-                            </p>
                           </div>
                           <FormControl>
                             <Switch
