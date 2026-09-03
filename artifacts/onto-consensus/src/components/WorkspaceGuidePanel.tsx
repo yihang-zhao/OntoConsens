@@ -112,7 +112,7 @@ export function WorkspaceGuidePanel({
               </div>
 
               {i < STEPS.length - 1 && (
-                <div className="flex-1 max-h-16 min-h-0 flex items-center justify-center">
+                <div className="h-16 shrink-0 flex items-center justify-center">
                   <ArrowDown className="w-4 h-4 text-muted-foreground/25" />
                 </div>
               )}
