@@ -27,6 +27,7 @@ import {
   Loader2, 
   Network, 
   Sparkles,
+  ListChecks,
 } from "lucide-react";
 import { useProjectSocket, type ModeratorChatMessage } from "@/hooks/useProjectSocket";
 import { ModeratorChatPanel } from "@/components/ModeratorChatPanel";
@@ -221,7 +222,7 @@ export default function ProjectWorkspace() {
   // switched via a small tab control, instead of the two-pane desktop
   // layout. Both panes stay mounted; only visibility (via CSS) toggles,
   // so switching back to a pane never loses its scroll position or state.
-  const [mobileView, setMobileView] = useState<"graph" | "chat">("graph");
+  const [mobileView, setMobileView] = useState<"guide" | "graph" | "chat">("graph");
   const prevSyncStatus = useRef(syncStatus);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -392,22 +393,32 @@ export default function ProjectWorkspace() {
         </div>
       </header>
 
-      {/* Mobile pane switcher -- below lg, the graph and the moderator chat
-          can't fit side by side (the chat needs a real minimum width to
-          stay usable), so only one is shown at a time here. Both panes stay
-          mounted underneath; this only toggles which one is visible. */}
-      {allReady && (
-        <div className="lg:hidden flex items-center gap-1.5 px-4 pt-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => setMobileView("graph")}
-            className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
-              mobileView === "graph" ? "bg-foreground text-background border-foreground" : "bg-card text-muted-foreground"
-            }`}
-          >
-            <Network className="w-3.5 h-3.5" />
-            Graph
-          </button>
+      {/* Mobile pane switcher -- below lg, the guide, graph, and (once open)
+          the moderator chat can't all fit side by side, so only one is
+          shown at a time here. All panes stay mounted underneath; this
+          only toggles which one is visible. */}
+      <div className="lg:hidden flex items-center gap-1.5 px-4 pt-3 shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileView("guide")}
+          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+            mobileView === "guide" ? "bg-foreground text-background border-foreground" : "bg-card text-muted-foreground"
+          }`}
+        >
+          <ListChecks className="w-3.5 h-3.5" />
+          Guide
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileView("graph")}
+          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+            mobileView === "graph" ? "bg-foreground text-background border-foreground" : "bg-card text-muted-foreground"
+          }`}
+        >
+          <Network className="w-3.5 h-3.5" />
+          Graph
+        </button>
+        {allReady && (
           <button
             type="button"
             onClick={() => setMobileView("chat")}
@@ -418,8 +429,8 @@ export default function ProjectWorkspace() {
             <Sparkles className="w-3.5 h-3.5" />
             Chat
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4 bg-muted">
@@ -429,12 +440,13 @@ export default function ProjectWorkspace() {
           isReady={isReady}
           allReady={allReady}
           workspaceFullyAgreed={workspaceFullyAgreed}
+          className={mobileView === "guide" ? "flex" : "hidden lg:flex"}
         />
 
         {/* Canvas Area */}
         <main
           className={`flex-1 min-w-0 bg-card relative rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
-            allReady && mobileView === "chat" ? "hidden lg:block" : "flex"
+            mobileView === "graph" ? "flex" : "hidden lg:flex"
           }`}
         >
           <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
