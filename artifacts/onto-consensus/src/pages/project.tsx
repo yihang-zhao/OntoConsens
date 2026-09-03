@@ -422,7 +422,7 @@ export default function ProjectWorkspace() {
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4">
+      <div className="flex-1 flex min-h-0 relative gap-4 px-4 py-4 bg-muted">
         {/* Guide panel -- tells the current member what to do next to
             finish their task on this page. */}
         <WorkspaceGuidePanel
