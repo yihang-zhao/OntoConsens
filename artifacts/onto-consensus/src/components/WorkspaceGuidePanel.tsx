@@ -12,9 +12,6 @@ interface WorkspaceGuidePanelProps {
   allReady: boolean;
   /** Every property in the shared workspace has full agreement. */
   workspaceFullyAgreed: boolean;
-  /** How many more members still need to join/ready up before the shared
-   *  space opens -- only meaningful once this member is ready themselves. */
-  membersStillNeeded: number;
   className?: string;
 }
 
@@ -22,20 +19,21 @@ const STEPS: GuideStep[] = [
   {
     title: "Propose your properties",
     description:
-      "In your individual workspace, add the properties you think each class should have. Nobody else can see these yet.",
+      "In your individual workspace, add the properties you think each class should have. Nobody else can see these yet. Once you're happy with your proposals, mark yourself ready in the top right bar.",
   },
   {
-    title: "Mark yourself ready",
-    description: "Once you're happy with your proposals, mark yourself ready in the top bar.",
+    title: "Wait for everyone to be ready",
+    description: "When everyone is ready, the shared workspace will open and you'll see everyone's proposals together.",
   },
   {
     title: "Reach agreement together",
     description:
-      "The shared workspace shows everyone's proposals stacked on each class. Talk it through and agree or retract each one.",
+      "Open the microphone at the bottom right, and discuss with your group members to reach agreement on all properties that haven't been agreed yet. Once agreement has been made on all properties, the export button will be enabled.",
   },
   {
-    title: "Export the ontology",
-    description: "Once every property has full agreement, export unlocks at the bottom of the page.",
+    title: "Export",
+    description:
+      "Click the export button at the bottom center of the page, where the current workspace along with the discussion history will be downloaded into 2 independent JSON files that can be reused for later OE tasks.",
   },
 ];
 
@@ -60,7 +58,6 @@ export function WorkspaceGuidePanel({
   isReady,
   allReady,
   workspaceFullyAgreed,
-  membersStillNeeded,
   className,
 }: WorkspaceGuidePanelProps) {
   const current = currentStepIndex(isReady, allReady, workspaceFullyAgreed);
@@ -114,13 +111,6 @@ export function WorkspaceGuidePanel({
                 >
                   {step.description}
                 </p>
-                {isCurrent && isReady && !allReady && (
-                  <p className="text-xs font-medium text-amber-600 dark:text-amber-400 pl-7 mt-2">
-                    {membersStillNeeded > 0
-                      ? `Waiting on ${membersStillNeeded} more member${membersStillNeeded === 1 ? "" : "s"} to join and mark ready.`
-                      : "Waiting on other members to mark ready."}
-                  </p>
-                )}
               </div>
 
               {i < STEPS.length - 1 && (

@@ -429,7 +429,6 @@ export default function ProjectWorkspace() {
           isReady={isReady}
           allReady={allReady}
           workspaceFullyAgreed={workspaceFullyAgreed}
-          membersStillNeeded={project.maxMembers - project.members.filter((m) => m.ready).length}
         />
 
         {/* Canvas Area */}
