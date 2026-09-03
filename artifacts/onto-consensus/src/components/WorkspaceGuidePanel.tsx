@@ -80,7 +80,7 @@ export function WorkspaceGuidePanel({
           arrows), not the step blocks themselves, so all three gaps
           share the leftover vertical space equally regardless of how
           long each step's description is. */}
-      <div className="flex-1 min-h-0 flex flex-col px-4 pt-3 pb-3">
+      <div className="flex-1 min-h-0 flex flex-col justify-center px-4 pt-3 pb-3">
         {STEPS.map((step, i) => {
           const isCurrent = i === current;
           return (
@@ -89,14 +89,14 @@ export function WorkspaceGuidePanel({
                 <div className="flex items-center gap-2 mb-1">
                   <div
                     className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${
-                      isCurrent ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
+                      isCurrent ? "bg-foreground text-background" : "bg-muted/60 text-muted-foreground/40"
                     }`}
                   >
                     {i + 1}
                   </div>
                   <p
                     className={`text-sm font-semibold leading-tight ${
-                      isCurrent ? "text-foreground" : "text-muted-foreground/60"
+                      isCurrent ? "text-foreground" : "text-muted-foreground/40"
                     }`}
                   >
                     {step.title}
@@ -104,7 +104,7 @@ export function WorkspaceGuidePanel({
                 </div>
                 <p
                   className={`text-xs leading-snug pl-7 text-justify ${
-                    isCurrent ? "text-muted-foreground" : "text-muted-foreground/50"
+                    isCurrent ? "text-muted-foreground" : "text-muted-foreground/30"
                   }`}
                 >
                   {step.description}
@@ -112,8 +112,8 @@ export function WorkspaceGuidePanel({
               </div>
 
               {i < STEPS.length - 1 && (
-                <div className="flex-1 min-h-0 flex items-center justify-center">
-                  <ArrowDown className="w-4 h-4 text-muted-foreground/40" />
+                <div className="flex-1 max-h-4 min-h-0 flex items-center justify-center">
+                  <ArrowDown className="w-4 h-4 text-muted-foreground/25" />
                 </div>
               )}
             </div>
