@@ -485,8 +485,7 @@ export function ModeratorChatPanel({
     <aside
       className={`w-full lg:w-[28vw] lg:min-w-[22rem] shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "flex"}`}
     >
-      <div className="flex items-center gap-2 h-14 px-4 border-b shrink-0">
-        <Sparkles className="w-4 h-4 text-primary" />
+      <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
         <span className="font-semibold text-sm">Discussion</span>
       </div>
 
