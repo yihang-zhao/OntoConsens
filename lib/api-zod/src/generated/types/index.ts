@@ -8,6 +8,12 @@
 
 export * from './authCredentials';
 export * from './authResponse';
+export * from './conversationExportIntervention';
+export * from './conversationExportMember';
+export * from './conversationExportMessage';
+export * from './conversationExportMessageType';
+export * from './conversationExportMeta';
+export * from './conversationExportPayload';
 export * from './errorResponse';
 export * from './exportClass';
 export * from './exportMeta';

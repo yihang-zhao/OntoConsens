@@ -242,6 +242,63 @@ export interface ExportPayload {
   classes: ExportClass[];
 }
 
+export interface ConversationExportMember {
+  userId: number;
+  username: string;
+  colorSlot: number;
+}
+
+export interface ConversationExportMeta {
+  projectId: number;
+  projectName: string;
+  exportedAt: string;
+  /** The project's specified number of members (not just however many have joined). */
+  memberCount: number;
+  members: ConversationExportMember[];
+}
+
+export interface ConversationExportIntervention {
+  /** Whether the discussion resolved to a real class/property in this project's workspace. */
+  matched: boolean;
+  classId: number | null;
+  propertyId: number | null;
+  className: string | null;
+  propertyName: string | null;
+  examples: ModeratorInterventionEntry[];
+  counterexamples: ModeratorInterventionEntry[];
+}
+
+export type ConversationExportMessageType = typeof ConversationExportMessageType[keyof typeof ConversationExportMessageType];
+
+
+export const ConversationExportMessageType = {
+  intro: 'intro',
+  system: 'system',
+  transcript: 'transcript',
+  intervention: 'intervention',
+} as const;
+
+export interface ConversationExportMessage {
+  /** 1-based position in the conversation, in chronological order. */
+  sequence: number;
+  id: number;
+  type: ConversationExportMessageType;
+  timestamp: string;
+  /** Null for moderator-authored messages (intro, intervention). */
+  speakerUserId: number | null;
+  speakerUsername: string | null;
+  /** Plain-text content -- always populated, even for a structured intervention. */
+  content: string;
+  /** Present only for type "intervention"; null for every other message type. */
+  intervention: ConversationExportIntervention | null;
+}
+
+export interface ConversationExportPayload {
+  meta: ConversationExportMeta;
+  messageCount: number;
+  messages: ConversationExportMessage[];
+}
+
 export type ListModeratorChatMessages200 = {
   messages: ModeratorChatMessage[];
 };

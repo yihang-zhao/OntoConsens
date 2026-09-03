@@ -22,6 +22,7 @@ import type {
 import type {
   AuthCredentials,
   AuthResponse,
+  ConversationExportPayload,
   ErrorResponse,
   ExportPayload,
   HealthStatus,
@@ -1529,6 +1530,83 @@ export function useExportProject<TData = Awaited<ReturnType<typeof exportProject
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getExportProjectQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportConversationUrl = (id: number,) => {
+
+
+
+
+  return `/api/projects/${id}/export-conversation`
+}
+
+/**
+ * @summary Export the full moderator conversation history (transcripts, system events, and interventions) as flat, analysis-ready JSON. Unlike /export, available at any point in the project's lifecycle -- not gated on full agreement.
+ */
+export const exportConversation = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ConversationExportPayload> => {
+
+  return customFetch<ConversationExportPayload>(getExportConversationUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportConversationQueryKey = (id: number,) => {
+    return [
+    `/api/projects/${id}/export-conversation`
+    ] as const;
+    }
+
+
+export const getExportConversationQueryOptions = <TData = Awaited<ReturnType<typeof exportConversation>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportConversation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportConversationQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportConversation>>> = ({ signal }) => exportConversation(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportConversation>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportConversationQueryResult = NonNullable<Awaited<ReturnType<typeof exportConversation>>>
+export type ExportConversationQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Export the full moderator conversation history (transcripts, system events, and interventions) as flat, analysis-ready JSON. Unlike /export, available at any point in the project's lifecycle -- not gated on full agreement.
+ */
+
+export function useExportConversation<TData = Awaited<ReturnType<typeof exportConversation>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportConversation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportConversationQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

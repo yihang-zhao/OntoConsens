@@ -4,6 +4,7 @@ import {
   useGetProject, 
   useSetReady, 
   useExportProject, 
+  useExportConversation,
   useGetMe,
   useListProperties,
   useGetModeratorStatus,
@@ -11,6 +12,7 @@ import {
   getGetProjectQueryKey,
   getListPropertiesQueryKey,
   getExportProjectQueryKey,
+  getExportConversationQueryKey,
   getListProjectsQueryKey,
   getGetModeratorStatusQueryKey,
 } from "@workspace/api-client-react";
@@ -47,6 +49,14 @@ export default function ProjectWorkspace() {
   const setReady = useSetReady();
   const exportQuery = useExportProject(projectId, { 
     query: { enabled: false, queryKey: getExportProjectQueryKey(projectId) } 
+  });
+  // Second file the same Export click downloads: the full moderator
+  // conversation log in a flat, analysis-ready schema (see
+  // /projects/:id/export-conversation on the server) -- a separate query
+  // from the ontology export above since it has its own gate (none) and
+  // shape entirely unrelated to the agreed-ontology payload.
+  const exportConversationQuery = useExportConversation(projectId, {
+    query: { enabled: false, queryKey: getExportConversationQueryKey(projectId) },
   });
   
   const meMember = project?.members.find(m => m.userId === me?.id);
@@ -233,22 +243,37 @@ export default function ProjectWorkspace() {
     );
   };
 
+  // Triggers a browser download of a JSON blob -- shared by both files this
+  // button produces so the two downloads behave identically (same
+  // pretty-printing, same object-URL lifecycle).
+  const downloadJson = (data: unknown, filename: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleExport = async () => {
+    const slug = project?.name.replace(/\s+/g, '-').toLowerCase() || 'project';
     try {
       const { data } = await exportQuery.refetch();
-      if (data) {
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `ontology-export-${project?.name.replace(/\s+/g, '-').toLowerCase() || 'project'}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }
+      if (data) downloadJson(data, `ontology-export-${slug}.json`);
     } catch (e) {
-      console.error("Export failed", e);
+      console.error("Ontology export failed", e);
+    }
+    // Independent of the ontology export above -- the conversation log has
+    // no agreement gate, so it's fetched and downloaded as a second file
+    // regardless of whether the ontology export itself succeeded.
+    try {
+      const { data } = await exportConversationQuery.refetch();
+      if (data) downloadJson(data, `conversation-export-${slug}.json`);
+    } catch (e) {
+      console.error("Conversation export failed", e);
     }
   };
 
@@ -446,11 +471,11 @@ export default function ProjectWorkspace() {
       <footer className="h-16 shrink-0 bg-card border-t flex items-center justify-center px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20">
         <Button
           onClick={handleExport}
-          disabled={!workspaceFullyAgreed || exportQuery.isFetching}
-          title={workspaceFullyAgreed ? "Download the fully agreed ontology" : "Export unlocks once every property has full agreement"}
+          disabled={!workspaceFullyAgreed || exportQuery.isFetching || exportConversationQuery.isFetching}
+          title={workspaceFullyAgreed ? "Download the fully agreed ontology and the full conversation history" : "Export unlocks once every property has full agreement"}
           className="gap-2 bg-foreground text-background hover:bg-foreground/90 shadow-md transition-opacity disabled:opacity-40"
         >
-          {exportQuery.isFetching ? (
+          {exportQuery.isFetching || exportConversationQuery.isFetching ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Download className="w-4 h-4" />

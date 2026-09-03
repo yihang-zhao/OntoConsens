@@ -393,6 +393,53 @@ export const ExportProjectResponse = zod.object({
 
 
 /**
+ * @summary Export the full moderator conversation history (transcripts, system events, and interventions) as flat, analysis-ready JSON. Unlike /export, available at any point in the project's lifecycle -- not gated on full agreement.
+ */
+export const ExportConversationParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const ExportConversationResponse = zod.object({
+  "meta": zod.object({
+  "projectId": zod.number().int(),
+  "projectName": zod.string(),
+  "exportedAt": zod.coerce.date(),
+  "memberCount": zod.number().int().describe('The project\'s specified number of members (not just however many have joined).'),
+  "members": zod.array(zod.object({
+  "userId": zod.number().int(),
+  "username": zod.string(),
+  "colorSlot": zod.number().int()
+}))
+}),
+  "messageCount": zod.number().int(),
+  "messages": zod.array(zod.object({
+  "sequence": zod.number().int().describe('1-based position in the conversation, in chronological order.'),
+  "id": zod.number().int(),
+  "type": zod.enum(['intro', 'system', 'transcript', 'intervention']),
+  "timestamp": zod.coerce.date(),
+  "speakerUserId": zod.number().int().nullable().describe('Null for moderator-authored messages (intro, intervention).'),
+  "speakerUsername": zod.string().nullable(),
+  "content": zod.string().describe('Plain-text content -- always populated, even for a structured intervention.'),
+  "intervention": zod.object({
+  "matched": zod.boolean().describe('Whether the discussion resolved to a real class\/property in this project\'s workspace.'),
+  "classId": zod.number().int().nullable(),
+  "propertyId": zod.number().int().nullable(),
+  "className": zod.string().nullable(),
+  "propertyName": zod.string().nullable(),
+  "examples": zod.array(zod.object({
+  "text": zod.string(),
+  "by": zod.array(zod.string()).describe('Usernames of every member who made this same point, in the order first raised.')
+})),
+  "counterexamples": zod.array(zod.object({
+  "text": zod.string(),
+  "by": zod.array(zod.string()).describe('Usernames of every member who made this same point, in the order first raised.')
+}))
+}).nullable().describe('Present only for type \"intervention\"; null for every other message type.')
+}))
+})
+
+
+/**
  * @summary Get whether the AI moderator is on for the CURRENT member, and whether it's usable at all for this project
  */
 export const GetModeratorStatusParams = zod.object({

@@ -154,4 +154,84 @@ router.post("/projects/:id/moderator/disable", async (req, res) => {
 // OpenAI's Realtime API finalizes each utterance) -- there is no longer a
 // REST endpoint for a client to submit a finalized transcript itself.
 
+// A second, separate download from the same Export action (see the
+// project page's handleExport) -- the full moderator conversation log,
+// reshaped into a flat, analysis-ready schema rather than the raw
+// SerializedChatMessage shape used to drive the live chat UI. Every row
+// carries the exact same set of keys regardless of message type (an
+// `intervention` object present only for that type, null otherwise) so
+// the file loads cleanly into a dataframe/table without per-row branching.
+// Unlike /export (which requires full agreement before it's even
+// reachable from the UI), this has no such gate -- the conversation record
+// is valuable for analysis at any point in a project's lifecycle.
+router.get("/projects/:id/export-conversation", async (req, res) => {
+  const userId = req.userId!;
+  const projectId = Number(req.params.id);
+
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, projectId),
+  });
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const membership = await getMembership(projectId, userId);
+  if (!membership) {
+    res.status(403).json({ error: "You are not a member of this project" });
+    return;
+  }
+
+  const [messages, members] = await Promise.all([
+    listChatMessages(projectId),
+    db.query.projectMembersTable.findMany({
+      where: eq(projectMembersTable.projectId, projectId),
+    }),
+  ]);
+  const usersById = new Map(
+    (
+      await Promise.all(
+        members.map((m) => db.query.usersTable.findFirst({ where: eq(usersTable.id, m.userId) })),
+      )
+    )
+      .filter((u): u is NonNullable<typeof u> => u !== undefined)
+      .map((u) => [u.id, u]),
+  );
+
+  res.json({
+    meta: {
+      projectId,
+      projectName: project.name,
+      exportedAt: new Date().toISOString(),
+      memberCount: project.maxMembers,
+      members: members.map((m) => ({
+        userId: m.userId,
+        username: usersById.get(m.userId)?.username ?? "unknown",
+        colorSlot: m.colorSlot,
+      })),
+    },
+    messageCount: messages.length,
+    messages: messages.map((m, index) => ({
+      sequence: index + 1,
+      id: m.id,
+      type: m.type,
+      timestamp: m.createdAt,
+      speakerUserId: m.userId,
+      speakerUsername: m.username,
+      content: m.content,
+      intervention:
+        m.type === "intervention"
+          ? {
+              matched: m.matched ?? false,
+              classId: m.classId,
+              propertyId: m.propertyId,
+              className: m.className,
+              propertyName: m.propertyName,
+              examples: m.examples ?? [],
+              counterexamples: m.counterexamples ?? [],
+            }
+          : null,
+    })),
+  });
+});
+
 export default router;
