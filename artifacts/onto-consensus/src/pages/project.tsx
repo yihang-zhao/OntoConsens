@@ -397,7 +397,7 @@ export default function ProjectWorkspace() {
           the moderator chat can't all fit side by side, so only one is
           shown at a time here. All panes stay mounted underneath; this
           only toggles which one is visible. */}
-      <div className="xl:hidden flex items-center gap-1.5 px-4 pt-3 shrink-0">
+      <div className="xl:hidden flex flex-wrap items-center gap-1.5 px-4 pt-3 shrink-0">
         <button
           type="button"
           onClick={() => setMobileView("guide")}
