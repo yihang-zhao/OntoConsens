@@ -34,7 +34,7 @@ const STEPS: GuideStep[] = [
   {
     title: "Export",
     description:
-      "Click the export button at the bottom center of the page, where the current workspace along with the discussion history will be downloaded into 2 independent JSON files that can be reused for later OE tasks.",
+      "Click the export button at the bottom center of the page, where the current shared workspace along with the discussion history will be downloaded into 2 independent JSON files that can be reused for later tasks.",
   },
 ];
 
