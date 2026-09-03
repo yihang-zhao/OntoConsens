@@ -27,7 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check, KeyRound, Loader2 } from "lucide-react";
+import { Network, Plus, Users, ArrowRight, FolderPlus, Trash2, LogOut, Upload, FileText, Copy, Check, KeyRound, Loader2, Sparkles } from "lucide-react";
 
 const apiKeySchema = z.object({
   apiKey: z.string().min(1, "An OpenAI API key is required"),
@@ -487,10 +487,18 @@ export default function Dashboard() {
                     <CardHeader>
                       <CardTitle className="group-hover:text-primary transition-colors line-clamp-1 pr-6">{project.name}</CardTitle>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="space-y-2">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Users className="w-4 h-4" />
                         <span>{project.memberCount} / {project.maxMembers} members</span>
+                      </div>
+                      <div
+                        className={`flex items-center gap-2 text-sm ${
+                          project.moderatorEnabled ? "text-muted-foreground" : "text-muted-foreground/50"
+                        }`}
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        <span>AI moderator {project.moderatorEnabled ? "enabled" : "disabled"}</span>
                       </div>
                     </CardContent>
                     <CardFooter className="pt-4 border-t bg-muted/20">
