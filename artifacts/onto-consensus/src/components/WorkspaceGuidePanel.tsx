@@ -67,20 +67,27 @@ export function WorkspaceGuidePanel({
     <aside
       className={`w-full lg:w-96 shrink-0 h-full flex-col border rounded-2xl shadow-sm bg-card overflow-hidden ${className ?? "hidden lg:flex"}`}
     >
-      {/* No header row here on purpose: the top of the first step below
-          lines up with the top of the "Discussion" panel's title, and the
-          bottom of the last step lines up with the bottom of its
-          microphone toggle -- both computed from that panel's exact
-          spacing (h-14 title vertical-centers text ~18px from the top;
-          its mic row sits ~12px above the panel's bottom edge). */}
-      <div className="h-full flex flex-col px-4 pt-[18px] pb-3">
+      <div className="flex items-center justify-center h-14 px-4 border-b shrink-0">
+        <span className="font-semibold text-sm">User Guide</span>
+      </div>
+
+      {/* pt-3 matches the top padding of the Discussion panel's own
+          scrollable message area, so step 1 lines up with its first
+          "AI moderator" message label. pb-3 matches the bottom padding
+          of that panel's mic-toggle footer, so the last step's bottom
+          lines up with the bottom of the microphone toggle. The gaps
+          between steps are the flex-1 spacer divs below (holding the
+          arrows), not the step blocks themselves, so all three gaps
+          share the leftover vertical space equally regardless of how
+          long each step's description is. */}
+      <div className="flex-1 min-h-0 flex flex-col px-4 pt-3 pb-3">
         {STEPS.map((step, i) => {
           const isDone = i < current;
           const isCurrent = i === current;
           const isNext = i === current + 1;
           return (
-            <div key={step.title} className="flex-1 min-h-0 flex flex-col justify-center">
-              <div className="px-3">
+            <div key={step.title} className="contents">
+              <div className="px-3 shrink-0">
                 <div className="flex items-center gap-2 mb-1">
                   <div
                     className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold ${
@@ -117,7 +124,7 @@ export function WorkspaceGuidePanel({
               </div>
 
               {i < STEPS.length - 1 && (
-                <div className="flex justify-center py-1.5">
+                <div className="flex-1 min-h-0 flex items-center justify-center">
                   <ArrowDown className={`w-4 h-4 ${isDone ? "text-green-600" : "text-muted-foreground/40"}`} />
                 </div>
               )}
