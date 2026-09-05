@@ -1,25 +1,12 @@
 import type { IncomingMessage } from "node:http";
 import crypto from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import { eq } from "drizzle-orm";
-import { db, projectsTable } from "@workspace/db";
 import {
   appendAudioChunk,
   closeTranscriptionSession,
   openTranscriptionSession,
 } from "./realtimeTranscription";
 import { logger } from "./logger";
-
-// Deliberately a direct DB read rather than importing from
-// moderatorEngine.ts, which itself imports broadcastToProject from this
-// file -- routing through it here would create a circular import.
-async function isProjectExported(projectId: number): Promise<boolean> {
-  const project = await db.query.projectsTable.findFirst({
-    where: eq(projectsTable.id, projectId),
-    columns: { exportedAt: true },
-  });
-  return Boolean(project?.exportedAt);
-}
 
 interface Ticket {
   userId: number;
@@ -160,13 +147,7 @@ export type ServerEvent =
   // clients to show the "AI moderator is typing" indicator for the short
   // beat before the real "moderator_chat_message" (type "intervention")
   // follows. See generateIntervention in moderatorEngine.ts.
-  | { type: "moderator_intervention_typing" }
-  // Broadcast the instant any member's Export click stamps
-  // projects.exportedAt (see GET /projects/:id/export). Every open tab uses
-  // this to immediately stop its mic/AI-moderator UI and treat the
-  // persisted conversation as final, instead of waiting on the next 10s
-  // project poll.
-  | { type: "project_exported" };
+  | { type: "moderator_intervention_typing" };
 
 function onlineUserIds(projectId: number): number[] {
   const ids = new Set<number>();
@@ -328,14 +309,8 @@ export function setupWebSocketServer(): WebSocketServer {
       ) {
         // Fire-and-forget: audio chunks that arrive before this resolves are
         // buffered by appendAudioChunk until the session is ready (see
-        // realtimeTranscription.ts). isProjectExported is checked here too
-        // (not just at the REST enable route) since a mic that was already
-        // on when the export happened would otherwise keep sending
-        // "mic_start" on reconnects.
-        isProjectExported(ticket.projectId).then((exported) => {
-          if (exported) return;
-          return openTranscriptionSession(ticket.projectId, ticket.userId);
-        }).catch((err) => {
+        // realtimeTranscription.ts).
+        openTranscriptionSession(ticket.projectId, ticket.userId).catch((err) => {
           logger.error({ err, projectId: ticket.projectId, userId: ticket.userId }, "Failed to open transcription session");
         });
       } else if (

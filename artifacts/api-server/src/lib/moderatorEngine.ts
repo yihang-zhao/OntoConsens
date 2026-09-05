@@ -369,15 +369,6 @@ export async function recordTranscriptChunk(
   utteranceId?: number,
 ): Promise<boolean> {
   const committed = await db.transaction(async (tx) => {
-    const [project] = await tx
-      .select({ exportedAt: projectsTable.exportedAt })
-      .from(projectsTable)
-      .where(eq(projectsTable.id, projectId));
-    // Once exported, the conversation is frozen -- reject anything still in
-    // flight (e.g. a transcription request that started just before the
-    // export click landed) even if the participant row itself still looks
-    // active.
-    if (project?.exportedAt) return false;
     const [current] = await tx
       .select()
       .from(moderatorParticipantsTable)

@@ -92,11 +92,7 @@ export default function ProjectWorkspace() {
     query: {
       queryKey: getGetModeratorStatusQueryKey(projectId),
       enabled: Boolean(project && meMember && allReady),
-      // Once exported the AI moderator can never run again for this
-      // project (see the api-server's export/moderator gating) -- polling
-      // its on/off status forever after that point would just be a
-      // pointless background request every 10s.
-      refetchInterval: project?.exportedAt ? false : 10_000,
+      refetchInterval: 10_000,
     },
   });
   // "Quitting" the project (heading back to the dashboard) should never
@@ -213,17 +209,6 @@ export default function ProjectWorkspace() {
     onModeratorInterventionTyping: () => {
       setModeratorTyping(true);
     },
-    onProjectExported: () => {
-      // Refetching (not just invalidating) means project.exportedAt is
-      // guaranteed to be set by the time this resolves -- everything that
-      // gates on it (the mic switch, moderator status polling below) reacts
-      // on the very next render, without a window where a stale cached
-      // project is still read as "not exported yet". Actually stopping this
-      // member's own mic (if it was on) happens in the effect below, once
-      // project.exportedAt itself flips -- sendMicStop isn't available yet
-      // at this point since it comes back from this very hook call.
-      queryClient.refetchQueries({ queryKey: getGetProjectQueryKey(projectId) });
-    },
   });
 
   // "Live" is only meaningful as a brief confirmation right after connecting —
@@ -250,29 +235,6 @@ export default function ProjectWorkspace() {
       if (timer) clearTimeout(timer);
     };
   }, [syncStatus]);
-
-  // Once this project has been exported (consensus reached, frozen
-  // forever -- see the "Export" button below), this member's own mic must
-  // stop immediately if it was on: the server has already torn down (and
-  // will permanently refuse to reopen) its transcription session, so
-  // there's nothing left to stream to. Runs once per project ever
-  // reaching that state, not on every render.
-  const stoppedMicForExportRef = useRef(false);
-  useEffect(() => {
-    if (!project?.exportedAt) {
-      stoppedMicForExportRef.current = false;
-      return;
-    }
-    if (stoppedMicForExportRef.current) return;
-    if (!moderatorStatus?.active) return;
-    stoppedMicForExportRef.current = true;
-    sendMicStop().finally(() => {
-      disableModerator.mutate(
-        { id: projectId },
-        { onSuccess: (data) => queryClient.setQueryData(getGetModeratorStatusQueryKey(projectId), data) },
-      );
-    });
-  }, [project?.exportedAt, moderatorStatus?.active, sendMicStop, disableModerator, projectId, queryClient]);
 
   const handleMarkReady = () => {
     if (isReady) return;
@@ -557,7 +519,6 @@ export default function ProjectWorkspace() {
             moderatorErrorMessage={moderatorErrorMessage}
             onDismissError={() => setModeratorErrorMessage(null)}
             moderatorTyping={moderatorTyping}
-            exported={Boolean(project.exportedAt)}
             className={
               mobileView === "chat"
                 ? "w-full flex"

@@ -68,13 +68,6 @@ interface ModeratorChatPanelProps {
    *  component has no concept of "mobile view" itself, it just accepts
    *  whatever display it's told to use). */
   className?: string;
-  /** True once this project has been exported (project.exportedAt is set).
-   *  Consensus was reached and permanently frozen at that point -- the AI
-   *  moderator can never run again server-side, so this hides/disables the
-   *  mic control entirely rather than leaving a switch that would just
-   *  error on every click. The message list below still renders exactly
-   *  the history that was frozen at export time. */
-  exported?: boolean;
 }
 
 // Every message (transcript, intro/system, and AI-moderator intervention
@@ -120,15 +113,10 @@ export function ModeratorChatPanel({
   onDismissError,
   moderatorTyping,
   className,
-  exported = false,
 }: ModeratorChatPanelProps) {
   const queryClient = useQueryClient();
   const configure = useConfigureModerator();
   const disable = useDisableModerator();
-  // Once exported, this member's own mic must never be (re-)armed, even if
-  // moderatorActive still reads true from a stale cache -- useModeratorAudio
-  // below is gated on this, not just the raw moderatorActive prop.
-  const micActive = moderatorActive && !exported;
 
   const { data: history } = useListModeratorChatMessages(projectId, {
     query: { queryKey: getListModeratorChatMessagesQueryKey(projectId) },
@@ -165,7 +153,7 @@ export function ModeratorChatPanel({
   // its own, so there's no per-member language picker to manage.
   const { micError } = useModeratorAudio({
     projectId,
-    active: micActive,
+    active: moderatorActive,
     onVolume,
     sendAudioChunk,
     sendMicStart,
@@ -197,14 +185,13 @@ export function ModeratorChatPanel({
   // user, rather than leaving it in a state that claims to be on but isn't
   // actually capturing anything.
   useEffect(() => {
-    if (moderatorActive && micError && !exported) {
+    if (moderatorActive && micError) {
       disable.mutate({ id: projectId }, { onSuccess: invalidateStatus });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moderatorActive, micError, exported]);
+  }, [moderatorActive, micError]);
 
   const handleToggleClick = () => {
-    if (exported) return;
     if (moderatorActive) {
       // Pull out whatever's mid-utterance (if anything) and wait for its
       // submission to settle BEFORE deactivating this member server-side.
@@ -576,25 +563,19 @@ export function ModeratorChatPanel({
             {(configure.error as any)?.data?.error || "Could not turn on the AI moderator."}
           </p>
         )}
-        {exported ? (
-          <p className="text-[11px] font-medium text-muted-foreground bg-muted/50 border rounded-lg px-2.5 py-1.5">
-            Consensus reached — this project has been exported, so the AI moderator has stopped and this conversation is now final.
-          </p>
-        ) : (
-          <div className="flex items-center gap-2 bg-muted/50 border rounded-full pl-3 pr-2.5 py-2 min-w-0">
-            {moderatorActive ? (
-              <Mic className="w-4 h-4 text-primary shrink-0" />
-            ) : (
-              <MicOff className="w-4 h-4 text-muted-foreground shrink-0" />
-            )}
-            <span className="flex-1 text-xs font-medium text-muted-foreground truncate">Microphone</span>
-            <Switch
-              checked={moderatorActive}
-              onCheckedChange={handleToggleClick}
-              disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
-            />
-          </div>
-        )}
+        <div className="flex items-center gap-2 bg-muted/50 border rounded-full pl-3 pr-2.5 py-2 min-w-0">
+          {moderatorActive ? (
+            <Mic className="w-4 h-4 text-primary shrink-0" />
+          ) : (
+            <MicOff className="w-4 h-4 text-muted-foreground shrink-0" />
+          )}
+          <span className="flex-1 text-xs font-medium text-muted-foreground truncate">Microphone</span>
+          <Switch
+            checked={moderatorActive}
+            onCheckedChange={handleToggleClick}
+            disabled={disable.isPending || configure.isPending || (!moderatorActive && !moderatorConfigured)}
+          />
+        </div>
       </div>
     </aside>
   );

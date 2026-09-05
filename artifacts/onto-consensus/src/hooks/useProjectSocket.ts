@@ -67,8 +67,7 @@ type ServerEvent =
   | { type: "moderator_chat_message"; message: ModeratorChatMessage }
   | { type: "moderator_error"; message: string }
   | { type: "moderator_intervention_typing" }
-  | { type: "mic_stop_ack" }
-  | { type: "project_exported" };
+  | { type: "mic_stop_ack" };
 
 export interface LiveCaption {
   userId: number;
@@ -88,10 +87,6 @@ interface UseProjectSocketOptions {
   onModeratorChatMessage?: (message: ModeratorChatMessage) => void;
   onModeratorError?: (message: string) => void;
   onModeratorInterventionTyping?: () => void;
-  /** The instant any member's Export click stamps projects.exportedAt on
-   *  the server -- lets every open tab react immediately (stop its own
-   *  mic, refresh project state) instead of waiting on the next 10s poll. */
-  onProjectExported?: () => void;
 }
 
 // Speaker volume readings older than this are dropped even if no new
@@ -136,7 +131,6 @@ export function useProjectSocket({
   onModeratorChatMessage,
   onModeratorError,
   onModeratorInterventionTyping,
-  onProjectExported,
 }: UseProjectSocketOptions) {
   const createTicket = useCreateWsTicket();
   const socketRef = useRef<WebSocket | null>(null);
@@ -167,7 +161,6 @@ export function useProjectSocket({
     onModeratorChatMessage,
     onModeratorError,
     onModeratorInterventionTyping,
-    onProjectExported,
   });
   callbacksRef.current = {
     onProjectChanged,
@@ -176,7 +169,6 @@ export function useProjectSocket({
     onModeratorChatMessage,
     onModeratorError,
     onModeratorInterventionTyping,
-    onProjectExported,
   };
 
   useEffect(() => {
@@ -319,9 +311,6 @@ export function useProjectSocket({
             break;
           case "mic_stop_ack":
             micStopAckRef.current?.();
-            break;
-          case "project_exported":
-            callbacksRef.current.onProjectExported?.();
             break;
         }
       });

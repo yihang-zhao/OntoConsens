@@ -443,14 +443,14 @@ router.get("/projects/:id/export", async (req, res) => {
     return;
   }
 
-  // The Export button click is what permanently freezes this project's AI
-  // moderator: the very first time ANYONE successfully hits this route,
-  // stamp exportedAt (idempotent -- later calls just re-download the same
-  // frozen export). From this point on moderatorEngine.ts and wsHub.ts's
-  // mic_start handling all check this column and refuse to run the AI
-  // again, and the persisted chat history is exactly what's shown to every
-  // member from here on. Broadcasting it lets every open tab react
-  // immediately instead of waiting on the next 10s poll.
+  // The Export button click is what permanently freezes AI interventions
+  // for this project: the very first time ANYONE successfully hits this
+  // route, stamp exportedAt (idempotent -- later calls just re-download
+  // the same frozen export). From this point on generateIntervention in
+  // moderatorEngine.ts refuses to call the AI again for this project.
+  // Mic access, transcript recording, and manually toggling one's own
+  // participation on/off are all unaffected -- only the AI intervention
+  // API call itself is blocked.
   if (!project.exportedAt) {
     project.exportedAt = new Date();
     await db
@@ -458,7 +458,6 @@ router.get("/projects/:id/export", async (req, res) => {
       .set({ exportedAt: project.exportedAt })
       .where(eq(projectsTable.id, projectId));
     clearModeratorSilenceTimer(projectId);
-    broadcastToProject(projectId, { type: "project_exported" });
   }
 
   // Full agreement requires every SPECIFIED member to agree, not just
