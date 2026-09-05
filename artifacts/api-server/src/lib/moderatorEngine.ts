@@ -333,6 +333,20 @@ export async function postRecordingStoppedMessage(projectId: number, userId: num
   });
 }
 
+// Posted exactly once, the first time a project is exported (see the
+// GET /projects/:id/export route) -- always recorded regardless of whether
+// this project has the AI moderator enabled, so it shows up in the
+// conversation-export file either way. ModeratorChatPanel's own history
+// filter is what keeps it out of the live chat UI for AI-disabled
+// projects -- it is never filtered out here.
+export async function postConsensusReachedMessage(projectId: number): Promise<void> {
+  await postChatMessage(projectId, {
+    type: "export_notice",
+    userId: null,
+    content: "Consensus has been reached. The AI moderator has been turned off and will not be restarted.",
+  });
+}
+
 // Mirrors a transcribed chunk into the shared chat log the moment it's
 // recorded, so every member sees it live regardless of their own mic state.
 async function postTranscriptMessage(

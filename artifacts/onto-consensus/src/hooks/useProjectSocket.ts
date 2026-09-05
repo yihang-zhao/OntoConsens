@@ -27,7 +27,7 @@ export interface ModeratorInterventionEntry {
 // fetched from GET /projects/:id/moderator/messages render identically.
 export interface ModeratorChatMessage {
   id: number;
-  type: "intro" | "system" | "transcript" | "intervention";
+  type: "intro" | "system" | "transcript" | "intervention" | "export_notice";
   userId: number | null;
   username: string | null;
   colorSlot: number | null;

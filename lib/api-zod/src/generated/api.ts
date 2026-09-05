@@ -424,7 +424,7 @@ export const ExportConversationResponse = zod.object({
   "messages": zod.array(zod.object({
   "sequence": zod.number().int().describe('1-based position in the conversation, in chronological order.'),
   "id": zod.number().int(),
-  "type": zod.enum(['intro', 'system', 'transcript', 'intervention']),
+  "type": zod.enum(['intro', 'system', 'transcript', 'intervention', 'export_notice']),
   "timestamp": zod.coerce.date(),
   "speakerUserId": zod.number().int().nullable().describe('Null for moderator-authored messages (intro, intervention).'),
   "speakerUsername": zod.string().nullable(),
@@ -501,7 +501,7 @@ export const ListModeratorChatMessagesParams = zod.object({
 export const ListModeratorChatMessagesResponse = zod.object({
   "messages": zod.array(zod.object({
   "id": zod.number().int(),
-  "type": zod.enum(['intro', 'system', 'transcript', 'intervention']).describe('\"intro\" is the moderator\'s one-time welcome message. \"system\" is an ephemeral-looking but persisted event like a member enabling their mic. \"transcript\" is a live-transcribed speech chunk from a member. \"intervention\" is a stalled-discussion analysis posted by the moderator itself.'),
+  "type": zod.enum(['intro', 'system', 'transcript', 'intervention', 'export_notice']).describe('\"intro\" is the moderator\'s one-time welcome message. \"system\" is an ephemeral-looking but persisted event like a member enabling their mic. \"transcript\" is a live-transcribed speech chunk from a member. \"intervention\" is a stalled-discussion analysis posted by the moderator itself. \"export_notice\" is the one-time notice posted the first time a project is exported, stating that consensus was reached and the AI moderator has stopped for good; it is always recorded (so it appears in the conversation-export file) but only rendered in the live chat UI for AI-enabled projects.'),
   "userId": zod.number().int().nullable().describe('Null for moderator-authored messages (intro, intervention).'),
   "username": zod.string().nullable(),
   "colorSlot": zod.number().int().nullable(),

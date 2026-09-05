@@ -127,7 +127,7 @@ export interface ModeratorInterventionEntry {
 }
 
 /**
- * "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself.
+ * "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself. "export_notice" is the one-time notice posted the first time a project is exported, stating that consensus was reached and the AI moderator has stopped for good; it is always recorded (so it appears in the conversation-export file) but only rendered in the live chat UI for AI-enabled projects.
  */
 export type ModeratorChatMessageType = typeof ModeratorChatMessageType[keyof typeof ModeratorChatMessageType];
 
@@ -137,11 +137,12 @@ export const ModeratorChatMessageType = {
   system: 'system',
   transcript: 'transcript',
   intervention: 'intervention',
+  export_notice: 'export_notice',
 } as const;
 
 export interface ModeratorChatMessage {
   id: number;
-  /** "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself. */
+  /** "intro" is the moderator's one-time welcome message. "system" is an ephemeral-looking but persisted event like a member enabling their mic. "transcript" is a live-transcribed speech chunk from a member. "intervention" is a stalled-discussion analysis posted by the moderator itself. "export_notice" is the one-time notice posted the first time a project is exported, stating that consensus was reached and the AI moderator has stopped for good; it is always recorded (so it appears in the conversation-export file) but only rendered in the live chat UI for AI-enabled projects. */
   type: ModeratorChatMessageType;
   /** Null for moderator-authored messages (intro, intervention). */
   userId: number | null;
@@ -286,6 +287,7 @@ export const ConversationExportMessageType = {
   system: 'system',
   transcript: 'transcript',
   intervention: 'intervention',
+  export_notice: 'export_notice',
 } as const;
 
 export interface ConversationExportMessage {

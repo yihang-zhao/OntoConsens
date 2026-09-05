@@ -174,7 +174,13 @@ export type ModeratorChatMessageType =
   | "intro"
   | "system"
   | "transcript"
-  | "intervention";
+  | "intervention"
+  // Posted exactly once, the first time a project is exported -- states
+  // that consensus was reached and the AI moderator is off for good. Always
+  // recorded (so it appears in the conversation-export file for every
+  // project), but only rendered in the live chat UI when the project has
+  // the AI moderator enabled -- see ModeratorChatPanel's history filter.
+  | "export_notice";
 
 // One entry per distinct point raised about a property -- "by" lists every
 // member (by username) who made that same underlying point, in the order

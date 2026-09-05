@@ -14,4 +14,5 @@ export const ConversationExportMessageType = {
   system: 'system',
   transcript: 'transcript',
   intervention: 'intervention',
+  export_notice: 'export_notice',
 } as const;

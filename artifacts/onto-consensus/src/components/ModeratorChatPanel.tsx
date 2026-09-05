@@ -134,7 +134,13 @@ export function ModeratorChatPanel({
     // single point that hides them from the live chat UI when disabled;
     // they remain untouched in the separate conversation export.
     if (moderatorEnabled) return merged;
-    return merged.filter((m) => m.type !== "intro" && m.type !== "intervention");
+    // "export_notice" (the one-time "consensus reached, AI moderator
+    // stopped" message) is meaningless in an AI-disabled project -- there
+    // was no AI moderator to stop. It's still always recorded (see
+    // postConsensusReachedMessage) so it appears in the separate
+    // conversation-export file either way; this is what keeps it out of
+    // the live chat UI here specifically.
+    return merged.filter((m) => m.type !== "intro" && m.type !== "intervention" && m.type !== "export_notice");
   }, [history, liveMessages, moderatorEnabled]);
 
   const invalidateStatus = () =>
@@ -673,6 +679,22 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         members={members}
         createdAt={message.createdAt}
       />
+    );
+  }
+
+  // The one-time "consensus reached, AI moderator stopped" notice -- a
+  // permanent record of what happened, not something the moderator is
+  // "saying", so it gets its own centered, quieter treatment rather than
+  // the AI-moderator speech bubble used for intro/intervention messages.
+  if (message.type === "export_notice") {
+    return (
+      <div className="flex items-center gap-2 py-1 px-2">
+        <div className="flex-1 h-px bg-border" />
+        <p className="text-[11px] font-medium text-muted-foreground text-center whitespace-pre-wrap">
+          {message.content}
+        </p>
+        <div className="flex-1 h-px bg-border" />
+      </div>
     );
   }
 

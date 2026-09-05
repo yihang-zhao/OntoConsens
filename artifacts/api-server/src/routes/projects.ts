@@ -17,7 +17,7 @@ import { extractOntologyWithAI, getUserApiKey } from "../lib/aiOntologyExtractor
 import { issueTicket, issueUserTicket, broadcastToProject, broadcastToUsers } from "../lib/wsHub";
 import { getPropertyQuota, mergeDuplicatePropertiesOnReady } from "./properties";
 import { ensureModeratorIntroMessage } from "../lib/moderatorEngine";
-import { clearModeratorSilenceTimer } from "../lib/moderatorEngine";
+import { clearModeratorSilenceTimer, postConsensusReachedMessage } from "../lib/moderatorEngine";
 
 const router: IRouter = Router();
 const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } });
@@ -458,6 +458,10 @@ router.get("/projects/:id/export", async (req, res) => {
       .set({ exportedAt: project.exportedAt })
       .where(eq(projectsTable.id, projectId));
     clearModeratorSilenceTimer(projectId);
+    // Always recorded (shows up in the conversation-export file either
+    // way) -- ModeratorChatPanel's own filter is what keeps it out of the
+    // live chat UI for AI-disabled projects.
+    await postConsensusReachedMessage(projectId);
   }
 
   // Full agreement requires every SPECIFIED member to agree, not just

@@ -114,7 +114,7 @@ export type ServerEvent =
       // /projects/:id/moderator/messages returns for reload/rejoin.
       message: {
         id: number;
-        type: "intro" | "system" | "transcript" | "intervention";
+        type: "intro" | "system" | "transcript" | "intervention" | "export_notice";
         userId: number | null;
         username: string | null;
         colorSlot: number | null;
