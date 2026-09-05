@@ -563,6 +563,37 @@ export function GraphCanvas({
     [project, nodeSize],
   );
 
+  // The root class/classes (no incoming parent relation) -- used to reset
+  // the view whenever the member enters (or re-enters) either the
+  // individual or the shared workspace, so they always land on the same
+  // starting point instead of wherever their pan/zoom happened to be left.
+  const rootClassIds = useMemo(() => {
+    const childIds = new Set((project?.relations ?? []).map((rel) => rel.childId));
+    return new Set((project?.classes ?? []).filter((cls) => !childIds.has(cls.id)).map((cls) => cls.id));
+  }, [project]);
+
+  // Tracks which "workspace" (individual vs shared) the view was last
+  // centered for, so centering only fires once per entry into a workspace
+  // rather than on every re-render. `pendingCenterModeRef` holds a mode
+  // that still needs centering because the canvas wasn't visible/measurable
+  // yet (e.g. hidden behind another mobile tab) -- the ResizeObserver below
+  // retries it once the canvas actually gets a size.
+  const centeredModeRef = useRef<string | null>(null);
+  const pendingCenterModeRef = useRef<string | null>(null);
+
+  const centerOnRoot = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return false;
+    const rect = container.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    const roots = laidOut.filter((cls) => rootClassIds.has(cls.id));
+    if (roots.length === 0) return false;
+    const centerX = roots.reduce((sum, cls) => sum + cls.x + 40 + nodeSize / 2, 0) / roots.length;
+    const centerY = roots.reduce((sum, cls) => sum + cls.y + 40 + nodeSize / 2, 0) / roots.length;
+    commitView({ x: rect.width / 2 - centerX, y: rect.height / 2 - centerY, zoom: 1 });
+    return true;
+  }, [laidOut, rootClassIds, nodeSize, commitView]);
+
   const propertiesByClass = useMemo(() => {
     const map = new Map<number, Property[]>();
     for (const property of properties ?? []) {
@@ -746,7 +777,45 @@ export function GraphCanvas({
   useEffect(() => {
     setAddingToClass(null);
     setDraftName("");
+    // A fresh project means a fresh view -- forget whatever workspace
+    // mode was previously centered so the very first render of this
+    // project's individual workspace gets centered too.
+    centeredModeRef.current = null;
+    pendingCenterModeRef.current = null;
   }, [projectId]);
+
+  // Re-center on the root class whenever the member enters a workspace
+  // mode they haven't been centered for yet: the very first time this
+  // canvas mounts (individual workspace), and again the moment the shared
+  // workspace opens (sharedModeEnabled flips true). If the canvas can't be
+  // measured yet (e.g. it's hidden behind the Guide/Chat tab on a narrow
+  // screen), the attempt is remembered and retried by the ResizeObserver
+  // below as soon as the canvas actually gets laid out with a real size.
+  useEffect(() => {
+    const modeKey = sharedModeEnabled ? "shared" : "individual";
+    if (centeredModeRef.current === modeKey) return;
+    if (centerOnRoot()) {
+      centeredModeRef.current = modeKey;
+      pendingCenterModeRef.current = null;
+    } else {
+      pendingCenterModeRef.current = modeKey;
+    }
+  }, [sharedModeEnabled, centerOnRoot]);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const pending = pendingCenterModeRef.current;
+      if (!pending || pending === centeredModeRef.current) return;
+      if (centerOnRoot()) {
+        centeredModeRef.current = pending;
+        pendingCenterModeRef.current = null;
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [centerOnRoot]);
 
   // React (and browsers generally) treat delegated wheel/touchstart/
   // touchmove listeners as passive by default for scroll-performance
