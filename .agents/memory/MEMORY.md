@@ -22,3 +22,4 @@
 - [Multi-speaker live-caption fanout needs throttling](multi-speaker-caption-fanout-throttle.md) — unthrottled per-onresult broadcasts + unmemoized bubbles multiply badly with 2+ speakers; bottleneck is client render, not backend/LLM concurrency.
 - [OpenAI realtime transcription session setup](openai-realtime-transcription-session.md) — session config goes in `session.update` after connecting, not the URL; server-side pipeline kills a whole class of browser-recognizer bugs.
 - [Moderator intervention as one combined OpenAI call](moderator-single-call-topic-extraction.md) — pre-fetch per-property EXISTING STATE so topic ID + extraction always happen in a single call.
+- [Export permanently freezes the AI moderator](export-freezes-ai-moderator.md) — a one-time "consensus reached" gate must be checked at every independent AI-trigger entry point, not just the client button.

@@ -38,6 +38,15 @@ export const projectsTable = pgTable("projects", {
   // this project. Defaults to true both for the column default and for rows
   // created before this setting existed, matching prior behavior.
   moderatorEnabled: boolean("moderator_enabled").notNull().default(true),
+  // Set exactly once, the moment any member successfully downloads the
+  // ontology export (see GET /projects/:id/export) -- this is the
+  // project's permanent "consensus reached" marker. From this point on the
+  // AI moderator must never run again for this project (no new mic
+  // sessions, transcript chunks, or interventions -- see moderatorEngine.ts
+  // and wsHub.ts's mic_start handling, which all check this column), and
+  // the conversation displayed to members is exactly the history frozen at
+  // this instant. Null means the project hasn't been exported yet.
+  exportedAt: timestamp("exported_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

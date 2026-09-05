@@ -369,6 +369,15 @@ export async function recordTranscriptChunk(
   utteranceId?: number,
 ): Promise<boolean> {
   const committed = await db.transaction(async (tx) => {
+    const [project] = await tx
+      .select({ exportedAt: projectsTable.exportedAt })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, projectId));
+    // Once exported, the conversation is frozen -- reject anything still in
+    // flight (e.g. a transcription request that started just before the
+    // export click landed) even if the participant row itself still looks
+    // active.
+    if (project?.exportedAt) return false;
     const [current] = await tx
       .select()
       .from(moderatorParticipantsTable)
@@ -412,6 +421,18 @@ export function noteSpeechActivity(projectId: number): void {
     enqueueIntervention(projectId);
   }, SILENCE_TIMEOUT_MS);
   silenceTimers.set(projectId, timer);
+}
+
+// The definitive "has this project's conversation been frozen" check --
+// every entry point that could otherwise let the AI moderator run again
+// after export (mic enable, transcript persistence, intervention
+// generation) reads this same column rather than each re-deriving it.
+export async function isProjectExported(projectId: number): Promise<boolean> {
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, projectId),
+    columns: { exportedAt: true },
+  });
+  return Boolean(project?.exportedAt);
 }
 
 // Two silence periods can legitimately occur close together -- someone
@@ -519,12 +540,17 @@ async function generateIntervention(projectId: number): Promise<void> {
   // together instead of one after another to shave a DB round trip off
   // the latency between "silence threshold met" and the intervention
   // actually being generated.
-  const [config, apiKey] = await Promise.all([
+  const [project, config, apiKey] = await Promise.all([
+    db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) }),
     db.query.projectModeratorTable.findFirst({
       where: eq(projectModeratorTable.projectId, projectId),
     }),
     getProjectOwnerApiKey(projectId),
   ]);
+  // Consensus already reached and exported -- the conversation is frozen,
+  // so no new intervention should ever be generated, even if this call was
+  // already queued (see enqueueIntervention) before the export landed.
+  if (project?.exportedAt) return;
   if (!config) return;
   if (!apiKey) return;
 

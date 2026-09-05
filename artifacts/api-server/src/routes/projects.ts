@@ -33,6 +33,7 @@ function serializeProject(project: typeof projectsTable.$inferSelect, memberCoun
     memberCount,
     maxMembers: project.maxMembers,
     moderatorEnabled: project.moderatorEnabled,
+    exportedAt: project.exportedAt ? project.exportedAt.toISOString() : null,
     createdAt: project.createdAt.toISOString(),
   };
 }
@@ -286,6 +287,7 @@ router.get("/projects/:id", async (req, res) => {
     ownerId: project.ownerId,
     maxMembers: project.maxMembers,
     moderatorEnabled: project.moderatorEnabled,
+    exportedAt: project.exportedAt ? project.exportedAt.toISOString() : null,
     createdAt: project.createdAt.toISOString(),
     members,
     classes: classes.map((c) => {
@@ -439,6 +441,24 @@ router.get("/projects/:id/export", async (req, res) => {
   if (!membership) {
     res.status(403).json({ error: "You are not a member of this project" });
     return;
+  }
+
+  // The Export button click is what permanently freezes this project's AI
+  // moderator: the very first time ANYONE successfully hits this route,
+  // stamp exportedAt (idempotent -- later calls just re-download the same
+  // frozen export). From this point on moderatorEngine.ts and wsHub.ts's
+  // mic_start handling all check this column and refuse to run the AI
+  // again, and the persisted chat history is exactly what's shown to every
+  // member from here on. Broadcasting it lets every open tab react
+  // immediately instead of waiting on the next 10s poll.
+  if (!project.exportedAt) {
+    project.exportedAt = new Date();
+    await db
+      .update(projectsTable)
+      .set({ exportedAt: project.exportedAt })
+      .where(eq(projectsTable.id, projectId));
+    clearModeratorSilenceTimer(projectId);
+    broadcastToProject(projectId, { type: "project_exported" });
   }
 
   // Full agreement requires every SPECIFIED member to agree, not just

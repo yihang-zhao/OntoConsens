@@ -112,6 +112,7 @@ export const ListProjectsResponseItem = zod.object({
   "memberCount": zod.number().int(),
   "maxMembers": zod.number().int(),
   "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
+  "exportedAt": zod.coerce.date().nullish().describe('Set the moment any member first downloads the ontology export (see GET \/projects\/{id}\/export). Once set, the AI moderator never runs again for this project and the conversation shown to members is frozen at the consensus reached at that point. Null means the project hasn\'t been exported yet.'),
   "createdAt": zod.coerce.date()
 })
 export const ListProjectsResponse = zod.array(ListProjectsResponseItem)
@@ -140,6 +141,7 @@ export const CreateProjectResponse = zod.object({
   "memberCount": zod.number().int(),
   "maxMembers": zod.number().int(),
   "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
+  "exportedAt": zod.coerce.date().nullish().describe('Set the moment any member first downloads the ontology export (see GET \/projects\/{id}\/export). Once set, the AI moderator never runs again for this project and the conversation shown to members is frozen at the consensus reached at that point. Null means the project hasn\'t been exported yet.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -159,6 +161,7 @@ export const JoinProjectResponse = zod.object({
   "memberCount": zod.number().int(),
   "maxMembers": zod.number().int(),
   "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
+  "exportedAt": zod.coerce.date().nullish().describe('Set the moment any member first downloads the ontology export (see GET \/projects\/{id}\/export). Once set, the AI moderator never runs again for this project and the conversation shown to members is frozen at the consensus reached at that point. Null means the project hasn\'t been exported yet.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -177,6 +180,7 @@ export const GetProjectResponse = zod.object({
   "ownerId": zod.number().int(),
   "maxMembers": zod.number().int(),
   "moderatorEnabled": zod.boolean().describe('Whether the AI moderator\'s messages are shown in this project\'s live conversation window. Fixed at creation.'),
+  "exportedAt": zod.coerce.date().nullish().describe('Set the moment any member first downloads the ontology export (see GET \/projects\/{id}\/export). Once set, the AI moderator never runs again for this project and the conversation shown to members is frozen at the consensus reached at that point. Null means the project hasn\'t been exported yet.'),
   "createdAt": zod.coerce.date(),
   "members": zod.array(zod.object({
   "userId": zod.number().int(),

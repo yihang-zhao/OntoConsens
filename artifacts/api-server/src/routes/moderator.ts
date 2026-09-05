@@ -15,6 +15,7 @@ import {
   generateActivationId,
   getParticipant,
   getProjectOwnerApiKey,
+  isProjectExported,
   listChatMessages,
   postRecordingStartedMessage,
   postRecordingStoppedMessage,
@@ -69,6 +70,12 @@ router.put("/projects/:id/moderator", async (req, res) => {
   const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
   if (!project) {
     res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  if (project.exportedAt) {
+    res.status(400).json({
+      error: "This project has already been exported. Consensus was reached and the AI moderator can no longer run.",
+    });
     return;
   }
   if (!(await projectOwnerHasApiKey(projectId, project.ownerId))) {

@@ -15,5 +15,7 @@ export interface ProjectSummary {
   maxMembers: number;
   /** Whether the AI moderator's messages are shown in this project's live conversation window. Fixed at creation. */
   moderatorEnabled: boolean;
+  /** Set the moment any member first downloads the ontology export (see GET /projects/{id}/export). Once set, the AI moderator never runs again for this project and the conversation shown to members is frozen at the consensus reached at that point. Null means the project hasn't been exported yet. */
+  exportedAt?: Date | null;
   createdAt: Date;
 }
