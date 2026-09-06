@@ -392,11 +392,21 @@ export async function openTranscriptionSession(projectId: number, userId: number
         drain();
       }
     } else if (type === "error") {
-      logger.error({ projectId, userId, error: event.error }, "OpenAI realtime transcription error");
-      broadcastToProject(projectId, {
-        type: "moderator_error",
-        message: event.error?.message || "Live transcription hit an error.",
-      });
+      // Benign: a manual commit (see commitPendingAudio / closeTranscriptionSession)
+      // can land on a buffer that's technically non-empty but still under
+      // OpenAI's 100ms minimum -- e.g. a trailing sliver of audio right
+      // before finalize/close. This is an expected race, not a real
+      // failure, so it must not be logged as an error or surfaced to the
+      // client as one.
+      const isBufferTooSmall = event.error?.code === "input_audio_buffer_commit_empty"
+        || /buffer too small/i.test(event.error?.message ?? "");
+      if (!isBufferTooSmall) {
+        logger.error({ projectId, userId, error: event.error }, "OpenAI realtime transcription error");
+        broadcastToProject(projectId, {
+          type: "moderator_error",
+          message: event.error?.message || "Live transcription hit an error.",
+        });
+      }
       // An error while closing (e.g. the manual commit below was rejected
       // because there was nothing buffered) must not hang teardown until
       // the fallback timer -- there is nothing further to drain for.
